@@ -1,0 +1,42 @@
+name: Deploy Sync Server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sync-server/**"
+      - ".github/workflows/deploy-sync-server.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: sync-server
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/inventario-sync:latest
+
+      - name: Trigger Render deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          curl -fsS -X POST "https://api.render.com/v1/services/srv-d9o2qejncjis73b4p700/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"imageUrl":"ghcr.io/${{ github.repository_owner }}/inventario-sync:latest"}'
