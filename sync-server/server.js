@@ -11,6 +11,16 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "inventario-sync" });
 });
 
+app.get("/", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "inventario-sync",
+    health: "/health",
+    api: "/v1/state",
+    auth: "Header X-Api-Key requerido en rutas /v1/*"
+  });
+});
+
 app.use((req, res, next) => {
   if (!API_KEY) return next();
   const key = req.get("X-Api-Key");
