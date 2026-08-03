@@ -30,7 +30,7 @@ jobs:
         with:
           context: sync-server
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/inventario-sync:latest
+          tags: ghcr.io/gregoryj733/inventario-sync:latest
 
       - name: Trigger Render deploy
         env:
@@ -39,4 +39,4 @@ jobs:
           curl -fsS -X POST "https://api.render.com/v1/services/srv-d9o2qejncjis73b4p700/deploys" \
             -H "Authorization: Bearer ${RENDER_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d '{"imageUrl":"ghcr.io/${{ github.repository_owner }}/inventario-sync:latest"}'
+            -d '{"imageUrl":"ghcr.io/gregoryj733/inventario-sync:latest"}'
