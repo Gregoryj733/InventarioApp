@@ -1,0 +1,649 @@
+package com.inventario.app.ui.home
+
+import android.content.Context
+import android.net.Uri
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.inventario.app.data.bcv.BcvRateFetcher
+import com.inventario.app.data.entity.Product
+import com.inventario.app.data.entity.UserRole
+import com.inventario.app.data.order.OrderLine
+import com.inventario.app.data.excel.ImportResult
+import com.inventario.app.data.repository.InventoryRepository
+import com.inventario.app.data.session.SessionManager
+import com.inventario.app.data.sync.CloudConfigStore
+import com.inventario.app.data.sync.CloudSyncInfo
+import com.inventario.app.data.sync.CloudSyncStatus
+import com.inventario.app.data.sync.SyncConfig
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import java.text.NumberFormat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+data class ImportAlert(
+    val title: String,
+    val message: String,
+    val isSuccess: Boolean
+)
+
+data class HomeUiState(
+    val username: String = "",
+    val role: UserRole = UserRole.CONSULTA,
+    val query: String = "",
+    val suggestions: List<String> = emptyList(),
+    val results: List<Product> = emptyList(),
+    val searching: Boolean = false,
+    val currentDate: String = "",
+    val bcvRate: Double? = null,
+    val bcvLabel: String = "Tasa BCV: —",
+    val bcvRefreshing: Boolean = false,
+    val productCount: Int = 0,
+    val importAlert: ImportAlert? = null,
+    val importing: Boolean = false,
+    val error: String? = null,
+    val selectedProduct: Product? = null,
+    val selectedQtyText: String = "1",
+    val qtyWarning: String? = null,
+    val orderLines: List<OrderLine> = emptyList(),
+    val showReceipt: Boolean = false,
+    val orderProcessing: Boolean = false,
+    val orderSuccessMessage: String? = null,
+    val lastWhatsAppMessage: String? = null,
+    val cloudSyncLabel: String = "Nube: conectando…",
+    val cloudSyncDetail: String? = null,
+    val showCloudConfigDialog: Boolean = false,
+    val cloudConfigUrl: String = "",
+    val cloudConfigApiKey: String = "",
+    val cloudConfigMessage: String? = null
+)
+
+class HomeViewModel(
+    private val appContext: Context,
+    private val inventoryRepository: InventoryRepository,
+    private val sessionManager: SessionManager,
+    private val bcvRateFetcher: BcvRateFetcher,
+    private val restartCloudSync: () -> StateFlow<CloudSyncInfo>?
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(HomeUiState())
+    val state: StateFlow<HomeUiState> = _state.asStateFlow()
+
+    private var searchJob: Job? = null
+    private var cloudSyncJob: Job? = null
+    private val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale("es", "VE"))
+    private val timeFormat = SimpleDateFormat("HH:mm", Locale("es", "VE"))
+    private val moneyFormat = NumberFormat.getNumberInstance(Locale("es", "VE")).apply {
+        minimumFractionDigits = 2
+        maximumFractionDigits = 4
+    }
+    private val bcvRateFormat = NumberFormat.getNumberInstance(Locale("es", "VE")).apply {
+        minimumFractionDigits = 2
+        maximumFractionDigits = 2
+    }
+
+    init {
+        _state.update {
+            it.copy(
+                username = sessionManager.username().orEmpty(),
+                role = sessionManager.role() ?: UserRole.CONSULTA,
+                currentDate = dateFormat.format(Date())
+            )
+        }
+        viewModelScope.launch {
+            inventoryRepository.observeMeta().collect { meta ->
+                val rate = meta?.bcvRate?.let(::roundBcvRate)
+                _state.update { state ->
+                    state.copy(
+                        bcvRate = rate,
+                        bcvLabel = if (rate != null) {
+                            "Tasa BCV: Bs ${bcvRateFormat.format(rate)}"
+                        } else {
+                            "Tasa BCV: sin datos"
+                        }
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(productCount = inventoryRepository.productCount()) }
+        }
+        subscribeCloudSync()
+        refreshBcv()
+    }
+
+    private fun subscribeCloudSync() {
+        cloudSyncJob?.cancel()
+        val syncFlow = inventoryRepository.observeCloudSyncStatus()
+        if (syncFlow == null) {
+            _state.update {
+                it.copy(
+                    cloudSyncLabel = "Nube: no configurada",
+                    cloudSyncDetail = "Toca «Configurar sincronización» e ingresa la URL del servidor."
+                )
+            }
+            return
+        }
+        cloudSyncJob = viewModelScope.launch {
+            syncFlow.collect { info ->
+                val count = if (info.status == CloudSyncStatus.SYNCED) {
+                    inventoryRepository.productCount()
+                } else {
+                    _state.value.productCount
+                }
+                _state.update {
+                    it.copy(
+                        cloudSyncLabel = cloudSyncLabel(info),
+                        cloudSyncDetail = cloudSyncDetail(info),
+                        productCount = count
+                    )
+                }
+            }
+        }
+    }
+
+    private fun cloudSyncLabel(info: CloudSyncInfo): String = when (info.status) {
+        CloudSyncStatus.IDLE -> "Nube: conectando…"
+        CloudSyncStatus.SYNCING -> "Nube: sincronizando…"
+        CloudSyncStatus.SYNCED -> "Nube: sincronizado"
+        CloudSyncStatus.OFFLINE -> "Nube: sin conexión"
+        CloudSyncStatus.ERROR -> when {
+            info.detail?.contains("Permiso denegado", ignoreCase = true) == true ->
+                "Nube: permiso denegado"
+            info.detail?.contains("Clave API", ignoreCase = true) == true ->
+                "Nube: clave API inválida"
+            info.detail?.contains("no encontrado", ignoreCase = true) == true ->
+                "Nube: servidor no encontrado"
+            info.detail?.contains("internet", ignoreCase = true) == true ||
+                info.detail?.contains("conexión", ignoreCase = true) == true ||
+                info.detail?.contains("inaccesible", ignoreCase = true) == true ->
+                "Nube: sin conexión"
+            info.detail?.contains("sync_config", ignoreCase = true) == true ->
+                "Nube: servidor no configurado"
+            else -> "Nube: error de sincronización"
+        }
+    }
+
+    private fun cloudSyncDetail(info: CloudSyncInfo): String? = when (info.status) {
+        CloudSyncStatus.ERROR, CloudSyncStatus.OFFLINE -> info.detail
+        else -> null
+    }
+
+    fun onQueryChange(value: String) {
+        _state.update {
+            it.copy(
+                query = value,
+                error = null,
+                importAlert = null,
+                orderSuccessMessage = null,
+                selectedProduct = if (value != it.query) null else it.selectedProduct,
+                qtyWarning = null
+            )
+        }
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            delay(300)
+            val q = value.trim()
+            if (q.isEmpty()) {
+                _state.update { it.copy(suggestions = emptyList(), results = emptyList(), searching = false) }
+                return@launch
+            }
+            _state.update { it.copy(searching = true) }
+            val results = inventoryRepository.search(q)
+            val suggestions = results.map { it.description }.distinct().take(12)
+            _state.update {
+                it.copy(
+                    suggestions = suggestions,
+                    results = results,
+                    searching = false
+                )
+            }
+        }
+    }
+
+    fun clearSearch() {
+        searchJob?.cancel()
+        _state.update {
+            it.copy(
+                query = "",
+                suggestions = emptyList(),
+                results = emptyList(),
+                searching = false,
+                selectedProduct = null,
+                selectedQtyText = "1",
+                qtyWarning = null,
+                error = null
+            )
+        }
+    }
+
+    fun selectSuggestion(text: String) {
+        _state.update { it.copy(query = text, suggestions = emptyList(), selectedProduct = null) }
+        viewModelScope.launch {
+            val results = inventoryRepository.search(text)
+            _state.update { it.copy(results = results) }
+        }
+    }
+
+    fun runSearch() {
+        val q = _state.value.query.trim()
+        if (q.isEmpty()) return
+        viewModelScope.launch {
+            _state.update { it.copy(searching = true, suggestions = emptyList(), selectedProduct = null) }
+            val results = inventoryRepository.search(q)
+            _state.update { it.copy(results = results, searching = false) }
+        }
+    }
+
+    fun selectProduct(product: Product) {
+        _state.update {
+            it.copy(
+                selectedProduct = product,
+                selectedQtyText = "1",
+                qtyWarning = null,
+                suggestions = emptyList()
+            )
+        }
+    }
+
+    fun clearSelection() {
+        _state.update { it.copy(selectedProduct = null, selectedQtyText = "1", qtyWarning = null) }
+    }
+
+    fun onSelectedQtyChange(raw: String) {
+        val cleaned = raw.filter { it.isDigit() || it == '.' || it == ',' }
+            .replace(',', '.')
+            .let { text ->
+                val parts = text.split('.')
+                if (parts.size <= 1) text
+                else parts.first() + "." + parts.drop(1).joinToString("").take(4)
+            }
+
+        val product = _state.value.selectedProduct
+        val qty = cleaned.toDoubleOrNull()
+        val orderQty = orderQtyForProduct(product?.id)
+        val available = product?.quantity?.minus(orderQty) ?: 0.0
+
+        val warning = when {
+            cleaned.isBlank() -> null
+            qty == null -> "Cantidad inválida."
+            qty <= 0 -> "La cantidad debe ser mayor a 0."
+            product != null && qty > available ->
+                "Supera el stock disponible (${formatQty(available)} ${product.unit})."
+            else -> null
+        }
+
+        _state.update { it.copy(selectedQtyText = cleaned, qtyWarning = warning) }
+    }
+
+    private fun orderQtyForProduct(productId: Long?): Double {
+        if (productId == null) return 0.0
+        return _state.value.orderLines
+            .filter { it.productId == productId }
+            .sumOf { it.quantity }
+    }
+
+    fun selectedQtyValue(): Double =
+        _state.value.selectedQtyText.toDoubleOrNull()?.takeIf { it > 0 } ?: 0.0
+
+    fun lineTotalUsd(): Double {
+        val product = _state.value.selectedProduct ?: return 0.0
+        return product.price * selectedQtyValue()
+    }
+
+    fun lineTotalBs(): Double? {
+        val rate = _state.value.bcvRate ?: return null
+        return lineTotalUsd() * rate
+    }
+
+    fun canAddToOrder(): Boolean {
+        val state = _state.value
+        val product = state.selectedProduct ?: return false
+        val qty = selectedQtyValue()
+        return qty > 0 &&
+            state.qtyWarning == null &&
+            qty <= product.quantity - orderQtyForProduct(product.id)
+    }
+
+    fun addToOrder() {
+        if (!canAddToOrder()) return
+        val product = _state.value.selectedProduct ?: return
+        val qty = selectedQtyValue()
+        val line = OrderLine(
+            productId = product.id,
+            description = product.description,
+            unit = product.unit,
+            unitPriceUsd = product.price,
+            quantity = qty
+        )
+        val existing = _state.value.orderLines.filter { it.productId != product.id }
+        _state.update {
+            it.copy(
+                orderLines = existing + line,
+                selectedProduct = null,
+                selectedQtyText = "1",
+                qtyWarning = null,
+                orderSuccessMessage = null,
+                error = null
+            )
+        }
+    }
+
+    fun removeOrderLine(productId: Long) {
+        _state.update {
+            it.copy(orderLines = it.orderLines.filter { line -> line.productId != productId })
+        }
+    }
+
+    fun clearOrder() {
+        _state.update { it.copy(orderLines = emptyList(), showReceipt = false) }
+    }
+
+    fun orderTotalUsd(): Double = _state.value.orderLines.sumOf { it.totalUsd }
+
+    fun orderTotalBs(): Double? {
+        val rate = _state.value.bcvRate ?: return null
+        return orderTotalUsd() * rate
+    }
+
+    fun showOrderReceipt() {
+        if (_state.value.orderLines.isEmpty()) return
+        _state.update { it.copy(showReceipt = true, error = null) }
+    }
+
+    fun dismissReceipt() {
+        _state.update { it.copy(showReceipt = false) }
+    }
+
+    fun buildWhatsAppMessage(): String {
+        val state = _state.value
+        val now = Date()
+        val lines = state.orderLines
+        val totalUsd = orderTotalUsd()
+        val totalBs = orderTotalBs()
+        val bcv = state.bcvRate
+
+        return buildString {
+            appendLine("━━━━━━━━━━━━━━━━━━━━")
+            appendLine("📋 *PEDIDO — Total Care*")
+            appendLine("━━━━━━━━━━━━━━━━━━━━")
+            appendLine()
+            appendLine("👤 Usuario: ${state.username}")
+            appendLine("📅 ${dateFormat.format(now)} · ${timeFormat.format(now)}")
+            if (bcv != null) {
+                appendLine("💱 Tasa BCV: Bs ${bcvRateFormat.format(bcv)}")
+            }
+            appendLine()
+            appendLine("──── *Detalle* ────")
+            lines.forEachIndexed { index, line ->
+                appendLine()
+                appendLine("${index + 1}. *${line.description}*")
+                appendLine("   ${formatQty(line.quantity)} ${line.unit} × ${formatPrice(line.unitPriceUsd)}")
+                append("   Subtotal: ${formatPrice(line.totalUsd)}")
+                if (bcv != null) {
+                    append(" · Bs ${moneyFormat.format(line.totalUsd * bcv)}")
+                }
+                appendLine()
+            }
+            appendLine()
+            appendLine("──── *Totales* ────")
+            appendLine("💵 *TOTAL USD: ${formatPrice(totalUsd)}*")
+            if (totalBs != null) {
+                appendLine("💵 *TOTAL Bs: Bs ${moneyFormat.format(totalBs)}*")
+            }
+            appendLine()
+            appendLine("✅ Stock descontado en la app.")
+        }
+    }
+
+    fun confirmOrder(onWhatsApp: (String) -> Unit) {
+        val lines = _state.value.orderLines
+        if (lines.isEmpty()) return
+
+        viewModelScope.launch {
+            _state.update { it.copy(orderProcessing = true, error = null) }
+            val result = inventoryRepository.executeOrder(lines)
+            result.onSuccess {
+                val message = buildWhatsAppMessage()
+                val count = inventoryRepository.productCount()
+                val q = _state.value.query
+                val results = if (q.trim().isNotEmpty()) inventoryRepository.search(q) else emptyList()
+                _state.update {
+                    it.copy(
+                        orderProcessing = false,
+                        showReceipt = false,
+                        orderLines = emptyList(),
+                        orderSuccessMessage = "Pedido registrado. Stock actualizado.",
+                        lastWhatsAppMessage = message,
+                        productCount = count,
+                        results = results,
+                        selectedProduct = null,
+                        selectedQtyText = "1"
+                    )
+                }
+                onWhatsApp(message)
+            }.onFailure { err ->
+                _state.update {
+                    it.copy(
+                        orderProcessing = false,
+                        error = err.message ?: "No se pudo completar el pedido."
+                    )
+                }
+            }
+        }
+    }
+
+    fun refreshBcv() {
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    bcvRefreshing = true,
+                    currentDate = dateFormat.format(Date())
+                )
+            }
+            val result = bcvRateFetcher.fetchUsdRate()
+            result.onSuccess { rate ->
+                val rounded = roundBcvRate(rate)
+                inventoryRepository.saveBcvRate(rounded)
+                _state.update {
+                    it.copy(
+                        bcvRefreshing = false,
+                        bcvRate = rounded,
+                        bcvLabel = "Tasa BCV: Bs ${bcvRateFormat.format(rounded)}"
+                    )
+                }
+            }.onFailure {
+                // Sin mensaje técnico: se mantiene la última tasa guardada en observeMeta()
+                _state.update { it.copy(bcvRefreshing = false) }
+            }
+        }
+    }
+
+    fun importExcel(uri: Uri) {
+        if (_state.value.role != UserRole.ADMIN) {
+            _state.update { it.copy(error = "Solo el administrador puede actualizar el inventario.") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(importing = true, importAlert = null, error = null) }
+            val result = inventoryRepository.replaceInventoryFromExcel(uri)
+            val count = inventoryRepository.productCount()
+            val alert = buildImportAlert(result, count)
+            val q = _state.value.query
+            val results = if (q.trim().isNotEmpty()) inventoryRepository.search(q) else emptyList()
+            val selectedId = _state.value.selectedProduct?.id
+            val refreshedSelected = selectedId?.let { id -> results.find { it.id == id } }
+            _state.update {
+                it.copy(
+                    importing = false,
+                    importAlert = alert,
+                    productCount = count,
+                    results = results,
+                    suggestions = emptyList(),
+                    selectedProduct = refreshedSelected,
+                    selectedQtyText = if (refreshedSelected == null) "1" else it.selectedQtyText,
+                    orderLines = emptyList()
+                )
+            }
+        }
+    }
+
+    fun dismissImportAlert() {
+        _state.update { it.copy(importAlert = null) }
+    }
+
+    private fun buildImportAlert(result: ImportResult, totalProducts: Int): ImportAlert {
+        val details = buildString {
+            append("Productos en inventario: $totalProducts")
+            append("\nImportados: ${result.imported}")
+            if (result.skipped > 0) {
+                append("\nOmitidos: ${result.skipped}")
+            }
+            if (result.errors.isNotEmpty()) {
+                append("\n\n")
+                append(result.errors.joinToString("\n"))
+            }
+        }
+        return when {
+            result.imported > 0 -> ImportAlert(
+                title = "Inventario actualizado",
+                message = "El archivo Excel se cargó correctamente.\n\n$details",
+                isSuccess = true
+            )
+            result.errors.isNotEmpty() -> ImportAlert(
+                title = "No se pudo cargar el inventario",
+                message = details,
+                isSuccess = false
+            )
+            else -> ImportAlert(
+                title = "Archivo sin productos",
+                message = "El archivo no contenía productos válidos para importar.",
+                isSuccess = false
+            )
+        }
+    }
+
+    fun clearWhatsAppFollowUp() {
+        _state.update {
+            it.copy(orderSuccessMessage = null, lastWhatsAppMessage = null)
+        }
+    }
+
+    fun logout(onDone: () -> Unit) {
+        sessionManager.clear()
+        onDone()
+    }
+
+    fun openCloudConfigDialog() {
+        val current = SyncConfig.load(appContext)
+        _state.update {
+            it.copy(
+                showCloudConfigDialog = true,
+                cloudConfigUrl = current?.baseUrl.orEmpty(),
+                cloudConfigApiKey = current?.apiKey.orEmpty(),
+                cloudConfigMessage = null
+            )
+        }
+    }
+
+    fun dismissCloudConfigDialog() {
+        _state.update {
+            it.copy(
+                showCloudConfigDialog = false,
+                cloudConfigUrl = "",
+                cloudConfigApiKey = "",
+                cloudConfigMessage = null
+            )
+        }
+    }
+
+    fun onCloudConfigUrlChange(value: String) {
+        _state.update { it.copy(cloudConfigUrl = value, cloudConfigMessage = null) }
+    }
+
+    fun onCloudConfigApiKeyChange(value: String) {
+        _state.update { it.copy(cloudConfigApiKey = value, cloudConfigMessage = null) }
+    }
+
+    fun saveCloudConfig() {
+        val url = _state.value.cloudConfigUrl.trim().trimEnd('/')
+        val apiKey = _state.value.cloudConfigApiKey.trim()
+        if (url.isEmpty()) {
+            _state.update { it.copy(cloudConfigMessage = "Ingresa la URL del servidor de sincronización.") }
+            return
+        }
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            _state.update { it.copy(cloudConfigMessage = "La URL debe comenzar con http:// o https://") }
+            return
+        }
+        val config = SyncConfig(baseUrl = url, apiKey = apiKey)
+        CloudConfigStore.save(appContext, config)
+        _state.update {
+            it.copy(
+                showCloudConfigDialog = false,
+                cloudConfigUrl = "",
+                cloudConfigApiKey = "",
+                cloudConfigMessage = null,
+                cloudSyncLabel = "Nube: conectando…",
+                cloudSyncDetail = null
+            )
+        }
+        restartCloudSync()
+        subscribeCloudSync()
+    }
+
+    fun needsCloudConfigButton(): Boolean {
+        val label = _state.value.cloudSyncLabel
+        return label.contains("no configurad", ignoreCase = true) ||
+            label.contains("no encontrado", ignoreCase = true) ||
+            label.contains("clave API", ignoreCase = true) ||
+            label.contains("error de sincronización", ignoreCase = true)
+    }
+
+    fun isCloudSyncUnconfigured(): Boolean =
+        _state.value.cloudSyncLabel.contains("no configurada", ignoreCase = true)
+
+    private fun roundBcvRate(rate: Double): Double =
+        kotlin.math.round(rate * 100) / 100.0
+
+    fun formatPrice(value: Double): String = "$${moneyFormat.format(value)}"
+
+    fun formatQty(value: Double): String {
+        return if (value % 1.0 == 0.0) value.toInt().toString() else moneyFormat.format(value)
+    }
+
+    fun formatMoney(value: Double): String = moneyFormat.format(value)
+
+    fun bsEquivalent(priceUsd: Double): String? {
+        val rate = _state.value.bcvRate ?: return null
+        return "Bs ${moneyFormat.format(priceUsd * rate)}"
+    }
+
+    companion object {
+        fun factory(
+            appContext: Context,
+            inventoryRepository: InventoryRepository,
+            sessionManager: SessionManager,
+            bcvRateFetcher: BcvRateFetcher,
+            restartCloudSync: () -> StateFlow<CloudSyncInfo>?
+        ) = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                return HomeViewModel(
+                    appContext,
+                    inventoryRepository,
+                    sessionManager,
+                    bcvRateFetcher,
+                    restartCloudSync
+                ) as T
+            }
+        }
+    }
+}

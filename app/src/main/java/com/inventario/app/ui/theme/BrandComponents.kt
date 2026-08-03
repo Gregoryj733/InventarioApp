@@ -1,0 +1,155 @@
+package com.inventario.app.ui.theme
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.PointOfSale
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.inventario.app.R
+
+private const val LOGO_ASPECT_RATIO = 2.35f
+
+@Composable
+fun BrandLogo(
+    modifier: Modifier = Modifier,
+    height: Dp = 40.dp
+) {
+    Image(
+        painter = painterResource(id = R.drawable.logo_total_care),
+        contentDescription = "Total Care Automotriz",
+        modifier = modifier
+            .height(height)
+            .width(height * LOGO_ASPECT_RATIO)
+            .clip(RoundedCornerShape(8.dp)),
+        contentScale = ContentScale.Fit
+    )
+}
+
+@Composable
+fun BrandLogoFull(
+    modifier: Modifier = Modifier,
+    height: Dp = 88.dp
+) {
+    Image(
+        painter = painterResource(id = R.drawable.logo_total_care),
+        contentDescription = "Total Care Automotriz",
+        modifier = modifier
+            .height(height)
+            .width(height * LOGO_ASPECT_RATIO)
+            .clip(RoundedCornerShape(12.dp)),
+        contentScale = ContentScale.Fit
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BrandAppTopBar(
+    subtitle: String,
+    onOpenCashClosing: () -> Unit,
+    onRefreshBcv: () -> Unit,
+    onLogout: () -> Unit
+) {
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val compact = screenWidthDp < 400
+    val logoHeight = when {
+        screenWidthDp < 360 -> 24.dp
+        compact -> 28.dp
+        else -> 36.dp
+    }
+    val spacerWidth = if (compact) 6.dp else 10.dp
+    val titleStyle = if (compact) {
+        MaterialTheme.typography.titleSmall
+    } else {
+        MaterialTheme.typography.titleMedium
+    }
+    val subtitleStyle = if (compact) {
+        MaterialTheme.typography.labelSmall
+    } else {
+        MaterialTheme.typography.bodySmall
+    }
+    val onPrimary = MaterialTheme.colorScheme.onPrimary
+
+    TopAppBar(
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BrandLogo(height = logoHeight)
+                Spacer(Modifier.width(spacerWidth))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Inventario",
+                        style = titleStyle,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = subtitle,
+                        style = subtitleStyle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        },
+        actions = {
+            IconButton(onClick = onOpenCashClosing) {
+                Icon(Icons.Default.PointOfSale, contentDescription = "Cierre de caja")
+            }
+            IconButton(onClick = onRefreshBcv) {
+                Icon(Icons.Default.Refresh, contentDescription = "Actualizar BCV")
+            }
+            if (compact) {
+                IconButton(onClick = onLogout) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Logout,
+                        contentDescription = "Salir"
+                    )
+                }
+            } else {
+                TextButton(onClick = onLogout) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Logout,
+                        contentDescription = null,
+                        tint = onPrimary
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(text = "Salir", color = onPrimary)
+                }
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            titleContentColor = onPrimary,
+            actionIconContentColor = onPrimary
+        )
+    )
+}
