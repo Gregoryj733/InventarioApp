@@ -59,16 +59,28 @@ class InventoryCloudSync(
     private var applyingRemote = false
     private var networkAvailable = true
     private var pollJob: Job? = null
+    private var syncScope: CoroutineScope? = null
+    private var consecutivePollFailures = 0
+    private val pendingOrderPushes = ArrayDeque<PendingOrderPush>()
 
     fun start(scope: CoroutineScope) {
+        syncScope = scope
         scope.launch(Dispatchers.IO) {
             runCatching {
                 setStatus(CloudSyncStatus.SYNCING)
                 pullFullState()
+                flushPendingOrderPushes()
                 setStatus(CloudSyncStatus.SYNCED)
             }.onFailure { error ->
                 Log.w(TAG, "Sync startup failed", error)
-                setStatus(CloudSyncStatus.ERROR, error.toSyncDetail())
+                if (error.isRetryableSyncError()) {
+                    setStatus(
+                        CloudSyncStatus.SYNCED,
+                        "Servidor iniciando; datos locales disponibles"
+                    )
+                } else {
+                    setStatus(CloudSyncStatus.ERROR, error.toSyncDetail())
+                }
             }
         }
         pollJob = scope.launch(Dispatchers.IO) {
@@ -77,7 +89,15 @@ class InventoryCloudSync(
                 if (!networkAvailable) continue
                 runCatching { pollForChanges() }.onFailure { error ->
                     Log.w(TAG, "Poll failed", error)
-                    setStatus(CloudSyncStatus.ERROR, error.toSyncDetail())
+                    consecutivePollFailures++
+                    if (consecutivePollFailures >= MAX_POLL_FAILURES_BEFORE_ERROR) {
+                        setStatus(CloudSyncStatus.ERROR, error.toSyncDetail())
+                    } else if (pendingOrderPushes.isNotEmpty()) {
+                        setStatus(
+                            CloudSyncStatus.SYNCED,
+                            "Pedidos pendientes de subir (${pendingOrderPushes.size})"
+                        )
+                    }
                 }
             }
         }
@@ -92,14 +112,32 @@ class InventoryCloudSync(
             }
             return
         }
-        if (current.status == CloudSyncStatus.OFFLINE) {
+        if (current.status == CloudSyncStatus.OFFLINE || current.status == CloudSyncStatus.ERROR) {
             setStatus(CloudSyncStatus.SYNCING, "Reconectando…")
+            syncScope?.launch(Dispatchers.IO) {
+                runCatching {
+                    pullFullState()
+                    flushPendingOrderPushes()
+                    setStatus(CloudSyncStatus.SYNCED)
+                }.onFailure { error ->
+                    Log.w(TAG, "Reconnect sync failed", error)
+                    if (pendingOrderPushes.isNotEmpty()) {
+                        setStatus(
+                            CloudSyncStatus.SYNCED,
+                            "Sin servidor; pedidos pendientes (${pendingOrderPushes.size})"
+                        )
+                    } else {
+                        setStatus(CloudSyncStatus.ERROR, error.toSyncDetail())
+                    }
+                }
+            }
         }
     }
 
     fun stop() {
         pollJob?.cancel()
         pollJob = null
+        syncScope = null
     }
 
     suspend fun pushInventoryReplace(products: List<Product>, meta: AppMeta) = withContext(Dispatchers.IO) {
@@ -138,32 +176,44 @@ class InventoryCloudSync(
         productsById: Map<Long, Product>
     ) = withContext(Dispatchers.IO) {
         if (applyingRemote) return@withContext
+        setStatus(CloudSyncStatus.SYNCING)
         runCatching {
-            val linesJson = JSONArray()
-            for (line in lines) {
-                val product = productsById[line.productId]
-                    ?: error("Producto no encontrado para sincronizar: ${line.description}")
-                val syncId = product.syncId.takeIf { it.isNotBlank() }
-                    ?: error("Producto sin identificador de nube: ${line.description}")
-                linesJson.put(
-                    JSONObject().apply {
-                        put(FIELD_SYNC_ID, syncId)
-                        put(FIELD_QUANTITY, line.quantity)
-                    }
-                )
-            }
-            val body = JSONObject().put("lines", linesJson)
-            executeJson(
-                Request.Builder()
-                    .url(endpoint("/v1/inventory/deduct"))
-                    .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
-                    .withAuth()
-                    .build()
-            )
+            pushStockDeductionsInternal(lines, productsById)
+            setStatus(CloudSyncStatus.SYNCED)
         }.onFailure { error ->
             Log.w(TAG, "pushStockDeductions failed", error)
             setStatus(CloudSyncStatus.ERROR, error.toSyncDetail())
             throw error
+        }
+    }
+
+    /**
+     * Sincroniza un pedido confirmado localmente. No lanza excepción: encola reintentos si falla.
+     */
+    suspend fun scheduleOrderSync(
+        lines: List<OrderLine>,
+        productsById: Map<Long, Product>,
+        sale: SaleRecord
+    ) = withContext(Dispatchers.IO) {
+        if (applyingRemote) {
+            pendingOrderPushes.addLast(PendingOrderPush(lines, productsById, sale))
+            return@withContext
+        }
+        val resolvedProducts = resolveProductsForSync(productsById)
+        val push = PendingOrderPush(lines, resolvedProducts, sale)
+        runCatching {
+            pushStockDeductionsInternal(push.lines, push.productsById)
+            pushSaleInternal(push.sale)
+        }.onSuccess {
+            flushPendingOrderPushes()
+        }.onFailure { error ->
+            Log.w(TAG, "Order cloud sync deferred", error)
+            pendingOrderPushes.addLast(push)
+            setStatus(
+                CloudSyncStatus.SYNCED,
+                "Pedido guardado localmente; subida pendiente (${pendingOrderPushes.size})"
+            )
+            syncScope?.launch(Dispatchers.IO) { flushPendingOrderPushes() }
         }
     }
 
@@ -188,19 +238,89 @@ class InventoryCloudSync(
 
     suspend fun pushSale(record: SaleRecord) = withContext(Dispatchers.IO) {
         if (applyingRemote || record.syncId.isBlank()) return@withContext
-        runCatching {
-            val body = JSONObject().apply {
-                put(FIELD_SYNC_ID, record.syncId)
-                put(FIELD_CREATED_AT, record.createdAt)
-                put(FIELD_TOTAL_USD, record.totalUsd)
-            }
-            executeJson(
-                Request.Builder()
-                    .url(endpoint("/v1/sales"))
-                    .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
-                    .withAuth()
-                    .build()
+        runCatching { pushSaleInternal(record) }
+    }
+
+    private suspend fun pushStockDeductionsInternal(
+        lines: List<OrderLine>,
+        productsById: Map<Long, Product>
+    ) {
+        val linesJson = JSONArray()
+        for (line in lines) {
+            val product = productsById[line.productId]
+                ?: error("Producto no encontrado para sincronizar: ${line.description}")
+            val syncId = product.syncId.takeIf { it.isNotBlank() }
+                ?: error("Producto sin identificador de nube: ${line.description}")
+            linesJson.put(
+                JSONObject().apply {
+                    put(FIELD_SYNC_ID, syncId)
+                    put(FIELD_QUANTITY, line.quantity)
+                }
             )
+        }
+        val body = JSONObject().put("lines", linesJson)
+        executeJson(
+            Request.Builder()
+                .url(endpoint("/v1/inventory/deduct"))
+                .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .withAuth()
+                .build()
+        )
+    }
+
+    private suspend fun pushSaleInternal(record: SaleRecord) {
+        if (record.syncId.isBlank()) return
+        val body = JSONObject().apply {
+            put(FIELD_SYNC_ID, record.syncId)
+            put(FIELD_CREATED_AT, record.createdAt)
+            put(FIELD_TOTAL_USD, record.totalUsd)
+        }
+        executeJson(
+            Request.Builder()
+                .url(endpoint("/v1/sales"))
+                .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .withAuth()
+                .build()
+        )
+    }
+
+    private suspend fun resolveProductsForSync(productsById: Map<Long, Product>): Map<Long, Product> {
+        val resolved = mutableMapOf<Long, Product>()
+        for ((id, product) in productsById) {
+            if (product.syncId.isBlank()) {
+                val syncId = newSyncId()
+                productDao.updateSyncId(id, syncId)
+                resolved[id] = product.copy(syncId = syncId)
+            } else {
+                resolved[id] = product
+            }
+        }
+        return resolved
+    }
+
+    private suspend fun flushPendingOrderPushes() {
+        if (pendingOrderPushes.isEmpty() || applyingRemote || !networkAvailable) return
+        while (pendingOrderPushes.isNotEmpty()) {
+            val push = pendingOrderPushes.first()
+            runCatching {
+                pushStockDeductionsInternal(push.lines, push.productsById)
+                pushSaleInternal(push.sale)
+            }.onSuccess {
+                pendingOrderPushes.removeFirst()
+            }.onFailure { error ->
+                Log.w(TAG, "Pending order push failed", error)
+                if (error.isRetryableSyncError()) {
+                    setStatus(
+                        CloudSyncStatus.SYNCED,
+                        "Pedidos pendientes de subir (${pendingOrderPushes.size})"
+                    )
+                }
+                return
+            }
+        }
+        consecutivePollFailures = 0
+        if (_status.value.status != CloudSyncStatus.OFFLINE) {
+            setStatus(CloudSyncStatus.SYNCED)
         }
     }
 
@@ -210,6 +330,13 @@ class InventoryCloudSync(
         val remoteRevision = state.optLong(FIELD_INVENTORY_REVISION, 0L)
         if (remoteRevision > localInventoryRevision) {
             applyRemoteState(state)
+        }
+        consecutivePollFailures = 0
+        flushPendingOrderPushes()
+        val current = _status.value.status
+        if (current == CloudSyncStatus.ERROR || current == CloudSyncStatus.SYNCING) {
+            setStatus(CloudSyncStatus.SYNCED)
+        } else if (pendingOrderPushes.isEmpty() && current == CloudSyncStatus.SYNCED) {
             setStatus(CloudSyncStatus.SYNCED)
         }
     }
@@ -219,14 +346,32 @@ class InventoryCloudSync(
         applyRemoteState(state)
     }
 
-    private suspend fun fetchState(): JSONObject = withContext(Dispatchers.IO) {
-        executeJson(
-            Request.Builder()
-                .url(endpoint("/v1/state"))
-                .get()
-                .withAuth()
-                .build()
-        )
+    private suspend fun fetchState(): JSONObject = executeJsonWithRetry(
+        Request.Builder()
+            .url(endpoint("/v1/state"))
+            .get()
+            .withAuth()
+            .build()
+    )
+
+    private suspend fun executeJsonWithRetry(request: Request): JSONObject {
+        var lastError: Throwable? = null
+        for (attempt in 0 until RETRY_DELAYS_MS.size) {
+            if (attempt > 0) {
+                setStatus(
+                    CloudSyncStatus.SYNCING,
+                    "Servidor iniciando… reintento ${attempt + 1}/${RETRY_DELAYS_MS.size}"
+                )
+                delay(RETRY_DELAYS_MS[attempt])
+            }
+            runCatching { executeJson(request) }
+                .onSuccess { return it }
+                .onFailure { error ->
+                    lastError = error
+                    if (!error.isRetryableSyncError()) throw error
+                }
+        }
+        throw lastError ?: SyncHttpException(502, "HTTP 502")
     }
 
     private suspend fun applyRemoteState(state: JSONObject) {
@@ -250,12 +395,19 @@ class InventoryCloudSync(
             val productsArray = state.optJSONArray("products")
             if (productsArray != null) {
                 val products = productsArray.toProductList()
-                if (products.isEmpty()) {
-                    productDao.clearAll()
-                    productDao.rebuildFtsIndex()
-                } else {
-                    val syncIds = products.map { it.syncId }
-                    productDao.replaceAllFromCloud(products, syncIds)
+                val inventoryEverUpdated =
+                    localInventoryRevision > 0L ||
+                        metaJson?.optLongOrNull(FIELD_LAST_INVENTORY_UPDATE) != null
+                when {
+                    products.isNotEmpty() -> {
+                        val syncIds = products.map { it.syncId }
+                        productDao.replaceAllFromCloud(products, syncIds)
+                    }
+                    inventoryEverUpdated -> {
+                        productDao.clearAll()
+                        productDao.rebuildFtsIndex()
+                    }
+                    // Servidor sin inventario cargado aún: conservar copia local.
                 }
             }
 
@@ -373,6 +525,9 @@ class InventoryCloudSync(
             401 -> "Clave API inválida. Revisa la configuración de sincronización."
             403 -> "Acceso denegado al servidor de sincronización."
             404 -> "Servidor no encontrado. Verifica la URL del servidor."
+            502, 503, 504 ->
+                "El servidor de sincronización no responde (HTTP $code). " +
+                    "En plan gratuito puede tardar hasta 1 minuto en iniciar; la app reintentará sola."
             in 500..599 -> "Error del servidor de sincronización (HTTP $code)."
             else -> message ?: "Error HTTP $code"
         }
@@ -385,11 +540,23 @@ class InventoryCloudSync(
         }
     }
 
+    private fun Throwable.isRetryableSyncError(): Boolean =
+        this is SyncHttpException && code in RETRYABLE_HTTP_CODES
+
     private class SyncHttpException(val code: Int, message: String) : Exception(message)
+
+    private data class PendingOrderPush(
+        val lines: List<OrderLine>,
+        val productsById: Map<Long, Product>,
+        val sale: SaleRecord
+    )
 
     companion object {
         private const val TAG = "InventoryCloudSync"
         private const val POLL_INTERVAL_MS = 15_000L
+        private const val MAX_POLL_FAILURES_BEFORE_ERROR = 4
+        private val RETRYABLE_HTTP_CODES = setOf(502, 503, 504)
+        private val RETRY_DELAYS_MS = longArrayOf(0L, 8_000L, 15_000L, 25_000L, 40_000L)
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
         private const val FIELD_SYNC_ID = "syncId"

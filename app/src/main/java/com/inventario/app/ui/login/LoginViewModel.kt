@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.repository.AuthRepository
+import com.inventario.app.data.repository.LoginStatus
 import com.inventario.app.data.session.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,12 +46,23 @@ class LoginViewModel(
         }
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
-            val user = authRepository.login(current.username, current.password)
-            if (user == null) {
-                _state.update { it.copy(loading = false, error = "Credenciales incorrectas.") }
-            } else {
-                sessionManager.saveSession(user.username, user.role)
-                _state.update { it.copy(loading = false, loggedInRole = user.role) }
+            when (authRepository.loginStatus(current.username, current.password)) {
+                LoginStatus.INVALID -> {
+                    _state.update { it.copy(loading = false, error = "Credenciales incorrectas.") }
+                }
+                LoginStatus.INACTIVE -> {
+                    _state.update {
+                        it.copy(
+                            loading = false,
+                            error = "Usuario desactivado. Contacta al administrador."
+                        )
+                    }
+                }
+                LoginStatus.SUCCESS -> {
+                    val user = authRepository.login(current.username, current.password)!!
+                    sessionManager.saveSession(user.username, user.role)
+                    _state.update { it.copy(loading = false, loggedInRole = user.role) }
+                }
             }
         }
     }

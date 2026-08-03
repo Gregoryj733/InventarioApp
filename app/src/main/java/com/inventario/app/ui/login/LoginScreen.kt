@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import com.inventario.app.ui.theme.AppScreenBackground
 import com.inventario.app.ui.theme.BrandLogoFull
 import com.inventario.app.ui.theme.ReportHeader
+import com.inventario.app.ui.theme.screenHorizontalPadding
 
 @Composable
 fun LoginScreen(
@@ -68,7 +69,7 @@ fun LoginScreen(
                 .systemBarsPadding()
                 .imePadding()
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .padding(screenHorizontalPadding() + 8.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {

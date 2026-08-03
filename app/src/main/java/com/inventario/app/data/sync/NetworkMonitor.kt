@@ -29,11 +29,7 @@ class NetworkMonitor(context: Context) {
             network: Network,
             networkCapabilities: NetworkCapabilities
         ) {
-            _isOnline.value = networkCapabilities.hasCapability(
-                NetworkCapabilities.NET_CAPABILITY_INTERNET
-            ) && networkCapabilities.hasCapability(
-                NetworkCapabilities.NET_CAPABILITY_VALIDATED
-            )
+            _isOnline.value = hasInternetAccess(networkCapabilities)
         }
     }
 
@@ -42,7 +38,11 @@ class NetworkMonitor(context: Context) {
         val request = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
-        connectivityManager.registerNetworkCallback(request, callback)
+        runCatching {
+            connectivityManager.registerNetworkCallback(request, callback)
+        }.onFailure {
+            // Algunos equipos antiguos fallan al registrar; el polling de sync sigue activo.
+        }
     }
 
     fun stop() {
@@ -52,6 +52,9 @@ class NetworkMonitor(context: Context) {
     private fun isCurrentlyOnline(): Boolean {
         val network = connectivityManager.activeNetwork ?: return false
         val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        return hasInternetAccess(capabilities)
     }
+
+    private fun hasInternetAccess(capabilities: NetworkCapabilities): Boolean =
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }

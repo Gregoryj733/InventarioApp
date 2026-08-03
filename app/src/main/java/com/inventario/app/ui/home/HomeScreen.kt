@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -46,6 +49,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,7 +60,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
+import com.inventario.app.ui.theme.isCompactWidth
+import com.inventario.app.ui.theme.isVeryCompactWidth
+import com.inventario.app.ui.theme.screenHorizontalPadding
+import com.inventario.app.ui.theme.screenVerticalPadding
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -70,34 +77,35 @@ import com.inventario.app.data.order.OrderLine
 import com.inventario.app.ui.theme.AccentSectionCard
 import com.inventario.app.ui.theme.AppScreenBackground
 import com.inventario.app.ui.theme.BrandAppTopBar
-import com.inventario.app.ui.theme.BrandGold
 import com.inventario.app.ui.theme.BrandSuccess
+import com.inventario.app.ui.theme.BrandWarning
 import com.inventario.app.ui.theme.ReportDivider
 import com.inventario.app.ui.theme.ReportHeader
 import com.inventario.app.ui.theme.ReportKeyValueRow
+import com.inventario.app.ui.theme.ConfirmedOrdersBanner
 import com.inventario.app.ui.theme.ReportMetaChip
 import com.inventario.app.ui.theme.ReportTotalBanner
 import com.inventario.app.ui.theme.StatusPill
+import com.inventario.app.ui.theme.confirmedOrdersLabel
 import com.inventario.app.ui.theme.WhatsAppGreen
 import com.inventario.app.ui.theme.WhatsAppGreenDark
 import com.inventario.app.util.WhatsAppNotifier
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
-    onLogout: () -> Unit,
-    onOpenCashClosing: () -> Unit = {}
+    subtitle: String,
+    onBack: () -> Unit,
+    onLogout: () -> Unit
 ) {
     val state by viewModel.state.collectAsState()
+    val displayProducts = viewModel.displayProducts()
     val context = LocalContext.current
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp
-    val roleLabel = if (state.role == UserRole.ADMIN) "Administrador" else "Consulta"
-    val topBarSubtitle = if (screenWidthDp < 360) {
-        roleLabel
-    } else {
-        "${state.username} · $roleLabel"
-    }
+    val horizontalPad = screenHorizontalPadding()
+    val verticalPad = screenVerticalPadding()
+    val compact = isCompactWidth()
+    val topBarSubtitle = subtitle
     val orderProductIds = remember(state.orderLines) {
         state.orderLines.mapTo(HashSet()) { it.productId }
     }
@@ -105,6 +113,15 @@ fun HomeScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) viewModel.importExcel(uri)
+    }
+    val launchExcelImport: () -> Unit = {
+        pickExcel.launch(
+            arrayOf(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.ms-excel",
+                "application/octet-stream"
+            )
+        )
     }
 
     if (state.showCloudConfigDialog) {
@@ -143,163 +160,244 @@ fun HomeScreen(
         topBar = {
             BrandAppTopBar(
                 subtitle = topBarSubtitle,
-                onOpenCashClosing = onOpenCashClosing,
                 onRefreshBcv = viewModel::refreshBcv,
-                onLogout = { viewModel.logout(onLogout) }
+                onLogout = { viewModel.logout(onLogout) },
+                showImportInventory = state.role == UserRole.ADMIN,
+                onImportInventory = launchExcelImport,
+                importEnabled = !state.importing,
+                bcvRefreshing = state.bcvRefreshing,
+                showBack = true,
+                onBack = onBack
             )
         }
     ) { padding ->
         AppScreenBackground(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-        ) {
-            InfoHeader(state = state)
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .imePadding()
+                    .padding(horizontal = horizontalPad, vertical = verticalPad),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item(key = "info_header") {
+                    InfoHeader(state = state)
+                }
 
-            Spacer(Modifier.height(10.dp))
+                if (state.role == UserRole.ADMIN && state.productCount == 0) {
+                    item(key = "admin_prompt") {
+                        AdminInventoryPromptCard(
+                            importing = state.importing,
+                            onImport = launchExcelImport
+                        )
+                    }
+                }
 
-            SearchField(
-                query = state.query,
-                onQueryChange = viewModel::onQueryChange,
-                onSearch = viewModel::runSearch,
-                onClear = viewModel::clearSearch
-            )
+                item(key = "search") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SearchField(
+                            query = state.query,
+                            onQueryChange = viewModel::onQueryChange,
+                            onSearch = viewModel::runSearch,
+                            onClear = viewModel::clearSearch
+                        )
+                        ConfirmedOrdersBanner(
+                            count = state.confirmedOrdersToday,
+                            onReset = viewModel::resetTodayOrders,
+                            resetting = state.resettingOrders
+                        )
+                    }
+                }
 
-            if (state.suggestions.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
-                SuggestionsCard(
-                    suggestions = state.suggestions,
-                    onSelect = viewModel::selectSuggestion
-                )
-            }
+                if (state.suggestions.isNotEmpty()) {
+                    item(key = "suggestions") {
+                        SuggestionsCard(
+                            suggestions = state.suggestions,
+                            onSelect = viewModel::selectSuggestion
+                        )
+                    }
+                }
 
-            if (state.role == UserRole.ADMIN) {
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        pickExcel.launch(
-                            arrayOf(
-                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                "application/vnd.ms-excel",
-                                "application/octet-stream"
+                if (state.role == UserRole.ADMIN) {
+                    item(key = "import_btn") {
+                        Button(
+                            onClick = launchExcelImport,
+                            enabled = !state.importing,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.CloudUpload, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                if (state.importing) "Importando…"
+                                else if (compact) "Cargar inventario"
+                                else "Cargar inventario (Excel)"
                             )
-                        )
-                    },
-                    enabled = !state.importing,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.CloudUpload, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (state.importing) "Importando…" else "Actualizar inventario (Excel)")
-                }
-                if (viewModel.needsCloudConfigButton()) {
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = viewModel::openCloudConfigDialog,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.CloudSync, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Configurar sincronización")
+                        }
+                    }
+                    if (viewModel.needsCloudConfigButton()) {
+                        item(key = "cloud_config_btn") {
+                            OutlinedButton(
+                                onClick = viewModel::openCloudConfigDialog,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.CloudSync, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(if (compact) "Config. sincronización" else "Configurar sincronización")
+                            }
+                        }
                     }
                 }
-            }
 
-            if (state.lastWhatsAppMessage != null) {
-                Spacer(Modifier.height(8.dp))
-                WhatsAppFollowUpCard(
-                    successText = state.orderSuccessMessage,
-                    onShareToGroup = {
-                        WhatsAppNotifier.shareToGroupChooser(context, state.lastWhatsAppMessage!!)
-                    },
-                    onDismiss = viewModel::clearWhatsAppFollowUp
-                )
-            } else if (state.orderSuccessMessage != null) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    state.orderSuccessMessage!!,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-            if (state.error != null) {
-                Spacer(Modifier.height(6.dp))
-                Text(state.error!!, color = MaterialTheme.colorScheme.error)
-            }
-
-            if (state.selectedProduct != null) {
-                Spacer(Modifier.height(8.dp))
-                SelectedProductPanel(
-                    viewModel = viewModel,
-                    state = state,
-                    onClear = viewModel::clearSelection,
-                    onAddToOrder = viewModel::addToOrder
-                )
-            }
-
-            if (state.orderLines.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                OrderSummaryCard(
-                    state = state,
-                    viewModel = viewModel,
-                    onConfirm = viewModel::showOrderReceipt,
-                    onClear = viewModel::clearOrder
-                )
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            Box(modifier = Modifier.weight(1f)) {
-                when {
-                    state.searching -> BoxLoading()
-                    state.results.isEmpty() && state.query.trim().isNotEmpty() -> {
-                        Text(
-                            "Sin resultados para \"${state.query}\"",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 8.dp)
-                        )
-                    }
-                    state.results.isEmpty() -> {
-                        Text(
-                            when {
-                                state.productCount == 0 && state.role == UserRole.ADMIN ->
-                                    "Aún no hay inventario. Carga el archivo product.xlsx."
-                                state.productCount == 0 ->
-                                    "Aún no hay inventario. Pide al administrador que lo cargue."
-                                else ->
-                                    "Escribe para buscar. Toca un producto y agrégalo al pedido."
+                if (state.lastWhatsAppMessage != null) {
+                    item(key = "whatsapp_followup") {
+                        WhatsAppFollowUpCard(
+                            successText = state.orderSuccessMessage,
+                            compact = compact,
+                            onShareToGroup = {
+                                WhatsAppNotifier.shareToGroupChooser(context, state.lastWhatsAppMessage!!)
                             },
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 8.dp)
+                            onDismiss = viewModel::clearWhatsAppFollowUp
                         )
+                    }
+                } else if (state.orderSuccessMessage != null) {
+                    item(key = "order_success") {
+                        Text(
+                            state.orderSuccessMessage!!,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                if (state.error != null) {
+                    item(key = "error") {
+                        Text(state.error!!, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+
+                if (state.selectedProduct != null) {
+                    item(key = "selected_product") {
+                        SelectedProductPanel(
+                            viewModel = viewModel,
+                            state = state,
+                            onClear = viewModel::clearSelection,
+                            onAddToOrder = viewModel::addToOrder
+                        )
+                    }
+                }
+
+                if (state.orderLines.isNotEmpty()) {
+                    item(key = "order_summary") {
+                        OrderSummaryCard(
+                            state = state,
+                            viewModel = viewModel,
+                            onConfirm = viewModel::showOrderReceipt,
+                            onClear = viewModel::clearOrder
+                        )
+                    }
+                }
+
+                when {
+                    state.searching -> {
+                        item(key = "loading") {
+                            BoxLoading()
+                        }
+                    }
+                    displayProducts.isEmpty() && state.query.trim().isNotEmpty() -> {
+                        item(key = "no_results") {
+                            Text(
+                                "Sin resultados para \"${state.query}\"",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                    displayProducts.isEmpty() -> {
+                        item(key = "empty_inventory") {
+                            Text(
+                                when {
+                                    state.productCount == 0 && state.role == UserRole.ADMIN ->
+                                        "Aún no hay inventario. Usa «Cargar inventario» en la barra superior o el botón de abajo."
+                                    state.productCount == 0 ->
+                                        "Aún no hay inventario. Pide al administrador que lo cargue."
+                                    else ->
+                                        "Escribe para buscar. Toca un producto y agrégalo al pedido."
+                                },
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
                     }
                     else -> {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(state.results, key = { it.id }) { product ->
-                                val inOrder = product.id in orderProductIds
-                                val selected = state.selectedProduct?.id == product.id
-                                ProductRow(
-                                    product = product,
-                                    selected = selected,
-                                    inOrder = inOrder,
-                                    priceLabel = viewModel.formatPrice(product.price),
-                                    qtyLabel = "${viewModel.formatQty(product.quantity)} ${product.unit}",
-                                    bsLabel = viewModel.bsEquivalent(product.price),
-                                    onClick = { viewModel.selectProduct(product) }
+                        if (state.query.trim().isEmpty() && state.allProducts.isNotEmpty()) {
+                            item(key = "inventory_label") {
+                                Text(
+                                    "Inventario (${state.allProducts.size} productos). Toca para agregar al pedido.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(bottom = 2.dp)
                                 )
                             }
+                        }
+                        items(displayProducts, key = { it.id }) { product ->
+                            val inOrder = product.id in orderProductIds
+                            val selected = state.selectedProduct?.id == product.id
+                            ProductRow(
+                                product = product,
+                                selected = selected,
+                                inOrder = inOrder,
+                                compact = compact,
+                                priceLabel = viewModel.formatPrice(product.price),
+                                qtyLabel = "${viewModel.formatQty(product.quantity)} ${product.unit}",
+                                bsLabel = viewModel.bsEquivalent(product.price),
+                                onClick = { viewModel.selectProduct(product) }
+                            )
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AdminInventoryPromptCard(
+    importing: Boolean,
+    onImport: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "Sin inventario cargado",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Como administrador, carga el archivo product.xlsx para ver y gestionar el inventario en la app y en la nube.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Button(
+                onClick = onImport,
+                enabled = !importing,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.CloudUpload, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (importing) "Importando…" else "Cargar inventario (Excel)")
+            }
         }
     }
 }
@@ -401,6 +499,7 @@ private fun ImportAlertDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun InfoHeader(state: HomeUiState) {
     AccentSectionCard(
@@ -415,26 +514,33 @@ private fun InfoHeader(state: HomeUiState) {
             }
         }
     ) {
-        Text(
-            text = state.bcvLabel,
-            style = MaterialTheme.typography.titleMedium,
-            color = if (state.bcvRate != null) BrandGold else MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            ReportMetaChip(
+                icon = "💱",
+                text = state.bcvLabel
+            )
+            ReportMetaChip(
+                icon = "🧾",
+                text = confirmedOrdersLabel(state.confirmedOrdersToday),
+                highlight = true
+            )
             StatusPill(
                 text = "${state.productCount} productos",
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             StatusPill(
                 text = if (state.role == UserRole.ADMIN) "Administrador" else "Consulta",
-                color = BrandGold
+                color = MaterialTheme.colorScheme.secondary
             )
             StatusPill(
                 text = state.cloudSyncLabel,
                 color = when {
                     state.cloudSyncLabel.contains("sincronizado") -> BrandSuccess
+                    state.cloudSyncLabel.contains("subida pendiente") ||
+                        state.cloudSyncLabel.contains("servidor iniciando") -> BrandWarning
                     state.cloudSyncLabel.contains("error") ||
                         state.cloudSyncLabel.contains("denegado") ||
                         state.cloudSyncLabel.contains("no configurad") ||
@@ -449,7 +555,14 @@ private fun InfoHeader(state: HomeUiState) {
             Text(
                 text = state.cloudSyncDetail,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
+                color = if (
+                    state.cloudSyncLabel.contains("pendiente", ignoreCase = true) ||
+                    state.cloudSyncLabel.contains("iniciando", ignoreCase = true)
+                ) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.error
+                }
             )
         }
     }
@@ -604,6 +717,14 @@ private fun SelectedProductPanel(
                 Spacer(Modifier.width(8.dp))
                 Text("Agregar al pedido")
             }
+
+            viewModel.casheaSimulation()?.let { simulation ->
+                CasheaSimulationPanel(
+                    simulation = simulation,
+                    formatPrice = viewModel::formatPrice,
+                    formatMoney = viewModel::formatMoney
+                )
+            }
         }
     }
 }
@@ -615,40 +736,74 @@ private fun OrderSummaryCard(
     onConfirm: () -> Unit,
     onClear: () -> Unit
 ) {
-    AccentSectionCard(title = "Pedido actual (${state.orderLines.size} ítems)") {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End
-        ) {
-            IconButton(onClick = onClear) {
-                Icon(Icons.Default.Delete, contentDescription = "Vaciar pedido", tint = MaterialTheme.colorScheme.error)
+    val onPrimary = MaterialTheme.colorScheme.onPrimary
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Pedido actual (${state.orderLines.size} ítems)",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = onPrimary,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onClear) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Vaciar pedido",
+                        tint = onPrimary.copy(alpha = 0.92f)
+                    )
+                }
             }
-        }
 
-        state.orderLines.forEach { line ->
-            ReportKeyValueRow(
-                label = "${viewModel.formatQty(line.quantity)} ${line.unit} · ${line.description}",
-                value = viewModel.formatPrice(line.totalUsd)
-            )
-        }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surface
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    state.orderLines.forEach { line ->
+                        ReportKeyValueRow(
+                            label = "${viewModel.formatQty(line.quantity)} ${line.unit} · ${line.description}",
+                            value = viewModel.formatPrice(line.totalUsd),
+                            valueColor = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
 
-        ReportDivider(label = "Total")
-        Spacer(Modifier.height(6.dp))
+                    ReportDivider(label = "Total")
+                    Spacer(Modifier.height(6.dp))
 
-        val totalBs = viewModel.orderTotalBs()
-        ReportTotalBanner(
-            label = "Total del pedido",
-            usd = viewModel.formatPrice(viewModel.orderTotalUsd()),
-            bs = totalBs?.let { "Bs ${viewModel.formatMoney(it)}" }
-        )
+                    val totalBs = viewModel.orderTotalBs()
+                    ReportTotalBanner(
+                        label = "Total del pedido",
+                        usd = viewModel.formatPrice(viewModel.orderTotalUsd()),
+                        bs = totalBs?.let { "Bs ${viewModel.formatMoney(it)}" }
+                    )
+                }
+            }
 
-        Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = onConfirm,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Text("Confirmar pedido y ver boleta", fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = onConfirm,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Text("Confirmar pedido y ver boleta", fontWeight = FontWeight.SemiBold)
+            }
         }
     }
 }
@@ -662,6 +817,7 @@ private fun OrderReceiptDialog(
 ) {
     val totalUsd = viewModel.orderTotalUsd()
     val totalBs = viewModel.orderTotalBs()
+    val compact = isCompactWidth()
 
     AlertDialog(
         onDismissRequest = { if (!state.orderProcessing) onDismiss() },
@@ -673,12 +829,19 @@ private fun OrderReceiptDialog(
                     subtitle = "Total Care Automotriz"
                 )
                 Spacer(Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ReportMetaChip(icon = "📅", text = state.currentDate, modifier = Modifier.weight(1f))
-                    ReportMetaChip(icon = "👤", text = state.username, modifier = Modifier.weight(1f))
+                if (compact) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        ReportMetaChip(icon = "📅", text = state.currentDate, modifier = Modifier.fillMaxWidth())
+                        ReportMetaChip(icon = "👤", text = state.username, modifier = Modifier.fillMaxWidth())
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ReportMetaChip(icon = "📅", text = state.currentDate, modifier = Modifier.weight(1f))
+                        ReportMetaChip(icon = "👤", text = state.username, modifier = Modifier.weight(1f))
+                    }
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -767,6 +930,7 @@ private fun OrderReceiptDialog(
 @Composable
 private fun WhatsAppFollowUpCard(
     successText: String?,
+    compact: Boolean,
     onShareToGroup: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -829,7 +993,10 @@ private fun WhatsAppFollowUpCard(
             ) {
                 Icon(Icons.Default.Share, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Reenviar al grupo Control Interno")
+                Text(
+                    if (compact) "Reenviar al grupo"
+                    else "Reenviar al grupo Control Interno"
+                )
             }
         }
     }
@@ -886,6 +1053,7 @@ private fun ProductRow(
     product: Product,
     selected: Boolean,
     inOrder: Boolean,
+    compact: Boolean,
     priceLabel: String,
     qtyLabel: String,
     bsLabel: String?,
@@ -934,10 +1102,7 @@ private fun ProductRow(
                 }
             }
             Spacer(Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            if (compact) {
                 Text(
                     text = "Precio: $priceLabel",
                     style = MaterialTheme.typography.bodyMedium,
@@ -949,13 +1114,30 @@ private fun ProductRow(
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold
                 )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Precio: $priceLabel",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Stock: $qtyLabel",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
             if (bsLabel != null) {
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = "BCV: $bsLabel",
                     style = MaterialTheme.typography.bodySmall,
-                    color = BrandGold
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
         }

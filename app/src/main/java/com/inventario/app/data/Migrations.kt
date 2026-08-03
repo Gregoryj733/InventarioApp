@@ -67,3 +67,47 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_products_syncId` ON `products` (`syncId`)")
     }
 }
+
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `users` ADD COLUMN `active` INTEGER NOT NULL DEFAULT 1")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `sale_line_items` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `saleRecordId` INTEGER NOT NULL,
+                `productId` INTEGER NOT NULL,
+                `description` TEXT NOT NULL,
+                `quantity` REAL NOT NULL,
+                `unit` TEXT NOT NULL,
+                `unitPriceUsd` REAL NOT NULL,
+                `totalUsd` REAL NOT NULL,
+                `createdAt` INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_sale_line_items_saleRecordId` ON `sale_line_items` (`saleRecordId`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_sale_line_items_productId` ON `sale_line_items` (`productId`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_sale_line_items_createdAt` ON `sale_line_items` (`createdAt`)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `cash_closing_records` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `branchName` TEXT NOT NULL,
+                `dateText` TEXT NOT NULL,
+                `closedAt` INTEGER NOT NULL,
+                `rate` REAL NOT NULL,
+                `salesUsd` REAL NOT NULL,
+                `salesBs` REAL NOT NULL,
+                `grandTotalUsd` REAL NOT NULL,
+                `grandTotalBs` REAL NOT NULL,
+                `differenceUsd` REAL NOT NULL,
+                `hasDifference` INTEGER NOT NULL,
+                `username` TEXT NOT NULL,
+                `observations` TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_cash_closing_records_closedAt` ON `cash_closing_records` (`closedAt`)")
+    }
+}

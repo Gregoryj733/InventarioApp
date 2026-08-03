@@ -3,11 +3,15 @@ package com.inventario.app.data.repository
 import android.content.Context
 import android.net.Uri
 import com.inventario.app.data.dao.AppMetaDao
+import com.inventario.app.data.dao.CashClosingRecordDao
 import com.inventario.app.data.dao.ProductDao
+import com.inventario.app.data.dao.SaleLineItemDao
 import com.inventario.app.data.dao.SaleRecordDao
 import com.inventario.app.data.dao.UserDao
 import com.inventario.app.data.entity.AppMeta
+import com.inventario.app.data.entity.CashClosingRecord
 import com.inventario.app.data.entity.Product
+import com.inventario.app.data.entity.SaleLineItem
 import com.inventario.app.data.entity.SaleRecord
 import com.inventario.app.data.entity.User
 import com.inventario.app.data.entity.UserRole
@@ -21,6 +25,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Calendar
 
+enum class LoginStatus {
+    SUCCESS,
+    INVALID,
+    INACTIVE
+}
+
 class AuthRepository(
     private val userDao: UserDao
 ) {
@@ -31,12 +41,14 @@ class AuthRepository(
                 User(
                     username = "consulta",
                     passwordHash = PasswordHasher.hash("consulta"),
-                    role = UserRole.CONSULTA
+                    role = UserRole.CONSULTA,
+                    active = true
                 ),
                 User(
                     username = "admin",
                     passwordHash = PasswordHasher.hash("admin"),
-                    role = UserRole.ADMIN
+                    role = UserRole.ADMIN,
+                    active = true
                 )
             )
         )
@@ -46,8 +58,57 @@ class AuthRepository(
     suspend fun login(username: String, password: String): User? {
         val normalized = username.trim().lowercase()
         val user = userDao.findByUsername(normalized) ?: return null
+        if (!user.active) return null
         return user.takeIf { PasswordHasher.matches(password, it.passwordHash) }
     }
+
+    suspend fun loginStatus(username: String, password: String): LoginStatus {
+        val normalized = username.trim().lowercase()
+        val user = userDao.findByUsername(normalized) ?: return LoginStatus.INVALID
+        if (!PasswordHasher.matches(password, user.passwordHash)) return LoginStatus.INVALID
+        if (!user.active) return LoginStatus.INACTIVE
+        return LoginStatus.SUCCESS
+    }
+
+    suspend fun listConsultaUsers(): List<User> = withContext(Dispatchers.IO) {
+        userDao.listByRole(UserRole.CONSULTA)
+    }
+
+    suspend fun createConsultaUser(username: String, password: String): Result<User> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val normalized = username.trim().lowercase()
+                require(normalized.length >= 3) { "El usuario debe tener al menos 3 caracteres." }
+                require(password.length >= 4) { "La contraseña debe tener al menos 4 caracteres." }
+                require(normalized != "admin") { "Ese nombre de usuario no está permitido." }
+                if (userDao.findByUsername(normalized) != null) {
+                    error("El usuario \"$normalized\" ya existe.")
+                }
+                val user = User(
+                    username = normalized,
+                    passwordHash = PasswordHasher.hash(password),
+                    role = UserRole.CONSULTA,
+                    active = true
+                )
+                userDao.insert(user)
+                userDao.findByUsername(normalized) ?: user
+            }
+        }
+
+    suspend fun deleteConsultaUser(id: Long): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val deleted = userDao.deleteByIdAndRole(id, UserRole.CONSULTA)
+            if (deleted == 0) error("No se pudo eliminar el usuario.")
+        }
+    }
+
+    suspend fun setConsultaUserActive(id: Long, active: Boolean): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val updated = userDao.setActive(id, UserRole.CONSULTA, active)
+                if (updated == 0) error("No se pudo actualizar el usuario.")
+            }
+        }
 }
 
 class InventoryRepository(
@@ -55,6 +116,8 @@ class InventoryRepository(
     private val productDao: ProductDao,
     private val appMetaDao: AppMetaDao,
     private val saleRecordDao: SaleRecordDao,
+    private val saleLineItemDao: SaleLineItemDao,
+    private val cashClosingRecordDao: CashClosingRecordDao,
     private var cloudSync: InventoryCloudSync?
 ) {
     fun setCloudSync(sync: InventoryCloudSync?) {
@@ -116,6 +179,8 @@ class InventoryRepository(
 
     suspend fun productCount(): Int = productDao.count()
 
+    fun observeAllProducts() = productDao.observeAll()
+
     fun observeMeta() = appMetaDao.observe()
 
     suspend fun saveBcvRate(rate: Double) {
@@ -148,6 +213,7 @@ class InventoryRepository(
 
     /**
      * Descuenta stock por cada línea del pedido. Falla si algún producto no tiene stock suficiente.
+     * La sincronización en nube es en segundo plano: el pedido se completa aunque el servidor no responda.
      */
     suspend fun executeOrder(lines: List<OrderLine>): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
@@ -156,7 +222,6 @@ class InventoryRepository(
                 line.productId to (productDao.findById(line.productId)
                     ?: error("Producto no encontrado: ${line.description}"))
             }
-            cloudSync?.pushStockDeductions(lines, productsById)
             productDao.executeOrderDeductions(lines, now)
             val totalUsd = lines.sumOf { it.totalUsd }
             val sale = SaleRecord(
@@ -164,8 +229,23 @@ class InventoryRepository(
                 createdAt = now,
                 totalUsd = totalUsd
             )
-            saleRecordDao.insert(sale)
-            cloudSync?.pushSale(sale)
+            val saleId = saleRecordDao.insert(sale)
+            val lineItems = lines.map { line ->
+                SaleLineItem(
+                    saleRecordId = saleId,
+                    productId = line.productId,
+                    description = line.description,
+                    quantity = line.quantity,
+                    unit = line.unit,
+                    unitPriceUsd = line.unitPriceUsd,
+                    totalUsd = line.totalUsd,
+                    createdAt = now
+                )
+            }
+            if (lineItems.isNotEmpty()) {
+                saleLineItemDao.insertAll(lineItems)
+            }
+            cloudSync?.scheduleOrderSync(lines, productsById, sale)
             Unit
         }
     }
@@ -173,6 +253,24 @@ class InventoryRepository(
     suspend fun totalSalesToday(): Double = withContext(Dispatchers.IO) {
         val (start, end) = todayBounds()
         saleRecordDao.sumTotalUsdBetween(start, end)
+    }
+
+    suspend fun confirmedOrdersToday(): Int = withContext(Dispatchers.IO) {
+        val (start, end) = todayBounds()
+        saleRecordDao.countBetween(start, end)
+    }
+
+    suspend fun resetTodayOrders() = withContext(Dispatchers.IO) {
+        val (start, end) = todayBounds()
+        saleRecordDao.deleteBetween(start, end)
+    }
+
+    suspend fun saveCashClosing(record: CashClosingRecord) = withContext(Dispatchers.IO) {
+        cashClosingRecordDao.insert(record)
+    }
+
+    suspend fun currentBcvRate(): Double? = withContext(Dispatchers.IO) {
+        appMetaDao.get()?.bcvRate
     }
 
     private fun todayBounds(): Pair<Long, Long> {

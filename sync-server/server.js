@@ -7,8 +7,19 @@ const PORT = Number(process.env.PORT || 8787);
 const app = express();
 app.use(express.json({ limit: "12mb" }));
 
-app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "inventario-sync" });
+let storeRef = null;
+
+app.get("/health", async (_req, res) => {
+  if (!storeRef) {
+    return res.status(503).json({ ok: false, service: "inventario-sync", starting: true });
+  }
+  try {
+    await storeRef.loadState();
+    res.json({ ok: true, service: "inventario-sync", backend: storeRef.backend });
+  } catch (error) {
+    console.error("Health check failed", error);
+    res.status(503).json({ ok: false, service: "inventario-sync", error: error.message });
+  }
 });
 
 app.get("/", (_req, res) => {
@@ -30,14 +41,28 @@ app.use((req, res, next) => {
   next();
 });
 
+function asyncRoute(handler) {
+  return async (req, res, next) => {
+    try {
+      await handler(req, res, next);
+    } catch (error) {
+      console.error(`${req.method} ${req.path} failed`, error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Error interno del servidor de sincronización" });
+      }
+    }
+  };
+}
+
 async function start() {
   const store = await createStore();
+  storeRef = store;
 
-  app.get("/v1/state", async (_req, res) => {
+  app.get("/v1/state", asyncRoute(async (_req, res) => {
     res.json(await store.loadState());
-  });
+  }));
 
-  app.put("/v1/inventory", async (req, res) => {
+  app.put("/v1/inventory", asyncRoute(async (req, res) => {
     const { products, meta } = req.body || {};
     if (!Array.isArray(products)) {
       return res.status(400).json({ error: "products debe ser un arreglo" });
@@ -54,9 +79,9 @@ async function start() {
     };
     await store.saveState(state);
     res.json({ inventoryRevision: revision });
-  });
+  }));
 
-  app.post("/v1/inventory/deduct", async (req, res) => {
+  app.post("/v1/inventory/deduct", asyncRoute(async (req, res) => {
     const lines = req.body?.lines;
     if (!Array.isArray(lines) || lines.length === 0) {
       return res.status(400).json({ error: "lines debe ser un arreglo no vacío" });
@@ -90,9 +115,9 @@ async function start() {
 
     await store.saveState(state);
     res.json({ ok: true });
-  });
+  }));
 
-  app.put("/v1/meta", async (req, res) => {
+  app.put("/v1/meta", asyncRoute(async (req, res) => {
     const state = await store.loadState();
     state.meta = {
       ...state.meta,
@@ -100,9 +125,9 @@ async function start() {
     };
     await store.saveState(state);
     res.json(state.meta);
-  });
+  }));
 
-  app.post("/v1/sales", async (req, res) => {
+  app.post("/v1/sales", asyncRoute(async (req, res) => {
     const sale = req.body || {};
     const syncId = sale.syncId;
     const createdAt = Number(sale.createdAt);
@@ -123,7 +148,7 @@ async function start() {
     }
 
     res.json({ ok: true });
-  });
+  }));
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Inventario sync server on http://0.0.0.0:${PORT}`);

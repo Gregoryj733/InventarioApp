@@ -138,6 +138,9 @@ interface ProductDao {
     )
     suspend fun deductQuantity(id: Long, amount: Double, updatedAt: Long): Int
 
+    @Query("UPDATE products SET syncId = :syncId WHERE id = :id")
+    suspend fun updateSyncId(id: Long, syncId: String)
+
     @Transaction
     suspend fun executeOrderDeductions(lines: List<OrderLine>, now: Long) {
         for (line in lines) {

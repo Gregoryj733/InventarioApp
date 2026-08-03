@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Preview
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -40,6 +41,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -64,14 +66,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.inventario.app.ui.theme.AccentSectionCard
 import com.inventario.app.ui.theme.AppScreenBackground
-import com.inventario.app.ui.theme.BrandGold
 import com.inventario.app.ui.theme.BrandSuccess
 import com.inventario.app.ui.theme.ReportDivider
 import com.inventario.app.ui.theme.ReportHeader
 import com.inventario.app.ui.theme.ReportKeyValueRow
+import com.inventario.app.ui.theme.ConfirmedOrdersBanner
+import com.inventario.app.ui.theme.ReportMetaChip
 import com.inventario.app.ui.theme.ReportTotalBanner
 import com.inventario.app.ui.theme.StatusPill
 import com.inventario.app.ui.theme.WhatsAppGreen
+import com.inventario.app.ui.theme.isVeryCompactWidth
+import com.inventario.app.ui.theme.screenHorizontalPadding
+import com.inventario.app.ui.theme.screenVerticalPadding
 import com.inventario.app.util.WhatsAppNotifier
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -121,8 +127,24 @@ fun CashClosingScreen(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
-                )
+                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                ),
+                actions = {
+                    if (state.bcvRefreshing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .padding(end = 16.dp)
+                                .size(22.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    } else {
+                        IconButton(onClick = viewModel::refreshBcv) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Actualizar BCV")
+                        }
+                    }
+                }
             )
         }
     ) { padding ->
@@ -133,7 +155,7 @@ fun CashClosingScreen(
                 .padding(padding)
                 .imePadding()
                 .verticalScroll(scrollState)
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = screenHorizontalPadding(), vertical = screenVerticalPadding())
         ) {
             SectionCard(title = "Encabezado") {
                 KeyboardAwareTextField(
@@ -148,11 +170,24 @@ fun CashClosingScreen(
                     label = "Fecha"
                 )
                 Spacer(Modifier.height(8.dp))
+                BcvRateHeader(
+                    label = state.bcvLabel,
+                    hasRate = state.bcvRate != null,
+                    refreshing = state.bcvRefreshing
+                )
+                Spacer(Modifier.height(8.dp))
                 KeyboardAwareTextField(
                     value = state.rateText,
                     onValueChange = viewModel::onRateChange,
                     label = "Tasa BCV (Bs)",
                     keyboardType = KeyboardType.Decimal
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Precargada desde BCV del día (bcv.org.ve). Sin internet se usa la última guardada. Editable.",
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(8.dp))
                 DualCurrencyField(
@@ -183,6 +218,13 @@ fun CashClosingScreen(
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                     }
                 } else {
+                    DailySalesMetaRow(
+                        bcvLabel = state.bcvLabel,
+                        orderCount = state.confirmedOrdersToday,
+                        onReset = viewModel::resetTodayOrders,
+                        resetting = state.resettingOrders
+                    )
+                    Spacer(Modifier.height(10.dp))
                     DualCurrencyField(
                         usdLabel = "Total USD",
                         bsLabel = "Total Bs",
@@ -362,7 +404,10 @@ fun CashClosingScreen(
             Spacer(Modifier.height(16.dp))
 
             Button(
-                onClick = { showPreview = true },
+                onClick = {
+                    viewModel.saveClosingRecord()
+                    showPreview = true
+                },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 colors = androidx.compose.material3.ButtonDefaults.buttonColors(
@@ -563,6 +608,69 @@ private fun DifferenceBanner(
 }
 
 @Composable
+private fun BcvRateHeader(
+    label: String,
+    hasRate: Boolean,
+    refreshing: Boolean
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Tasa del día",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (hasRate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            if (refreshing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DailySalesMetaRow(
+    bcvLabel: String,
+    orderCount: Int,
+    onReset: (() -> Unit)? = null,
+    resetting: Boolean = false
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ReportMetaChip(
+            icon = "💱",
+            text = "Tasa BCV: ${bcvLabel.removePrefix("Tasa BCV: ")}"
+        )
+        ConfirmedOrdersBanner(
+            count = orderCount,
+            onReset = onReset,
+            resetting = resetting
+        )
+    }
+}
+
+@Composable
 private fun SectionCard(
     title: String,
     content: @Composable () -> Unit
@@ -581,21 +689,44 @@ private fun DualCurrencyField(
     onUsdChange: (String) -> Unit,
     onBsChange: (String) -> Unit
 ) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        KeyboardAwareTextField(
-            value = usdText,
-            onValueChange = onUsdChange,
-            label = usdLabel,
-            keyboardType = KeyboardType.Decimal,
-            modifier = Modifier.weight(1f)
-        )
-        KeyboardAwareTextField(
-            value = bsText,
-            onValueChange = onBsChange,
-            label = bsLabel,
-            keyboardType = KeyboardType.Decimal,
-            modifier = Modifier.weight(1f)
-        )
+    val stackVertical = isVeryCompactWidth()
+    if (stackVertical) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            KeyboardAwareTextField(
+                value = usdText,
+                onValueChange = onUsdChange,
+                label = usdLabel,
+                keyboardType = KeyboardType.Decimal,
+                modifier = Modifier.fillMaxWidth()
+            )
+            KeyboardAwareTextField(
+                value = bsText,
+                onValueChange = onBsChange,
+                label = bsLabel,
+                keyboardType = KeyboardType.Decimal,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    } else {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            KeyboardAwareTextField(
+                value = usdText,
+                onValueChange = onUsdChange,
+                label = usdLabel,
+                keyboardType = KeyboardType.Decimal,
+                modifier = Modifier.weight(1f)
+            )
+            KeyboardAwareTextField(
+                value = bsText,
+                onValueChange = onBsChange,
+                label = bsLabel,
+                keyboardType = KeyboardType.Decimal,
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
 
@@ -713,7 +844,7 @@ private fun TotalLine(label: String, usd: String, bs: String?) {
     ) {
         Text(label, fontWeight = FontWeight.SemiBold)
         Column(horizontalAlignment = Alignment.End) {
-            Text(usd, fontWeight = FontWeight.Bold, color = BrandGold)
+            Text(usd, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             if (bs != null) {
                 Text(bs, style = MaterialTheme.typography.bodySmall)
             }
@@ -725,6 +856,7 @@ private fun TotalLine(label: String, usd: String, bs: String?) {
 private fun SummaryCard(
     viewModel: CashClosingViewModel
 ) {
+    val state by viewModel.state.collectAsState()
     val totalA = viewModel.totalPosUsd()
     val totalB = viewModel.totalMobileUsd()
     val totalC = viewModel.totalCashUsd()
@@ -764,6 +896,19 @@ private fun SummaryCard(
                 )
             }
             Spacer(Modifier.height(10.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            SummaryRow(
+                "Tasa BCV del día",
+                state.bcvLabel.removePrefix("Tasa BCV: "),
+                bold = false
+            )
+            SummaryRow(
+                "Pedidos confirmados",
+                "${state.confirmedOrdersToday}",
+                bold = false
+            )
+            Spacer(Modifier.height(4.dp))
             HorizontalDivider()
             Spacer(Modifier.height(8.dp))
             SummaryRow("Total ventas", viewModel.formatPrice(salesUsd), viewModel.formatBs(salesBs))
@@ -819,7 +964,7 @@ private fun SummaryRow(
             Text(
                 usd,
                 fontWeight = if (bold) FontWeight.Bold else FontWeight.Medium,
-                color = if (bold) BrandGold else MaterialTheme.colorScheme.onSurface
+                color = if (bold) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
             )
             if (bs != null) {
                 Text(

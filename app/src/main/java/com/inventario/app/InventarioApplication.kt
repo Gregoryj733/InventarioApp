@@ -7,9 +7,11 @@ import com.inventario.app.data.AppDatabase
 import com.inventario.app.data.MIGRATION_1_2
 import com.inventario.app.data.MIGRATION_2_3
 import com.inventario.app.data.MIGRATION_3_4
+import com.inventario.app.data.MIGRATION_4_5
 import com.inventario.app.data.bcv.BcvRateFetcher
 import com.inventario.app.data.repository.AuthRepository
 import com.inventario.app.data.repository.InventoryRepository
+import com.inventario.app.data.repository.ReportsRepository
 import com.inventario.app.data.session.SessionManager
 import com.inventario.app.data.sync.CloudSyncInfo
 import com.inventario.app.data.sync.InventoryCloudSync
@@ -39,6 +41,8 @@ class InventarioApplication : Application() {
         private set
     lateinit var inventoryRepository: InventoryRepository
         private set
+    lateinit var reportsRepository: ReportsRepository
+        private set
     val bcvRateFetcher = BcvRateFetcher()
 
     private var cloudSync: InventoryCloudSync? = null
@@ -57,7 +61,14 @@ class InventarioApplication : Application() {
             productDao = database.productDao(),
             appMetaDao = database.appMetaDao(),
             saleRecordDao = database.saleRecordDao(),
+            saleLineItemDao = database.saleLineItemDao(),
+            cashClosingRecordDao = database.cashClosingRecordDao(),
             cloudSync = sync
+        )
+        reportsRepository = ReportsRepository(
+            saleRecordDao = database.saleRecordDao(),
+            saleLineItemDao = database.saleLineItemDao(),
+            cashClosingRecordDao = database.cashClosingRecordDao()
         )
 
         appScope.launch {
@@ -91,7 +102,7 @@ class InventarioApplication : Application() {
             applicationContext,
             AppDatabase::class.java,
             dbName
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 
         return runCatching { builder.build() }.getOrElse { migrationError ->
             Log.w(TAG, "Database migration failed, recreating local database", migrationError)

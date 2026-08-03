@@ -3,6 +3,8 @@ package com.inventario.app.ui.cashclosing
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.inventario.app.data.bcv.BcvRateFetcher
+import com.inventario.app.data.entity.CashClosingRecord
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.session.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,13 +55,18 @@ data class CashClosingUiState(
     val expenseEntries: List<ExpenseEntry> = emptyList(),
     val observations: String = "",
     val username: String = "",
-    val loadingSales: Boolean = true
+    val loadingSales: Boolean = true,
+    val bcvRate: Double? = null,
+    val bcvLabel: String = "Tasa BCV: —",
+    val bcvRefreshing: Boolean = false,
+    val confirmedOrdersToday: Int = 0,
+    val resettingOrders: Boolean = false
 )
 
 class CashClosingViewModel(
     private val inventoryRepository: InventoryRepository,
     private val sessionManager: SessionManager,
-    initialBcvRate: Double?
+    private val bcvRateFetcher: BcvRateFetcher
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(CashClosingUiState())
@@ -78,25 +85,75 @@ class CashClosingViewModel(
     private var nextId = 1L
 
     init {
-        val rate = initialBcvRate?.let(::roundRate)
-        val rateText = rate?.let { moneyFormat.format(it) }.orEmpty()
         _state.update {
             it.copy(
                 username = sessionManager.username().orEmpty(),
                 dateText = dateFormat.format(Date()),
-                rateText = rateText,
                 posEntries = listOf(newPosEntry("Punto 1"))
             )
         }
         viewModelScope.launch {
+            inventoryRepository.observeMeta().collect { meta ->
+                val rate = meta?.bcvRate?.let(::roundRate)
+                onBcvRateAvailable(rate, forceRateText = false)
+            }
+        }
+        viewModelScope.launch {
             val salesUsd = inventoryRepository.totalSalesToday()
-            val salesBs = rate?.let { salesUsd * it }
+            val orderCount = inventoryRepository.confirmedOrdersToday()
             _state.update {
                 it.copy(
                     loadingSales = false,
-                    salesUsdText = if (salesUsd > 0) formatDecimal(salesUsd) else "",
-                    salesBsText = salesBs?.let(::formatDecimal).orEmpty()
+                    confirmedOrdersToday = orderCount,
+                    salesUsdText = if (salesUsd > 0) formatDecimal(salesUsd) else ""
                 )
+            }
+            val rate = currentRate()
+            if (rate != null && salesUsd > 0) {
+                _state.update {
+                    it.copy(salesBsText = formatDecimal(salesUsd * rate))
+                }
+            }
+        }
+        refreshBcv()
+    }
+
+    fun resetTodayOrders() {
+        viewModelScope.launch {
+            _state.update { it.copy(resettingOrders = true) }
+            runCatching { inventoryRepository.resetTodayOrders() }
+                .onSuccess {
+                    _state.update {
+                        it.copy(
+                            resettingOrders = false,
+                            confirmedOrdersToday = 0,
+                            salesUsdText = "",
+                            salesBsText = ""
+                        )
+                    }
+                }
+                .onFailure {
+                    _state.update { it.copy(resettingOrders = false) }
+                }
+        }
+    }
+
+    fun refreshBcv() {
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    bcvRefreshing = true,
+                    dateText = dateFormat.format(Date())
+                )
+            }
+            val result = bcvRateFetcher.fetchUsdRate()
+            result.onSuccess { rate ->
+                val rounded = roundRate(rate)
+                inventoryRepository.saveBcvRate(rounded)
+                onBcvRateAvailable(rounded, forceRateText = true)
+                _state.update { it.copy(bcvRefreshing = false) }
+            }.onFailure {
+                _state.update { it.copy(bcvRefreshing = false) }
             }
         }
     }
@@ -321,6 +378,31 @@ class CashClosingViewModel(
 
     fun isBalanced(): Boolean = abs(differenceUsd()) < 0.01
 
+    fun saveClosingRecord() {
+        viewModelScope.launch {
+            val rate = currentRate() ?: return@launch
+            val sales = salesUsd()
+            val grandUsd = grandTotalUsd()
+            val diff = differenceUsd()
+            inventoryRepository.saveCashClosing(
+                CashClosingRecord(
+                    branchName = _state.value.branchName,
+                    dateText = _state.value.dateText,
+                    closedAt = System.currentTimeMillis(),
+                    rate = rate,
+                    salesUsd = sales,
+                    salesBs = salesBs(),
+                    grandTotalUsd = grandUsd,
+                    grandTotalBs = grandTotalBs(),
+                    differenceUsd = diff,
+                    hasDifference = !isBalanced(),
+                    username = _state.value.username,
+                    observations = _state.value.observations
+                )
+            )
+        }
+    }
+
     fun formatPrice(value: Double): String = "$${moneyFormat.format(value)}"
 
     fun formatBs(value: Double): String = "Bs ${moneyFormat.format(value)}"
@@ -440,6 +522,69 @@ class CashClosingViewModel(
         }
     }
 
+    private fun onBcvRateAvailable(rate: Double?, forceRateText: Boolean) {
+        _state.update { state ->
+            val label = if (rate != null) {
+                "Tasa BCV: Bs ${bcvRateFormat.format(rate)}"
+            } else {
+                "Tasa BCV: sin datos"
+            }
+            val shouldSetRateText = forceRateText || state.rateText.isBlank()
+            val newRateText = if (shouldSetRateText && rate != null) {
+                bcvRateFormat.format(rate)
+            } else {
+                state.rateText
+            }
+            val updated = state.copy(
+                bcvRate = rate,
+                bcvLabel = label,
+                rateText = newRateText
+            )
+            val effectiveRate = rate ?: currentRateFromText(newRateText)
+            if (shouldSetRateText && effectiveRate != null) {
+                syncBsConversions(updated, effectiveRate)
+            } else {
+                updated
+            }
+        }
+    }
+
+    private fun syncBsConversions(state: CashClosingUiState, rate: Double): CashClosingUiState =
+        state.copy(
+            prevCashBsText = if (state.prevCashUsdText.isNotBlank()) {
+                convertUsdToBs(state.prevCashUsdText, rate)
+            } else {
+                state.prevCashBsText
+            },
+            salesBsText = if (state.salesUsdText.isNotBlank()) {
+                convertUsdToBs(state.salesUsdText, rate)
+            } else {
+                state.salesBsText
+            },
+            cashBsText = if (state.cashUsdText.isNotBlank()) {
+                convertUsdToBs(state.cashUsdText, rate)
+            } else {
+                state.cashBsText
+            },
+            posEntries = state.posEntries.map { entry ->
+                if (entry.usdText.isNotBlank()) {
+                    entry.copy(bsText = convertUsdToBs(entry.usdText, rate))
+                } else {
+                    entry
+                }
+            },
+            mobileEntries = state.mobileEntries.map { entry ->
+                if (entry.usdText.isNotBlank()) {
+                    entry.copy(bsText = convertUsdToBs(entry.usdText, rate))
+                } else {
+                    entry
+                }
+            }
+        )
+
+    private fun currentRateFromText(text: String): Double? =
+        text.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 }
+
     private fun newPosEntry(name: String) = PosEntry(id = nextId(), name = name)
 
     private fun nextId(): Long = nextId++
@@ -501,11 +646,11 @@ class CashClosingViewModel(
         fun factory(
             inventoryRepository: InventoryRepository,
             sessionManager: SessionManager,
-            initialBcvRate: Double?
+            bcvRateFetcher: BcvRateFetcher
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return CashClosingViewModel(inventoryRepository, sessionManager, initialBcvRate) as T
+                return CashClosingViewModel(inventoryRepository, sessionManager, bcvRateFetcher) as T
             }
         }
     }

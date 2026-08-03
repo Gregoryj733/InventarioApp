@@ -6,12 +6,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.filled.PointOfSale
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -25,7 +29,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
+import com.inventario.app.ui.theme.isCompactWidth
+import com.inventario.app.ui.theme.isVeryCompactWidth
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,14 +76,18 @@ fun BrandLogoFull(
 @Composable
 fun BrandAppTopBar(
     subtitle: String,
-    onOpenCashClosing: () -> Unit,
     onRefreshBcv: () -> Unit,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    showImportInventory: Boolean = false,
+    onImportInventory: (() -> Unit)? = null,
+    importEnabled: Boolean = true,
+    bcvRefreshing: Boolean = false,
+    showBack: Boolean = false,
+    onBack: (() -> Unit)? = null
 ) {
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp
-    val compact = screenWidthDp < 400
+    val compact = isCompactWidth()
     val logoHeight = when {
-        screenWidthDp < 360 -> 24.dp
+        isVeryCompactWidth() -> 24.dp
         compact -> 28.dp
         else -> 36.dp
     }
@@ -96,6 +105,16 @@ fun BrandAppTopBar(
     val onPrimary = MaterialTheme.colorScheme.onPrimary
 
     TopAppBar(
+        navigationIcon = {
+            if (showBack && onBack != null) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Volver"
+                    )
+                }
+            }
+        },
         title = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -121,11 +140,23 @@ fun BrandAppTopBar(
             }
         },
         actions = {
-            IconButton(onClick = onOpenCashClosing) {
-                Icon(Icons.Default.PointOfSale, contentDescription = "Cierre de caja")
+            if (showImportInventory && onImportInventory != null) {
+                IconButton(onClick = onImportInventory, enabled = importEnabled) {
+                    Icon(Icons.Default.CloudUpload, contentDescription = "Cargar inventario Excel")
+                }
             }
-            IconButton(onClick = onRefreshBcv) {
-                Icon(Icons.Default.Refresh, contentDescription = "Actualizar BCV")
+            if (bcvRefreshing) {
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .padding(end = 8.dp)
+                        .size(22.dp),
+                    strokeWidth = 2.dp,
+                    color = onPrimary
+                )
+            } else {
+                IconButton(onClick = onRefreshBcv) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Actualizar BCV")
+                }
             }
             if (compact) {
                 IconButton(onClick = onLogout) {

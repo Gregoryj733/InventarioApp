@@ -15,13 +15,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,7 +60,7 @@ fun AppScreenBackground(
 fun AccentSectionCard(
     title: String,
     modifier: Modifier = Modifier,
-    accentColor: Color = BrandGold,
+    accentColor: Color = MaterialTheme.colorScheme.primary,
     titleTrailing: @Composable (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -70,7 +77,7 @@ fun AccentSectionCard(
                     .fillMaxHeight()
                     .background(
                         accentColor,
-                        RoundedCornerShape(topStart = 18.dp)
+                        RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp)
                     )
             )
             Column(
@@ -121,7 +128,9 @@ fun StatusPill(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold,
-            color = color
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -165,7 +174,7 @@ fun ReportDivider(
             modifier = modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            HorizontalDivider(modifier = Modifier.weight(1f), color = BrandGold.copy(alpha = 0.5f))
+            HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outline)
             Text(
                 text = label,
                 modifier = Modifier.padding(horizontal = 10.dp),
@@ -173,7 +182,7 @@ fun ReportDivider(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.SemiBold
             )
-            HorizontalDivider(modifier = Modifier.weight(1f), color = BrandGold.copy(alpha = 0.5f))
+            HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outline)
         }
     }
 }
@@ -197,7 +206,9 @@ fun ReportKeyValueRow(
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal
+            fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = if (isCompactWidth()) 2 else 1,
+            overflow = TextOverflow.Ellipsis
         )
         Text(
             text = value,
@@ -225,8 +236,8 @@ fun ReportTotalBanner(
                 if (highlight) {
                     Brush.horizontalGradient(
                         listOf(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                            BrandGold.copy(alpha = 0.18f)
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
                         )
                     )
                 } else {
@@ -252,13 +263,14 @@ fun ReportTotalBanner(
                 text = usd,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                color = if (highlight) BrandGold else MaterialTheme.colorScheme.onSurface
+                color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
             )
             if (bs != null) {
                 Text(
                     text = bs,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
         }
@@ -269,12 +281,17 @@ fun ReportTotalBanner(
 fun ReportMetaChip(
     icon: String,
     text: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    highlight: Boolean = false
 ) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+        color = if (highlight) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        }
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -285,8 +302,85 @@ fun ReportMetaChip(
             Text(
                 text = text,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface
+                fontWeight = if (highlight) FontWeight.SemiBold else FontWeight.Medium,
+                color = if (highlight) {
+                    MaterialTheme.colorScheme.onSecondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
+    }
+}
+
+fun confirmedOrdersLabel(count: Int): String =
+    "$count pedido${if (count == 1) "" else "s"} confirmado${if (count == 1) "" else "s"} hoy"
+
+@Composable
+fun ConfirmedOrdersBanner(
+    count: Int,
+    onReset: (() -> Unit)? = null,
+    resetting: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    var showConfirm by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        ReportMetaChip(
+            icon = "🧾",
+            text = confirmedOrdersLabel(count),
+            highlight = true,
+            modifier = Modifier.weight(1f, fill = false)
+        )
+        if (onReset != null) {
+            if (resetting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp
+                )
+            } else {
+                TextButton(
+                    onClick = { showConfirm = true },
+                    enabled = count > 0
+                ) {
+                    Text("Reiniciar")
+                }
+            }
+        }
+    }
+
+    if (showConfirm) {
+        AlertDialog(
+            onDismissRequest = { showConfirm = false },
+            title = { Text("Reiniciar contador del día") },
+            text = {
+                Text(
+                    "Se borrará el registro de los $count pedido${if (count == 1) "" else "s"} " +
+                        "confirmado${if (count == 1) "" else "s"} hoy y el total de ventas precargado. " +
+                        "El inventario descontado no se restaura."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showConfirm = false
+                        onReset?.invoke()
+                    }
+                ) {
+                    Text("Reiniciar", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirm = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 }

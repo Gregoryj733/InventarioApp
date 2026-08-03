@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.inventario.app.data.bcv.BcvRateFetcher
+import com.inventario.app.data.cashea.CasheaCalculator
 import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.order.OrderLine
@@ -40,6 +41,7 @@ data class HomeUiState(
     val query: String = "",
     val suggestions: List<String> = emptyList(),
     val results: List<Product> = emptyList(),
+    val allProducts: List<Product> = emptyList(),
     val searching: Boolean = false,
     val currentDate: String = "",
     val bcvRate: Double? = null,
@@ -62,7 +64,9 @@ data class HomeUiState(
     val showCloudConfigDialog: Boolean = false,
     val cloudConfigUrl: String = "",
     val cloudConfigApiKey: String = "",
-    val cloudConfigMessage: String? = null
+    val cloudConfigMessage: String? = null,
+    val confirmedOrdersToday: Int = 0,
+    val resettingOrders: Boolean = false
 )
 
 class HomeViewModel(
@@ -113,10 +117,48 @@ class HomeViewModel(
             }
         }
         viewModelScope.launch {
-            _state.update { it.copy(productCount = inventoryRepository.productCount()) }
+            inventoryRepository.observeAllProducts().collect { products ->
+                _state.update { state ->
+                    state.copy(
+                        allProducts = products,
+                        productCount = products.size
+                    )
+                }
+            }
         }
         subscribeCloudSync()
         refreshBcv()
+        refreshDailySummary()
+    }
+
+    private fun refreshDailySummary() {
+        viewModelScope.launch {
+            val orderCount = inventoryRepository.confirmedOrdersToday()
+            _state.update { it.copy(confirmedOrdersToday = orderCount) }
+        }
+    }
+
+    fun resetTodayOrders() {
+        viewModelScope.launch {
+            _state.update { it.copy(resettingOrders = true, error = null) }
+            runCatching { inventoryRepository.resetTodayOrders() }
+                .onSuccess {
+                    _state.update {
+                        it.copy(
+                            resettingOrders = false,
+                            confirmedOrdersToday = 0
+                        )
+                    }
+                }
+                .onFailure { err ->
+                    _state.update {
+                        it.copy(
+                            resettingOrders = false,
+                            error = err.message ?: "No se pudo reiniciar el contador."
+                        )
+                    }
+                }
+        }
     }
 
     private fun subscribeCloudSync() {
@@ -133,20 +175,19 @@ class HomeViewModel(
         }
         cloudSyncJob = viewModelScope.launch {
             syncFlow.collect { info ->
-                val count = if (info.status == CloudSyncStatus.SYNCED) {
-                    inventoryRepository.productCount()
-                } else {
-                    _state.value.productCount
-                }
                 _state.update {
                     it.copy(
                         cloudSyncLabel = cloudSyncLabel(info),
-                        cloudSyncDetail = cloudSyncDetail(info),
-                        productCount = count
+                        cloudSyncDetail = cloudSyncDetail(info)
                     )
                 }
             }
         }
+    }
+
+    fun displayProducts(): List<Product> {
+        val state = _state.value
+        return if (state.query.trim().isEmpty()) state.allProducts else state.results
     }
 
     private fun cloudSyncLabel(info: CloudSyncInfo): String = when (info.status) {
@@ -165,6 +206,15 @@ class HomeViewModel(
                 info.detail?.contains("conexión", ignoreCase = true) == true ||
                 info.detail?.contains("inaccesible", ignoreCase = true) == true ->
                 "Nube: sin conexión"
+            info.detail?.contains("HTTP 502", ignoreCase = true) == true ||
+                info.detail?.contains("HTTP 503", ignoreCase = true) == true ||
+                info.detail?.contains("HTTP 504", ignoreCase = true) == true ||
+                info.detail?.contains("no responde", ignoreCase = true) == true ||
+                info.detail?.contains("Servidor iniciando", ignoreCase = true) == true ->
+                "Nube: servidor iniciando"
+            info.detail?.contains("pendiente", ignoreCase = true) == true ||
+                info.detail?.contains("subida pendiente", ignoreCase = true) == true ->
+                "Nube: subida pendiente"
             info.detail?.contains("sync_config", ignoreCase = true) == true ->
                 "Nube: servidor no configurado"
             else -> "Nube: error de sincronización"
@@ -173,6 +223,10 @@ class HomeViewModel(
 
     private fun cloudSyncDetail(info: CloudSyncInfo): String? = when (info.status) {
         CloudSyncStatus.ERROR, CloudSyncStatus.OFFLINE -> info.detail
+        CloudSyncStatus.SYNCED -> info.detail?.takeIf {
+            it.contains("pendiente", ignoreCase = true) ||
+                it.contains("iniciando", ignoreCase = true)
+        }
         else -> null
     }
 
@@ -413,6 +467,7 @@ class HomeViewModel(
             result.onSuccess {
                 val message = buildWhatsAppMessage()
                 val count = inventoryRepository.productCount()
+                val orderCount = inventoryRepository.confirmedOrdersToday()
                 val q = _state.value.query
                 val results = if (q.trim().isNotEmpty()) inventoryRepository.search(q) else emptyList()
                 _state.update {
@@ -423,6 +478,7 @@ class HomeViewModel(
                         orderSuccessMessage = "Pedido registrado. Stock actualizado.",
                         lastWhatsAppMessage = message,
                         productCount = count,
+                        confirmedOrdersToday = orderCount,
                         results = results,
                         selectedProduct = null,
                         selectedQtyText = "1"
@@ -624,6 +680,17 @@ class HomeViewModel(
     fun bsEquivalent(priceUsd: Double): String? {
         val rate = _state.value.bcvRate ?: return null
         return "Bs ${moneyFormat.format(priceUsd * rate)}"
+    }
+
+    fun casheaSimulation(): CasheaCalculator.CasheaSimulation? {
+        val rate = _state.value.bcvRate ?: return null
+        val baseUsd = lineTotalUsd()
+        if (baseUsd <= 0) return null
+        return CasheaCalculator.simulate(
+            baseUsd = baseUsd,
+            rate = rate,
+            quantity = selectedQtyValue()
+        )
     }
 
     companion object {

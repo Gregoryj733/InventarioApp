@@ -13,12 +13,12 @@ import androidx.compose.ui.unit.sp
 private val LightColors = lightColorScheme(
     primary = BrandTeal,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFD4E8EC),
+    primaryContainer = Color(0xFFE3EBF3),
     onPrimaryContainer = BrandTealDark,
-    secondary = BrandGold,
-    onSecondary = Color(0xFF1A1A1A),
+    secondary = BrandTealLight,
+    onSecondary = Color.White,
     secondaryContainer = BrandGoldLight,
-    onSecondaryContainer = Color(0xFF3D3010),
+    onSecondaryContainer = BrandTealDark,
     tertiary = BrandWarning,
     onTertiary = Color.White,
     tertiaryContainer = Color(0xFFFFE8C2),
@@ -31,7 +31,7 @@ private val LightColors = lightColorScheme(
     onSurface = BrandInk,
     surfaceVariant = Color(0xFFE8EEEF),
     onSurfaceVariant = Color(0xFF3D4A4E),
-    outline = BrandGold.copy(alpha = 0.4f)
+    outline = BrandTeal.copy(alpha = 0.22f)
 )
 
 private val AppTypography = Typography(
