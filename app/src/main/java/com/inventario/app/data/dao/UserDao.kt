@@ -32,4 +32,7 @@ interface UserDao {
 
     @Query("UPDATE users SET active = :active WHERE id = :id AND role = :role")
     suspend fun setActive(id: Long, role: UserRole, active: Boolean): Int
+
+    @Query("UPDATE users SET sucursal = :sucursal WHERE id = :id AND role = :role")
+    suspend fun setSucursal(id: Long, role: UserRole, sucursal: String): Int
 }

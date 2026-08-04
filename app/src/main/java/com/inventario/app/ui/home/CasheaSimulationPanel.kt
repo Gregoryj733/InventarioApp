@@ -104,6 +104,7 @@ fun CasheaSimulationPanel(
             color = MaterialTheme.colorScheme.primary
         )
         FiscalRows(simulation.fiscalConIva, formatPrice, formatMoney)
+        Spacer(Modifier.height(4.dp))
     }
 }
 
@@ -170,16 +171,36 @@ private fun PaymentCaseCard(
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = headerColor)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha))
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha))
+        Column(
+            modifier = Modifier.padding(
+                start = 12.dp,
+                top = 12.dp,
+                end = 12.dp,
+                bottom = 14.dp
+            )
+        ) {
+            Text(
+                title,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)
+            )
             Spacer(Modifier.height(4.dp))
             Text(
                 usd,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.error.copy(alpha = contentAlpha)
             )
-            Text(bs, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha))
+            Text(
+                bs,
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = contentAlpha)
+            )
         }
     }
 }

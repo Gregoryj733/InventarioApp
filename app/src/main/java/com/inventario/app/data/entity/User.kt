@@ -14,5 +14,16 @@ data class User(
     val username: String,
     val passwordHash: String,
     val role: UserRole,
-    val active: Boolean = true
+    val active: Boolean = true,
+    val sucursal: String = ""
 )
+
+const val PENDING_SUCURSAL_LABEL = "Sucursal pendiente por asignar"
+
+fun User.displaySucursal(): String =
+    sucursal.ifBlank { PENDING_SUCURSAL_LABEL }
+
+fun String?.displaySucursalOrPending(): String =
+    this?.takeIf { it.isNotBlank() } ?: PENDING_SUCURSAL_LABEL
+
+fun User.sucursalPending(): Boolean = sucursal.isBlank()

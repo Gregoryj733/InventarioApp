@@ -111,3 +111,44 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_cash_closing_records_closedAt` ON `cash_closing_records` (`closedAt`)")
     }
 }
+
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "ALTER TABLE `cash_closing_records` ADD COLUMN `status` TEXT NOT NULL DEFAULT 'PENDING'"
+        )
+        db.execSQL(
+            "ALTER TABLE `cash_closing_records` ADD COLUMN `revisionNumber` INTEGER NOT NULL DEFAULT 1"
+        )
+        db.execSQL(
+            "ALTER TABLE `cash_closing_records` ADD COLUMN `reviewedBy` TEXT NOT NULL DEFAULT ''"
+        )
+        db.execSQL(
+            "ALTER TABLE `cash_closing_records` ADD COLUMN `reviewedAt` INTEGER NOT NULL DEFAULT 0"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_cash_closing_records_username` ON `cash_closing_records` (`username`)"
+        )
+    }
+}
+
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `users` ADD COLUMN `sucursal` TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE `sale_records` ADD COLUMN `bcvRate` REAL NOT NULL DEFAULT 0")
+        db.execSQL(
+            "ALTER TABLE `cash_closing_records` ADD COLUMN `userSucursal` TEXT NOT NULL DEFAULT ''"
+        )
+        db.execSQL(
+            "ALTER TABLE `cash_closing_records` ADD COLUMN `detailSnapshot` TEXT NOT NULL DEFAULT ''"
+        )
+    }
+}
+
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "UPDATE `users` SET `sucursal` = '' WHERE `sucursal` = 'Total Care Automotriz'"
+        )
+    }
+}

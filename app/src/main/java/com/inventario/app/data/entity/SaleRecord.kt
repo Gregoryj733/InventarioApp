@@ -8,5 +8,6 @@ data class SaleRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val syncId: String = "",
     val createdAt: Long = System.currentTimeMillis(),
-    val totalUsd: Double
+    val totalUsd: Double,
+    val bcvRate: Double = 0.0
 )

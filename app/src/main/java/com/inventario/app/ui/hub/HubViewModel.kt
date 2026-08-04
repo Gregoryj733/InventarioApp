@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.inventario.app.data.bcv.BcvRateFetcher
+import com.inventario.app.data.entity.CashClosingAlertType
+import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.session.SessionManager
@@ -24,7 +26,9 @@ data class HubUiState(
     val bcvRate: Double? = null,
     val bcvLabel: String = "Tasa BCV: —",
     val bcvRefreshing: Boolean = false,
-    val currentDate: String = ""
+    val currentDate: String = "",
+    val cashClosingAlert: CashClosingAlertType? = null,
+    val pendingReportsCount: Int = 0
 )
 
 class HubViewModel(
@@ -65,6 +69,32 @@ class HubViewModel(
             }
         }
         refreshBcv()
+        refreshClosingAlerts()
+    }
+
+    fun refreshClosingAlerts() {
+        viewModelScope.launch {
+            val username = sessionManager.username().orEmpty()
+            val alert = inventoryRepository.cashClosingAlertForUser(username)
+            val latest = inventoryRepository.latestClosingToday(username)
+            val ackId = sessionManager.lastAcknowledgedClosingId(username)
+            val visibleAlert = when {
+                alert == CashClosingAlertType.REJECTED_RESUBMIT &&
+                    latest?.status == CashClosingStatus.REJECTED &&
+                    latest.id > ackId -> CashClosingAlertType.REJECTED_RESUBMIT
+                alert == CashClosingAlertType.APPROVED_SUCCESS &&
+                    latest?.status == CashClosingStatus.APPROVED &&
+                    latest.id > ackId -> CashClosingAlertType.APPROVED_SUCCESS
+                else -> null
+            }
+            val pendingCount = if (inventoryRepository.hasPendingClosings()) 1 else 0
+            _state.update {
+                it.copy(
+                    cashClosingAlert = visibleAlert,
+                    pendingReportsCount = pendingCount
+                )
+            }
+        }
     }
 
     fun refreshBcv() {

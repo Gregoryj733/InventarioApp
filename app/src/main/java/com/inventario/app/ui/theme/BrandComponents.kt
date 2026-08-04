@@ -87,9 +87,9 @@ fun BrandAppTopBar(
 ) {
     val compact = isCompactWidth()
     val logoHeight = when {
-        isVeryCompactWidth() -> 24.dp
-        compact -> 28.dp
-        else -> 36.dp
+        isVeryCompactWidth() -> 28.dp
+        compact -> 32.dp
+        else -> 40.dp
     }
     val spacerWidth = if (compact) 6.dp else 10.dp
     val titleStyle = if (compact) {
@@ -110,7 +110,8 @@ fun BrandAppTopBar(
                 IconButton(onClick = onBack) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Volver"
+                        contentDescription = "Volver",
+                        tint = onPrimary
                     )
                 }
             }
@@ -180,6 +181,7 @@ fun BrandAppTopBar(
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.primary,
             titleContentColor = onPrimary,
+            navigationIconContentColor = onPrimary,
             actionIconContentColor = onPrimary
         )
     )

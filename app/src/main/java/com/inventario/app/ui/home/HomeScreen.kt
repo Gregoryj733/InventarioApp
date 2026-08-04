@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,7 +23,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -42,6 +45,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +56,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -154,6 +159,28 @@ fun HomeScreen(
                 }
             }
         )
+    }
+
+    val selectedProduct = state.selectedProduct
+    if (selectedProduct != null) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = viewModel::clearSelection,
+            sheetState = sheetState
+        ) {
+            SelectedProductPanel(
+                viewModel = viewModel,
+                state = state,
+                onClear = viewModel::clearSelection,
+                onAddToOrder = viewModel::addToOrder,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = horizontalPad)
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .padding(bottom = 16.dp)
+            )
+        }
     }
 
     Scaffold(
@@ -274,17 +301,6 @@ fun HomeScreen(
                 if (state.error != null) {
                     item(key = "error") {
                         Text(state.error!!, color = MaterialTheme.colorScheme.error)
-                    }
-                }
-
-                if (state.selectedProduct != null) {
-                    item(key = "selected_product") {
-                        SelectedProductPanel(
-                            viewModel = viewModel,
-                            state = state,
-                            onClear = viewModel::clearSelection,
-                            onAddToOrder = viewModel::addToOrder
-                        )
                     }
                 }
 
@@ -629,20 +645,20 @@ private fun SelectedProductPanel(
     viewModel: HomeViewModel,
     state: HomeUiState,
     onClear: () -> Unit,
-    onAddToOrder: () -> Unit
+    onAddToOrder: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val product = state.selectedProduct ?: return
     val qty = viewModel.selectedQtyValue()
     val totalUsd = viewModel.lineTotalUsd()
     val totalBs = viewModel.lineTotalBs()
+    val scrollState = rememberScrollState()
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(3.dp)
+    Column(
+        modifier = modifier
+            .verticalScroll(scrollState)
+            .padding(vertical = 4.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -725,7 +741,6 @@ private fun SelectedProductPanel(
                     formatMoney = viewModel::formatMoney
                 )
             }
-        }
     }
 }
 
@@ -789,6 +804,14 @@ private fun OrderSummaryCard(
                         usd = viewModel.formatPrice(viewModel.orderTotalUsd()),
                         bs = totalBs?.let { "Bs ${viewModel.formatMoney(it)}" }
                     )
+
+                    viewModel.orderCasheaSimulation()?.let { simulation ->
+                        CasheaSimulationPanel(
+                            simulation = simulation,
+                            formatPrice = viewModel::formatPrice,
+                            formatMoney = viewModel::formatMoney
+                        )
+                    }
                 }
             }
 

@@ -100,6 +100,8 @@ private fun InventarioRoot(app: InventarioApplication) {
                 role = hubState.role,
                 bcvLabel = hubState.bcvLabel,
                 bcvRefreshing = hubState.bcvRefreshing,
+                cashClosingAlert = hubState.cashClosingAlert,
+                pendingReportsCount = hubState.pendingReportsCount,
                 onNavigate = { destination ->
                     currentScreen = when (destination) {
                         HubDestination.INVENTORY -> AppScreen.INVENTORY
@@ -141,7 +143,10 @@ private fun InventarioRoot(app: InventarioApplication) {
             )
             CashClosingScreen(
                 viewModel = cashClosingVm,
-                onBack = { currentScreen = AppScreen.HUB }
+                onBack = {
+                    hubVm.refreshClosingAlerts()
+                    currentScreen = AppScreen.HUB
+                }
             )
         }
         AppScreen.REPORTS -> {
@@ -149,13 +154,18 @@ private fun InventarioRoot(app: InventarioApplication) {
                 key = "reports_$loginSessionKey",
                 factory = ReportsViewModel.factory(
                     reportsRepository = app.reportsRepository,
-                    bcvRateProvider = { app.inventoryRepository.currentBcvRate() }
+                    bcvRateProvider = { app.inventoryRepository.currentBcvRate() },
+                    sessionManager = app.sessionManager,
+                    userRole = role
                 )
             )
             ReportsScreen(
                 viewModel = reportsVm,
                 subtitle = subtitle,
-                onBack = { currentScreen = AppScreen.HUB },
+                onBack = {
+                    hubVm.refreshClosingAlerts()
+                    currentScreen = AppScreen.HUB
+                },
                 onLogout = logout,
                 onRefreshBcv = hubVm::refreshBcv
             )

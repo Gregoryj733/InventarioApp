@@ -6,10 +6,11 @@ import com.inventario.app.data.entity.UserRole
 class SessionManager(context: Context) {
     private val prefs = context.getSharedPreferences("inventario_session", Context.MODE_PRIVATE)
 
-    fun saveSession(username: String, role: UserRole) {
+    fun saveSession(username: String, role: UserRole, sucursal: String = "") {
         prefs.edit()
             .putString(KEY_USER, username)
             .putString(KEY_ROLE, role.name)
+            .putString(KEY_SUCURSAL, sucursal)
             .apply()
     }
 
@@ -19,14 +20,26 @@ class SessionManager(context: Context) {
 
     fun username(): String? = prefs.getString(KEY_USER, null)
 
+    fun sucursal(): String = prefs.getString(KEY_SUCURSAL, "").orEmpty()
+
     fun role(): UserRole? = prefs.getString(KEY_ROLE, null)?.let {
         runCatching { UserRole.valueOf(it) }.getOrNull()
     }
 
     fun isLoggedIn(): Boolean = username() != null && role() != null
 
+    fun lastAcknowledgedClosingId(username: String): Long =
+        prefs.getLong(ackKey(username), 0L)
+
+    fun acknowledgeClosing(username: String, closingId: Long) {
+        prefs.edit().putLong(ackKey(username), closingId).apply()
+    }
+
+    private fun ackKey(username: String): String = "closing_ack_${username.trim().lowercase()}"
+
     companion object {
         private const val KEY_USER = "username"
         private const val KEY_ROLE = "role"
+        private const val KEY_SUCURSAL = "sucursal"
     }
 }

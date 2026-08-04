@@ -1,11 +1,9 @@
 package com.inventario.app.data.repository
 
 import com.inventario.app.data.dao.CashClosingRecordDao
-import com.inventario.app.data.dao.ProductSalesAggregate
-import com.inventario.app.data.dao.SaleLineItemDao
 import com.inventario.app.data.dao.SaleRecordDao
 import com.inventario.app.data.entity.CashClosingRecord
-import com.inventario.app.data.entity.SaleRecord
+import com.inventario.app.data.entity.CashClosingStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Calendar
@@ -15,78 +13,90 @@ data class ReportsSummary(
     val totalSalesUsd: Double,
     val totalSalesBs: Double,
     val orderCount: Int,
-    val topProduct: ProductSalesAggregate?,
-    val leastProduct: ProductSalesAggregate?,
-    val cashClosings: List<CashClosingRecord>,
-    val differenceAlerts: List<CashClosingRecord>,
-    val dailySales: List<DailySalesPoint>
-)
-
-data class DailySalesPoint(
-    val dayLabel: String,
-    val totalUsd: Double,
-    val orderCount: Int
+    val balancedPendingClosings: List<CashClosingRecord>,
+    val differencePendingClosings: List<CashClosingRecord>,
+    val approvedClosings: List<CashClosingRecord>,
+    val approvedClosingIncomeUsd: Double,
+    val approvedClosingIncomeBs: Double,
+    val rejectedClosings: List<CashClosingRecord>
 )
 
 class ReportsRepository(
     private val saleRecordDao: SaleRecordDao,
-    private val saleLineItemDao: SaleLineItemDao,
     private val cashClosingRecordDao: CashClosingRecordDao
 ) {
     suspend fun loadSummary(start: Long, end: Long, bcvRate: Double?): ReportsSummary =
         withContext(Dispatchers.IO) {
-            val totalUsd = saleRecordDao.sumTotalUsdBetween(start, end)
-            val orderCount = saleRecordDao.countBetween(start, end)
-            val rate = bcvRate ?: 0.0
-            val totalBs = if (rate > 0) totalUsd * rate else 0.0
+            val sales = saleRecordDao.listBetween(start, end)
+            val totalUsd = sales.sumOf { it.totalUsd }
+            val fallbackRate = bcvRate ?: 0.0
+            val totalBs = sales.sumOf { sale ->
+                val rate = sale.bcvRate.takeIf { it > 0 } ?: fallbackRate
+                if (rate > 0) sale.totalUsd * rate else 0.0
+            }
+            val orderCount = sales.size
+
+            val approvedClosings = cashClosingRecordDao.listApprovedBetween(start, end)
+            val approvedIncomeUsd = approvedClosings.sumOf { it.grandTotalUsd }
+            val approvedIncomeBs = approvedClosings.sumOf { it.grandTotalBs }
 
             ReportsSummary(
                 totalSalesUsd = totalUsd,
                 totalSalesBs = totalBs,
                 orderCount = orderCount,
-                topProduct = saleLineItemDao.topProductsBetween(start, end).firstOrNull(),
-                leastProduct = saleLineItemDao.leastSoldProductsBetween(start, end).firstOrNull(),
-                cashClosings = cashClosingRecordDao.listBetween(start, end),
-                differenceAlerts = cashClosingRecordDao.listWithDifferenceBetween(start, end),
-                dailySales = buildDailySales(saleRecordDao.listBetween(start, end), start, end)
+                balancedPendingClosings = cashClosingRecordDao.listBalancedPendingBetween(start, end),
+                differencePendingClosings = cashClosingRecordDao.listDifferencePendingBetween(start, end),
+                approvedClosings = approvedClosings,
+                approvedClosingIncomeUsd = approvedIncomeUsd,
+                approvedClosingIncomeBs = approvedIncomeBs,
+                rejectedClosings = cashClosingRecordDao.listRejectedBetween(start, end)
             )
         }
 
-    private fun buildDailySales(
-        records: List<SaleRecord>,
-        start: Long,
-        end: Long
-    ): List<DailySalesPoint> {
-        if (records.isEmpty()) return emptyList()
-
-        val cal = Calendar.getInstance()
-        val dayFormat = java.text.SimpleDateFormat("dd/MM", java.util.Locale("es", "VE"))
-        val buckets = linkedMapOf<String, MutableList<SaleRecord>>()
-
-        var cursor = start
-        while (cursor < end) {
-            cal.timeInMillis = cursor
-            buckets[dayFormat.format(cal.time)] = mutableListOf()
-            cursor += TimeUnit.DAYS.toMillis(1)
+    suspend fun approveClosing(id: Long, reviewerUsername: String, verificationCode: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                require(verificationCode == VERIFICATION_CODE) { "Código de verificación incorrecto." }
+                val updated = cashClosingRecordDao.updateStatus(
+                    id = id,
+                    status = CashClosingStatus.APPROVED,
+                    reviewedBy = reviewerUsername,
+                    reviewedAt = System.currentTimeMillis()
+                )
+                if (updated == 0) error("No se pudo aprobar el cierre. Verifica que esté pendiente.")
+            }
         }
 
-        for (record in records) {
-            cal.timeInMillis = record.createdAt
-            val key = dayFormat.format(cal.time)
-            buckets.getOrPut(key) { mutableListOf() }.add(record)
+    suspend fun rejectClosing(id: Long, reviewerUsername: String, verificationCode: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                require(verificationCode == VERIFICATION_CODE) { "Código de verificación incorrecto." }
+                val updated = cashClosingRecordDao.updateStatus(
+                    id = id,
+                    status = CashClosingStatus.REJECTED,
+                    reviewedBy = reviewerUsername,
+                    reviewedAt = System.currentTimeMillis()
+                )
+                if (updated == 0) error("No se pudo rechazar el cierre. Verifica que esté pendiente.")
+            }
         }
 
-        return buckets.map { (label, dayRecords) ->
-            DailySalesPoint(
-                dayLabel = label,
-                totalUsd = dayRecords.sumOf { it.totalUsd },
-                orderCount = dayRecords.size
-            )
+    suspend fun revertClosing(id: Long, reviewerUsername: String, verificationCode: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                require(verificationCode == VERIFICATION_CODE) { "Código de verificación incorrecto." }
+                val updated = cashClosingRecordDao.revertApproved(
+                    id = id,
+                    reviewedBy = reviewerUsername,
+                    reviewedAt = System.currentTimeMillis()
+                )
+                if (updated == 0) error("No se pudo revertir el cierre. Verifica que esté aprobado.")
+            }
         }
-    }
 
     companion object {
         const val MAX_RANGE_DAYS = 90
+        const val VERIFICATION_CODE = "4321"
 
         fun clampRange(start: Long, end: Long): Pair<Long, Long> {
             val maxMillis = TimeUnit.DAYS.toMillis(MAX_RANGE_DAYS.toLong())

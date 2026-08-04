@@ -27,7 +27,7 @@ import com.inventario.app.data.entity.User
         SaleLineItem::class,
         CashClosingRecord::class
     ],
-    version = 5,
+    version = 8,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

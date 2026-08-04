@@ -8,6 +8,9 @@ import com.inventario.app.data.MIGRATION_1_2
 import com.inventario.app.data.MIGRATION_2_3
 import com.inventario.app.data.MIGRATION_3_4
 import com.inventario.app.data.MIGRATION_4_5
+import com.inventario.app.data.MIGRATION_5_6
+import com.inventario.app.data.MIGRATION_6_7
+import com.inventario.app.data.MIGRATION_7_8
 import com.inventario.app.data.bcv.BcvRateFetcher
 import com.inventario.app.data.repository.AuthRepository
 import com.inventario.app.data.repository.InventoryRepository
@@ -67,7 +70,6 @@ class InventarioApplication : Application() {
         )
         reportsRepository = ReportsRepository(
             saleRecordDao = database.saleRecordDao(),
-            saleLineItemDao = database.saleLineItemDao(),
             cashClosingRecordDao = database.cashClosingRecordDao()
         )
 
@@ -102,7 +104,15 @@ class InventarioApplication : Application() {
             applicationContext,
             AppDatabase::class.java,
             dbName
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+        ).addMigrations(
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+            MIGRATION_4_5,
+            MIGRATION_5_6,
+            MIGRATION_6_7,
+            MIGRATION_7_8
+        )
 
         return runCatching { builder.build() }.getOrElse { migrationError ->
             Log.w(TAG, "Database migration failed, recreating local database", migrationError)

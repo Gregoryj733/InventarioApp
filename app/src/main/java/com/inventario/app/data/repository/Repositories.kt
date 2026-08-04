@@ -9,7 +9,9 @@ import com.inventario.app.data.dao.SaleLineItemDao
 import com.inventario.app.data.dao.SaleRecordDao
 import com.inventario.app.data.dao.UserDao
 import com.inventario.app.data.entity.AppMeta
+import com.inventario.app.data.entity.CashClosingAlertType
 import com.inventario.app.data.entity.CashClosingRecord
+import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.SaleLineItem
 import com.inventario.app.data.entity.SaleRecord
@@ -74,12 +76,14 @@ class AuthRepository(
         userDao.listByRole(UserRole.CONSULTA)
     }
 
-    suspend fun createConsultaUser(username: String, password: String): Result<User> =
+    suspend fun createConsultaUser(username: String, password: String, sucursal: String): Result<User> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val normalized = username.trim().lowercase()
+                val branch = sucursal.trim()
                 require(normalized.length >= 3) { "El usuario debe tener al menos 3 caracteres." }
                 require(password.length >= 4) { "La contraseña debe tener al menos 4 caracteres." }
+                require(branch.isNotBlank()) { "Indica la sucursal del usuario." }
                 require(normalized != "admin") { "Ese nombre de usuario no está permitido." }
                 if (userDao.findByUsername(normalized) != null) {
                     error("El usuario \"$normalized\" ya existe.")
@@ -88,7 +92,8 @@ class AuthRepository(
                     username = normalized,
                     passwordHash = PasswordHasher.hash(password),
                     role = UserRole.CONSULTA,
-                    active = true
+                    active = true,
+                    sucursal = branch
                 )
                 userDao.insert(user)
                 userDao.findByUsername(normalized) ?: user
@@ -107,6 +112,16 @@ class AuthRepository(
             runCatching {
                 val updated = userDao.setActive(id, UserRole.CONSULTA, active)
                 if (updated == 0) error("No se pudo actualizar el usuario.")
+            }
+        }
+
+    suspend fun assignConsultaUserSucursal(id: Long, sucursal: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val branch = sucursal.trim()
+                require(branch.isNotBlank()) { "Indica la sucursal del usuario." }
+                val updated = userDao.setSucursal(id, UserRole.CONSULTA, branch)
+                if (updated == 0) error("No se pudo asignar la sucursal.")
             }
         }
 }
@@ -224,10 +239,12 @@ class InventoryRepository(
             }
             productDao.executeOrderDeductions(lines, now)
             val totalUsd = lines.sumOf { it.totalUsd }
+            val rate = appMetaDao.get()?.bcvRate ?: 0.0
             val sale = SaleRecord(
                 syncId = InventoryCloudSync.newSyncId(),
                 createdAt = now,
-                totalUsd = totalUsd
+                totalUsd = totalUsd,
+                bcvRate = rate
             )
             val saleId = saleRecordDao.insert(sale)
             val lineItems = lines.map { line ->
@@ -265,8 +282,87 @@ class InventoryRepository(
         saleRecordDao.deleteBetween(start, end)
     }
 
-    suspend fun saveCashClosing(record: CashClosingRecord) = withContext(Dispatchers.IO) {
-        cashClosingRecordDao.insert(record)
+    suspend fun saveCashClosing(record: CashClosingRecord): Result<Long> = withContext(Dispatchers.IO) {
+        runCatching {
+            val username = record.username.trim().lowercase()
+            val (dayStart, dayEnd) = todayBounds()
+            val maxRevision = cashClosingRecordDao.maxRevisionByUserBetween(username, dayStart, dayEnd)
+            val latest = cashClosingRecordDao.latestByUserBetween(username, dayStart, dayEnd)
+
+            when (latest?.status) {
+                CashClosingStatus.APPROVED ->
+                    error("Tu cierre de caja de hoy ya fue aprobado. No puedes registrar otro.")
+                CashClosingStatus.PENDING -> {
+                    if (maxRevision >= InventoryRepository.MAX_CLOSINGS_PER_DAY) {
+                        error("Has alcanzado el máximo de ${InventoryRepository.MAX_CLOSINGS_PER_DAY} intentos de cierre por día.")
+                    }
+                    val updated = record.copy(
+                        id = latest.id,
+                        status = CashClosingStatus.PENDING,
+                        revisionNumber = latest.revisionNumber + 1,
+                        reviewedBy = "",
+                        reviewedAt = 0L
+                    )
+                    cashClosingRecordDao.update(updated)
+                    latest.id
+                }
+                CashClosingStatus.REVERTED -> {
+                    cashClosingRecordDao.insert(
+                        record.copy(
+                            username = username,
+                            status = CashClosingStatus.PENDING,
+                            revisionNumber = maxRevision + 1,
+                            reviewedBy = "",
+                            reviewedAt = 0L
+                        )
+                    )
+                }
+                CashClosingStatus.REJECTED, null -> {
+                    if (maxRevision >= InventoryRepository.MAX_CLOSINGS_PER_DAY) {
+                        error("Has alcanzado el máximo de ${InventoryRepository.MAX_CLOSINGS_PER_DAY} intentos de cierre por día.")
+                    }
+                    cashClosingRecordDao.insert(
+                        record.copy(
+                            username = username,
+                            status = CashClosingStatus.PENDING,
+                            revisionNumber = maxRevision + 1,
+                            reviewedBy = "",
+                            reviewedAt = 0L
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun cashClosingAlertForUser(username: String): CashClosingAlertType? =
+        withContext(Dispatchers.IO) {
+            val normalized = username.trim().lowercase()
+            val (dayStart, dayEnd) = todayBounds()
+            val latest = cashClosingRecordDao.latestByUserBetween(normalized, dayStart, dayEnd)
+            when (latest?.status) {
+                CashClosingStatus.REJECTED -> CashClosingAlertType.REJECTED_RESUBMIT
+                CashClosingStatus.APPROVED -> CashClosingAlertType.APPROVED_SUCCESS
+                else -> null
+            }
+        }
+
+    suspend fun hasPendingClosings(): Boolean = withContext(Dispatchers.IO) {
+        val (dayStart, dayEnd) = todayBounds()
+        cashClosingRecordDao.listBalancedPendingBetween(dayStart, dayEnd).isNotEmpty() ||
+            cashClosingRecordDao.listDifferencePendingBetween(dayStart, dayEnd).isNotEmpty()
+    }
+
+    suspend fun latestClosingToday(username: String): CashClosingRecord? = withContext(Dispatchers.IO) {
+        val normalized = username.trim().lowercase()
+        val (dayStart, dayEnd) = todayBounds()
+        cashClosingRecordDao.latestByUserBetween(normalized, dayStart, dayEnd)
+    }
+
+    suspend fun maxRevisionToday(username: String): Int = withContext(Dispatchers.IO) {
+        val normalized = username.trim().lowercase()
+        val (dayStart, dayEnd) = todayBounds()
+        cashClosingRecordDao.maxRevisionByUserBetween(normalized, dayStart, dayEnd)
     }
 
     suspend fun currentBcvRate(): Double? = withContext(Dispatchers.IO) {
@@ -283,5 +379,9 @@ class InventoryRepository(
         cal.add(Calendar.DAY_OF_MONTH, 1)
         val end = cal.timeInMillis
         return start to end
+    }
+
+    companion object {
+        const val MAX_CLOSINGS_PER_DAY = 5
     }
 }

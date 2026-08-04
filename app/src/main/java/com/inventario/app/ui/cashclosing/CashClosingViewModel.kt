@@ -4,7 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.inventario.app.data.bcv.BcvRateFetcher
+import com.inventario.app.data.entity.CashClosingAlertType
 import com.inventario.app.data.entity.CashClosingRecord
+import com.inventario.app.data.entity.CashClosingSnapshot
+import com.inventario.app.data.entity.CashClosingSnapshotCodec
+import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.session.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,7 +44,7 @@ data class ExpenseEntry(
 )
 
 data class CashClosingUiState(
-    val branchName: String = "Total Care Automotriz",
+    val branchName: String = "",
     val dateText: String = "",
     val rateText: String = "",
     val prevCashUsdText: String = "",
@@ -60,7 +64,11 @@ data class CashClosingUiState(
     val bcvLabel: String = "Tasa BCV: —",
     val bcvRefreshing: Boolean = false,
     val confirmedOrdersToday: Int = 0,
-    val resettingOrders: Boolean = false
+    val resettingOrders: Boolean = false,
+    val saveError: String? = null,
+    val saveSuccess: Boolean = false,
+    val closingAlert: CashClosingAlertType? = null,
+    val remainingAttempts: Int = 5
 )
 
 class CashClosingViewModel(
@@ -85,11 +93,13 @@ class CashClosingViewModel(
     private var nextId = 1L
 
     init {
+        val userSucursal = sessionManager.sucursal()
         _state.update {
             it.copy(
                 username = sessionManager.username().orEmpty(),
                 dateText = dateFormat.format(Date()),
-                posEntries = listOf(newPosEntry("Punto 1"))
+                posEntries = listOf(newPosEntry("Punto 1")),
+                branchName = userSucursal.ifBlank { it.branchName }
             )
         }
         viewModelScope.launch {
@@ -116,6 +126,43 @@ class CashClosingViewModel(
             }
         }
         refreshBcv()
+        refreshClosingStatus()
+    }
+
+    fun refreshClosingStatus() {
+        viewModelScope.launch {
+            val username = sessionManager.username().orEmpty()
+            val alert = inventoryRepository.cashClosingAlertForUser(username)
+            val maxRevision = inventoryRepository.maxRevisionToday(username)
+            val latest = inventoryRepository.latestClosingToday(username)
+            val ackId = sessionManager.lastAcknowledgedClosingId(username)
+            val visibleAlert = when {
+                alert == CashClosingAlertType.REJECTED_RESUBMIT &&
+                    latest?.status == CashClosingStatus.REJECTED &&
+                    latest.id > ackId -> CashClosingAlertType.REJECTED_RESUBMIT
+                alert == CashClosingAlertType.APPROVED_SUCCESS &&
+                    latest?.status == CashClosingStatus.APPROVED &&
+                    latest.id > ackId -> CashClosingAlertType.APPROVED_SUCCESS
+                else -> null
+            }
+            _state.update {
+                it.copy(
+                    closingAlert = visibleAlert,
+                    remainingAttempts = InventoryRepository.MAX_CLOSINGS_PER_DAY - maxRevision
+                )
+            }
+        }
+    }
+
+    fun acknowledgeClosingAlert() {
+        viewModelScope.launch {
+            val username = sessionManager.username().orEmpty()
+            val latest = inventoryRepository.latestClosingToday(username)
+            if (latest != null) {
+                sessionManager.acknowledgeClosing(username, latest.id)
+            }
+            _state.update { it.copy(closingAlert = null) }
+        }
     }
 
     fun resetTodayOrders() {
@@ -367,7 +414,8 @@ class CashClosingViewModel(
     fun salesUsd(): Double = parseUsd(_state.value.salesUsdText)
     fun salesBs(): Double = parseUsd(_state.value.salesBsText)
 
-    fun grandTotalUsd(): Double = totalPosUsd() + totalMobileUsd() + totalCashUsd() + totalExpenseUsd()
+    fun grandTotalUsd(): Double =
+        totalPosUsd() + totalMobileUsd() + totalCashUsd() + totalExpenseUsd() + casheaUsd()
 
     fun grandTotalBs(): Double {
         val rate = currentRate()
@@ -378,28 +426,54 @@ class CashClosingViewModel(
 
     fun isBalanced(): Boolean = abs(differenceUsd()) < 0.01
 
-    fun saveClosingRecord() {
+    fun validateForClosing(): Boolean {
+        val rate = currentRate()
+        if (rate == null) {
+            _state.update { it.copy(saveError = "Indica la tasa BCV antes de continuar.") }
+            return false
+        }
+        _state.update { it.copy(saveError = null) }
+        return true
+    }
+
+    fun saveClosingRecord(onComplete: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            val rate = currentRate() ?: return@launch
+            _state.update { it.copy(saveError = null, saveSuccess = false) }
+            val rate = currentRate()
+            if (rate == null) {
+                _state.update { it.copy(saveError = "Indica la tasa BCV antes de guardar.") }
+                onComplete(false)
+                return@launch
+            }
             val sales = salesUsd()
             val grandUsd = grandTotalUsd()
             val diff = differenceUsd()
-            inventoryRepository.saveCashClosing(
-                CashClosingRecord(
-                    branchName = _state.value.branchName,
-                    dateText = _state.value.dateText,
-                    closedAt = System.currentTimeMillis(),
-                    rate = rate,
-                    salesUsd = sales,
-                    salesBs = salesBs(),
-                    grandTotalUsd = grandUsd,
-                    grandTotalBs = grandTotalBs(),
-                    differenceUsd = diff,
-                    hasDifference = !isBalanced(),
-                    username = _state.value.username,
-                    observations = _state.value.observations
-                )
+            val record = CashClosingRecord(
+                branchName = _state.value.branchName,
+                dateText = _state.value.dateText,
+                closedAt = System.currentTimeMillis(),
+                rate = rate,
+                salesUsd = sales,
+                salesBs = salesBs(),
+                grandTotalUsd = grandUsd,
+                grandTotalBs = grandTotalBs(),
+                differenceUsd = diff,
+                hasDifference = !isBalanced(),
+                username = _state.value.username,
+                observations = _state.value.observations,
+                userSucursal = sessionManager.sucursal(),
+                detailSnapshot = buildDetailSnapshot()
             )
+            inventoryRepository.saveCashClosing(record)
+                .onSuccess {
+                    _state.update { it.copy(saveSuccess = true) }
+                    refreshClosingStatus()
+                    onComplete(true)
+                }
+                .onFailure { err ->
+                    _state.update { it.copy(saveError = err.message ?: "No se pudo guardar el cierre.") }
+                    onComplete(false)
+                }
         }
     }
 
@@ -413,6 +487,49 @@ class CashClosingViewModel(
     }
 
     fun textToAmount(text: String): Double = parseUsd(text)
+
+    private fun buildDetailSnapshot(): String {
+        val s = _state.value
+        val snapshot = CashClosingSnapshot(
+            branchName = s.branchName,
+            userSucursal = sessionManager.sucursal(),
+            prevCashUsd = prevCashUsd(),
+            prevCashBs = prevCashBs(),
+            salesUsd = salesUsd(),
+            salesBs = salesBs(),
+            posEntries = s.posEntries
+                .filter { it.usdText.isNotBlank() || it.bsText.isNotBlank() }
+                .map {
+                    CashClosingSnapshot.SnapshotPosEntry(
+                        name = it.name,
+                        usd = parseUsd(it.usdText),
+                        bs = parseUsd(it.bsText)
+                    )
+                },
+            mobileEntries = s.mobileEntries
+                .filter { it.usdText.isNotBlank() || it.bsText.isNotBlank() }
+                .map {
+                    CashClosingSnapshot.SnapshotMobileEntry(
+                        ref = it.ref,
+                        usd = parseUsd(it.usdText),
+                        bs = parseUsd(it.bsText)
+                    )
+                },
+            cashUsd = totalCashUsd(),
+            cashBs = totalCashBs(),
+            casheaUsd = casheaUsd(),
+            expenseEntries = s.expenseEntries
+                .filter { it.usdText.isNotBlank() }
+                .map {
+                    CashClosingSnapshot.SnapshotExpenseEntry(
+                        description = it.description,
+                        usd = parseUsd(it.usdText)
+                    )
+                },
+            observations = s.observations
+        )
+        return CashClosingSnapshotCodec.encode(snapshot)
+    }
 
     fun buildWhatsAppMessage(): String {
         val s = _state.value
@@ -481,13 +598,6 @@ class CashClosingViewModel(
             appendLine("💵 *Efectivo (C)*")
             appendLine("   ${formatPrice(totalC)} · ${formatBs(totalCashBs())}")
             appendLine()
-            val cashea = casheaUsd()
-            if (cashea > 0) {
-                appendLine("🏦 *Cashea (informativo)*")
-                appendLine("   ${formatPrice(cashea)}")
-                formatBsEquiv(cashea)?.let { appendLine("   $it") }
-                appendLine()
-            }
             appendLine("📤 *Salidas (D)*")
             val expensesWithValues = s.expenseEntries.filter { it.usdText.isNotBlank() }
             if (expensesWithValues.isEmpty()) {
@@ -500,8 +610,13 @@ class CashClosingViewModel(
             }
             appendLine("   _Subtotal D:_ ${formatPrice(totalD)}")
             appendLine()
+            val totalE = casheaUsd()
+            appendLine("🏦 *Cashea (E)*")
+            appendLine("   ${formatPrice(totalE)}")
+            formatBsEquiv(totalE)?.let { appendLine("   $it") }
+            appendLine()
             appendLine("━━━━━━━━━━━━━━━━━━━━")
-            appendLine("📊 *TOTAL (A+B+C+D)*")
+            appendLine("📊 *TOTAL (A+B+C+D+E)*")
             appendLine("   ${formatPrice(grand)}")
             appendLine("   ${formatBs(grandBs)}")
             appendLine("━━━━━━━━━━━━━━━━━━━━")

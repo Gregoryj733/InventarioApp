@@ -39,8 +39,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.inventario.app.data.entity.User
+import com.inventario.app.data.entity.displaySucursal
+import com.inventario.app.data.entity.sucursalPending
 import com.inventario.app.data.repository.AuthRepository
 import com.inventario.app.ui.theme.AppScreenBackground
+import com.inventario.app.ui.theme.BrandWarning
 import com.inventario.app.ui.theme.BrandAppTopBar
 import com.inventario.app.ui.theme.StatusPill
 import com.inventario.app.ui.theme.screenHorizontalPadding
@@ -59,7 +62,11 @@ data class UserManagementUiState(
     val showCreateDialog: Boolean = false,
     val newUsername: String = "",
     val newPassword: String = "",
-    val creating: Boolean = false
+    val newSucursal: String = "",
+    val creating: Boolean = false,
+    val assignSucursalUserId: Long? = null,
+    val assignSucursalText: String = "",
+    val assigningSucursal: Boolean = false
 )
 
 class UserManagementViewModel(
@@ -89,12 +96,21 @@ class UserManagementViewModel(
 
     fun openCreateDialog() {
         _state.update {
-            it.copy(showCreateDialog = true, newUsername = "", newPassword = "", message = null, error = null)
+            it.copy(
+                showCreateDialog = true,
+                newUsername = "",
+                newPassword = "",
+                newSucursal = "",
+                message = null,
+                error = null
+            )
         }
     }
 
     fun dismissCreateDialog() {
-        _state.update { it.copy(showCreateDialog = false, newUsername = "", newPassword = "") }
+        _state.update {
+            it.copy(showCreateDialog = false, newUsername = "", newPassword = "", newSucursal = "")
+        }
     }
 
     fun onNewUsernameChange(value: String) {
@@ -105,11 +121,15 @@ class UserManagementViewModel(
         _state.update { it.copy(newPassword = value, error = null) }
     }
 
+    fun onNewSucursalChange(value: String) {
+        _state.update { it.copy(newSucursal = value, error = null) }
+    }
+
     fun createUser() {
         val current = _state.value
         viewModelScope.launch {
             _state.update { it.copy(creating = true, error = null) }
-            authRepository.createConsultaUser(current.newUsername, current.newPassword)
+            authRepository.createConsultaUser(current.newUsername, current.newPassword, current.newSucursal)
                 .onSuccess {
                     _state.update {
                         it.copy(
@@ -117,6 +137,7 @@ class UserManagementViewModel(
                             showCreateDialog = false,
                             newUsername = "",
                             newPassword = "",
+                            newSucursal = "",
                             message = "Usuario creado correctamente."
                         )
                     }
@@ -155,6 +176,54 @@ class UserManagementViewModel(
 
     fun clearMessage() {
         _state.update { it.copy(message = null, error = null) }
+    }
+
+    fun openAssignSucursalDialog(user: User) {
+        _state.update {
+            it.copy(
+                assignSucursalUserId = user.id,
+                assignSucursalText = user.sucursal,
+                error = null
+            )
+        }
+    }
+
+    fun dismissAssignSucursalDialog() {
+        _state.update {
+            it.copy(assignSucursalUserId = null, assignSucursalText = "", assigningSucursal = false)
+        }
+    }
+
+    fun onAssignSucursalTextChange(value: String) {
+        _state.update { it.copy(assignSucursalText = value, error = null) }
+    }
+
+    fun assignSucursal() {
+        val userId = _state.value.assignSucursalUserId ?: return
+        val branch = _state.value.assignSucursalText
+        viewModelScope.launch {
+            _state.update { it.copy(assigningSucursal = true, error = null) }
+            authRepository.assignConsultaUserSucursal(userId, branch)
+                .onSuccess {
+                    _state.update {
+                        it.copy(
+                            assigningSucursal = false,
+                            assignSucursalUserId = null,
+                            assignSucursalText = "",
+                            message = "Sucursal asignada correctamente."
+                        )
+                    }
+                    refresh()
+                }
+                .onFailure { err ->
+                    _state.update {
+                        it.copy(
+                            assigningSucursal = false,
+                            error = err.message ?: "No se pudo asignar la sucursal."
+                        )
+                    }
+                }
+        }
     }
 
     companion object {
@@ -196,6 +265,13 @@ fun UserManagementScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    OutlinedTextField(
+                        value = state.newSucursal,
+                        onValueChange = viewModel::onNewSucursalChange,
+                        label = { Text("Sucursal") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             },
             confirmButton = {
@@ -208,6 +284,35 @@ fun UserManagementScreen(
             },
             dismissButton = {
                 TextButton(onClick = viewModel::dismissCreateDialog) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
+    if (state.assignSucursalUserId != null) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissAssignSucursalDialog,
+            title = { Text("Asignar sucursal", fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = state.assignSucursalText,
+                    onValueChange = viewModel::onAssignSucursalTextChange,
+                    label = { Text("Sucursal") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = viewModel::assignSucursal,
+                    enabled = !state.assigningSucursal
+                ) {
+                    Text(if (state.assigningSucursal) "Guardando…" else "Asignar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissAssignSucursalDialog) {
                     Text("Cancelar")
                 }
             }
@@ -267,7 +372,8 @@ fun UserManagementScreen(
                         UserRow(
                             user = user,
                             onToggleActive = { viewModel.toggleActive(user) },
-                            onDelete = { viewModel.deleteUser(user) }
+                            onDelete = { viewModel.deleteUser(user) },
+                            onAssignSucursal = { viewModel.openAssignSucursalDialog(user) }
                         )
                     }
                 }
@@ -280,8 +386,10 @@ fun UserManagementScreen(
 private fun UserRow(
     user: User,
     onToggleActive: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onAssignSucursal: () -> Unit
 ) {
+    val pending = user.sucursalPending()
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
@@ -296,10 +404,24 @@ private fun UserRow(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(user.username, fontWeight = FontWeight.SemiBold)
+                Text(
+                    user.displaySucursal(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (pending) BrandWarning else MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 StatusPill(
                     text = if (user.active) "Activo" else "Inactivo",
                     color = if (user.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                 )
+                if (pending) {
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(
+                        onClick = onAssignSucursal,
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Asignar sucursal")
+                    }
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = user.active, onCheckedChange = { onToggleActive() })

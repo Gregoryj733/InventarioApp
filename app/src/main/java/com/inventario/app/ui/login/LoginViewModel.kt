@@ -60,7 +60,7 @@ class LoginViewModel(
                 }
                 LoginStatus.SUCCESS -> {
                     val user = authRepository.login(current.username, current.password)!!
-                    sessionManager.saveSession(user.username, user.role)
+                    sessionManager.saveSession(user.username, user.role, user.sucursal)
                     _state.update { it.copy(loading = false, loggedInRole = user.role) }
                 }
             }

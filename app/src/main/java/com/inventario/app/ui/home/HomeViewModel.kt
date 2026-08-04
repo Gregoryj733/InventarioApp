@@ -693,6 +693,17 @@ class HomeViewModel(
         )
     }
 
+    fun orderCasheaSimulation(): CasheaCalculator.CasheaSimulation? {
+        val rate = _state.value.bcvRate ?: return null
+        val baseUsd = orderTotalUsd()
+        if (!CasheaCalculator.isCasheaEligible(baseUsd)) return null
+        return CasheaCalculator.simulate(
+            baseUsd = baseUsd,
+            rate = rate,
+            quantity = 1.0
+        )
+    }
+
     companion object {
         fun factory(
             appContext: Context,
