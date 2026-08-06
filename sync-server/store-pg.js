@@ -33,6 +33,30 @@ function defaultEntityValue(key) {
   }
 }
 
+/**
+ * Normaliza un valor que debería ser un arreglo. Algunas filas quedaron
+ * persistidas hace tiempo con el arreglo ya serializado como texto (JSON
+ * dentro de JSON, incluso anidado varias veces) por una corrupción de datos
+ * anterior a este archivo; eso hacía que cualquier `.some()`/`.filter()`
+ * sobre esa colección tumbara el request entero con un TypeError, sin
+ * posibilidad de auto-recuperarse porque `valor || []` no reemplaza un
+ * string no vacío. Aquí se intenta desenrollar el texto hasta encontrar un
+ * arreglo real; si no se logra, se descarta a un arreglo vacío en vez de
+ * romper la petición. En cuanto la colección se reescriba (cualquier venta,
+ * pedido o import nuevo), `persistChanged` guarda la forma ya saneada.
+ */
+function asArray(value) {
+  let current = value;
+  for (let attempts = 0; attempts < 5 && typeof current === "string"; attempts += 1) {
+    try {
+      current = JSON.parse(current);
+    } catch (error) {
+      return [];
+    }
+  }
+  return Array.isArray(current) ? current : [];
+}
+
 /** Reconstruye el objeto de estado "plano" que usa el resto del servidor a partir de las filas por colección. */
 function composeState(valuesByKey) {
   const products = valuesByKey.products || defaultEntityValue("products");
@@ -43,11 +67,11 @@ function composeState(valuesByKey) {
   return {
     inventoryRevision: Number(products.inventoryRevision) || 0,
     meta,
-    products: products.items || [],
-    sales: sales.items || [],
-    saleLineItems: sales.lineItems || [],
-    cashClosings: cashClosings.items || [],
-    users: users.items || [],
+    products: asArray(products.items),
+    sales: asArray(sales.items),
+    saleLineItems: asArray(sales.lineItems),
+    cashClosings: asArray(cashClosings.items),
+    users: asArray(users.items),
     nextCashClosingId: Number(cashClosings.nextId) || 1,
     nextSaleLineItemId: Number(sales.nextLineItemId) || 1,
     nextUserId: Number(users.nextId) || 1
