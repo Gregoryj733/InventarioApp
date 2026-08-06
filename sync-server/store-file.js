@@ -13,7 +13,13 @@ function defaultState() {
       lastInventoryUpdateAt: null
     },
     products: [],
-    sales: []
+    sales: [],
+    saleLineItems: [],
+    cashClosings: [],
+    users: [],
+    nextCashClosingId: 1,
+    nextSaleLineItemId: 1,
+    nextUserId: 1
   };
 }
 
@@ -23,26 +29,51 @@ function init() {
   }
 }
 
-function loadState() {
+function readRaw() {
   if (!fs.existsSync(DATA_FILE)) {
     return defaultState();
   }
   try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+    const parsed = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+    return { ...defaultState(), ...parsed };
   } catch (error) {
     console.warn("data.json corrupto, reiniciando estado", error);
     return defaultState();
   }
 }
 
-function saveState(state) {
+async function loadState() {
+  return readRaw();
+}
+
+function writeRaw(state) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2));
+}
+
+async function saveState(state) {
+  writeRaw(state);
+}
+
+// Almacenamiento de archivo: un solo proceso local, se serializa con una cola
+// en memoria para evitar escrituras concurrentes corruptas.
+let queue = Promise.resolve();
+
+async function runTransaction(mutator) {
+  const result = queue.then(async () => {
+    const state = readRaw();
+    const next = await mutator(state);
+    writeRaw(next.state);
+    return next.result;
+  });
+  queue = result.catch(() => {});
+  return result;
 }
 
 module.exports = {
   init,
   loadState,
   saveState,
+  runTransaction,
   backend: "file",
   dataPath: DATA_FILE
 };

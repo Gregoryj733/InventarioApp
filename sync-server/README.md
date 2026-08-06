@@ -35,6 +35,10 @@ Render reinicia el contenedor y **no guarda archivos** en el plan free. Usa Post
 |----------|-------|
 | `API_KEY` | `TcSync-7kM9pQ2xR4nW` (ya en render.yaml) |
 | `DATABASE_URL` | Connection string de Neon (obligatorio para persistencia) |
+| `JWT_SECRET` | Cadena aleatoria larga para firmar los tokens de sesión (obligatorio) |
+| `FIREBASE_SERVICE_ACCOUNT` | JSON completo de la cuenta de servicio de Firebase, en una sola línea (opcional; sin esto no se envían notificaciones push) |
+
+Para generar `FIREBASE_SERVICE_ACCOUNT`: en Firebase Console → ⚙️ Configuración del proyecto → Cuentas de servicio → **Generar nueva clave privada**. Pega el contenido completo del `.json` descargado como valor de la variable.
 
 ### 4. Verificar
 
@@ -60,6 +64,22 @@ Recompila el APK e instálalo en los celulares.
 - El plan free de Render **duerme** tras ~15 min sin tráfico; la app lo reactiva al sincronizar (puede tardar ~30 s).
 - Sin `DATABASE_URL`, el inventario **no persiste** entre reinicios del servicio.
 - Alternativa local: `npm start` en esta carpeta.
+
+## API
+
+Todas las rutas `/v1/*` requieren el header `X-Api-Key`. Las marcadas con 🔒 además requieren `Authorization: Bearer <token>` obtenido en `/v1/auth/login`; 🔒ADMIN requiere que el token tenga `role = ADMIN`.
+
+- `POST /v1/auth/login` — `{ username, password }` → `{ token, user }`
+- `GET /v1/state` — inventario + meta + revisión actual
+- `POST /v1/inventory/import` 🔒ADMIN — multipart `file` (.xlsx) → parsea y reemplaza el inventario, notifica por WebSocket y FCM
+- `POST /v1/inventory/deduct` 🔒 — descuenta stock por pedido
+- `PUT /v1/meta` 🔒 — actualiza tasa BCV / metadatos
+- `GET /v1/sales` 🔒 / `POST /v1/sales` 🔒 / `DELETE /v1/sales?start=&end=` 🔒ADMIN
+- `GET /v1/cash-closings` 🔒 / `POST /v1/cash-closings` 🔒 / `PATCH /v1/cash-closings/:id/status` 🔒
+- `GET /v1/users` 🔒ADMIN / `POST /v1/users` 🔒ADMIN / `PATCH /v1/users/:id` 🔒ADMIN / `DELETE /v1/users/:id` 🔒ADMIN
+- `GET /v1/ws?apiKey=...` — WebSocket; emite `{ type: "inventory" | "sales" | "cashClosings" | "users" }` tras cada cambio
+
+Usuarios por defecto (se crean automáticamente si la base está vacía): `admin/admin` (ADMIN) y `consulta/consulta` (CONSULTA).
 
 ## Desarrollo local
 
