@@ -167,6 +167,33 @@ async function start() {
     res.json({ token, user: sanitizeUser(user) });
   }));
 
+  // Cambio de la propia contraseña: la única vía para rotar la del usuario
+  // "admin" (semilla, fuera del CRUD de /v1/users) sin tocar la base de
+  // datos a mano, ya que solo requiere la sesión ya autenticada.
+  app.post(
+    "/v1/auth/password",
+    auth.requireAuth(),
+    asyncRoute(async (req, res) => {
+      const currentPassword = String(req.body?.currentPassword || "");
+      const newPassword = String(req.body?.newPassword || "");
+      if (newPassword.length < 4) {
+        throw publicError("La nueva contraseña debe tener al menos 4 caracteres.");
+      }
+      await store.runTransaction(async (state) => {
+        const users = state.users.map((u) => ({ ...u }));
+        const target = users.find((u) => String(u.id) === String(req.user.sub));
+        if (!target) throw publicError("Usuario no encontrado", 404);
+        if (!auth.verifyPassword(currentPassword, target.passwordHash)) {
+          throw publicError("La contraseña actual no es correcta.", 401);
+        }
+        target.passwordHash = auth.hashPassword(newPassword);
+        return { state: { ...state, users }, result: null };
+      });
+      realtime.broadcast("users", {});
+      res.json({ ok: true });
+    })
+  );
+
   // ---------- Inventario ----------
   app.get("/v1/state", asyncRoute(async (_req, res) => {
     const state = await store.loadState();
