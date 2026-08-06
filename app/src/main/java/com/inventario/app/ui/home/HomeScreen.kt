@@ -89,6 +89,7 @@ import com.inventario.app.ui.theme.ReportDivider
 import com.inventario.app.ui.theme.ReportHeader
 import com.inventario.app.ui.theme.ReportKeyValueRow
 import com.inventario.app.ui.theme.ConfirmedOrdersBanner
+import com.inventario.app.ui.theme.ConfirmedOrdersPreviewDialog
 import com.inventario.app.ui.theme.ReportMetaChip
 import com.inventario.app.ui.theme.ReportTotalBanner
 import com.inventario.app.ui.theme.StatusPill
@@ -162,6 +163,20 @@ fun HomeScreen(
         )
     }
 
+    if (state.showConfirmedOrdersPreview) {
+        ConfirmedOrdersPreviewDialog(
+            orders = state.confirmedOrdersPreview,
+            loading = state.confirmedOrdersPreviewLoading,
+            error = state.confirmedOrdersPreviewError,
+            currentBcvRate = state.bcvRate,
+            formatPrice = viewModel::formatPrice,
+            formatQty = viewModel::formatQty,
+            formatMoney = viewModel::formatMoney,
+            formatTime = viewModel::formatOrderTime,
+            onDismiss = viewModel::dismissConfirmedOrdersPreview
+        )
+    }
+
     val selectedProduct = state.selectedProduct
     if (selectedProduct != null) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -209,7 +224,10 @@ fun HomeScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 item(key = "info_header") {
-                    InfoHeader(state = state)
+                    InfoHeader(
+                        state = state,
+                        onConfirmedOrdersClick = viewModel::openConfirmedOrdersPreview
+                    )
                 }
 
                 if (state.role == UserRole.ADMIN && state.productCount == 0) {
@@ -232,6 +250,7 @@ fun HomeScreen(
                         ConfirmedOrdersBanner(
                             count = state.confirmedOrdersToday,
                             onReset = viewModel::resetTodayOrders,
+                            onPreview = viewModel::openConfirmedOrdersPreview,
                             resetting = state.resettingOrders
                         )
                     }
@@ -518,7 +537,10 @@ private fun ImportAlertDialog(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun InfoHeader(state: HomeUiState) {
+private fun InfoHeader(
+    state: HomeUiState,
+    onConfirmedOrdersClick: () -> Unit
+) {
     AccentSectionCard(
         title = "Resumen del día",
         titleTrailing = {
@@ -542,7 +564,8 @@ private fun InfoHeader(state: HomeUiState) {
             ReportMetaChip(
                 icon = "🧾",
                 text = confirmedOrdersLabel(state.confirmedOrdersToday),
-                highlight = true
+                highlight = true,
+                onClick = if (state.confirmedOrdersToday > 0) onConfirmedOrdersClick else null
             )
             StatusPill(
                 text = "${state.productCount} productos",

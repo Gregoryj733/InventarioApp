@@ -142,11 +142,33 @@ async function seedDefaultUsers(store) {
   });
 }
 
+/**
+ * Carga el catálogo de compatibilidad marca/modelo/año -> batería (copiado
+ * de duncan.com.ve, ver sync-server/data/battery-finder.json) solo si la
+ * colección todavía está vacía. Al no depender de una API externa en tiempo
+ * de ejecución, basta con sembrarlo una vez; una actualización futura del
+ * archivo requeriría un cambio explícito (no se resiembra automáticamente
+ * para no pisar datos ya editados a mano en la nube).
+ */
+async function seedBatteryFinderData(store) {
+  await store.runTransaction(async (state) => {
+    if (state.batteryFinder.length > 0) {
+      return { state, result: null };
+    }
+    const seedData = require("./data/battery-finder.json");
+    return {
+      state: { ...state, batteryFinder: seedData },
+      result: null
+    };
+  });
+}
+
 async function start() {
   const store = await createStore();
   storeRef = store;
   push.init();
   await seedDefaultUsers(store);
+  await seedBatteryFinderData(store);
 
   // ---------- Autenticación ----------
   app.post("/v1/auth/login", asyncRoute(async (req, res) => {
@@ -383,7 +405,9 @@ async function start() {
   app.get("/v1/sales", auth.requireAuth(), asyncRoute(async (req, res) => {
     const state = await store.loadState();
     const sales = filterByRange(state.sales, "createdAt", req.query);
-    res.json({ sales });
+    const saleSyncIds = new Set(sales.map((s) => s.syncId));
+    const lineItems = state.saleLineItems.filter((l) => saleSyncIds.has(l.saleSyncId));
+    res.json({ sales, lineItems });
   }));
 
   app.post(
@@ -570,6 +594,24 @@ async function start() {
 
       realtime.broadcast("cashClosings", {});
       res.json(updated);
+    })
+  );
+
+  // ---------- Validar Batería ----------
+  // Catálogo de compatibilidad marca/modelo/año -> batería, visible para
+  // cualquier perfil (solo requiere la X-Api-Key global, sin auth.requireAuth
+  // ni restricción de rol): es información de referencia, no datos
+  // sensibles del negocio.
+  app.get(
+    "/v1/battery-finder",
+    asyncRoute(async (_req, res) => {
+      const state = await store.loadState();
+      const items = Array.isArray(state.batteryFinder)
+        ? state.batteryFinder
+        : Array.isArray(state.batteryFinder?.items)
+          ? state.batteryFinder.items
+          : [];
+      res.json({ items });
     })
   );
 

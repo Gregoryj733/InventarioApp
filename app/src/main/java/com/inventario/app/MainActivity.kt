@@ -24,6 +24,8 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.displayLabel
+import com.inventario.app.ui.batteryfinder.BatteryFinderScreen
+import com.inventario.app.ui.batteryfinder.BatteryFinderViewModel
 import com.inventario.app.ui.cashclosing.CashClosingScreen
 import com.inventario.app.ui.cashclosing.CashClosingViewModel
 import com.inventario.app.ui.home.HomeScreen
@@ -73,7 +75,8 @@ private enum class AppScreen {
     INVENTORY,
     CASH_CLOSING,
     REPORTS,
-    USERS
+    USERS,
+    BATTERY_FINDER
 }
 
 @Composable
@@ -165,6 +168,7 @@ private fun InventarioRoot(app: InventarioApplication) {
                             HubDestination.CASH_CLOSING -> AppScreen.CASH_CLOSING
                             HubDestination.REPORTS -> AppScreen.REPORTS
                             HubDestination.USERS -> AppScreen.USERS
+                            HubDestination.BATTERY_FINDER -> AppScreen.BATTERY_FINDER
                         }
                     },
                     onRefreshBcv = hubVm::refreshBcv,
@@ -226,6 +230,18 @@ private fun InventarioRoot(app: InventarioApplication) {
                     },
                     onLogout = logoutAndNotify,
                     onRefreshBcv = hubVm::refreshBcv
+                )
+            }
+            AppScreen.BATTERY_FINDER -> {
+                val batteryFinderVm: BatteryFinderViewModel = viewModel(
+                    key = "battery_finder_$loginSessionKey",
+                    factory = BatteryFinderViewModel.factory(app.batteryFinderRepository)
+                )
+                BatteryFinderScreen(
+                    viewModel = batteryFinderVm,
+                    subtitle = subtitle,
+                    onBack = { currentScreen = AppScreen.HUB },
+                    onLogout = logoutAndNotify
                 )
             }
             AppScreen.USERS -> if (role == UserRole.ADMIN) {

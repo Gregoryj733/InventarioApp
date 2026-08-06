@@ -6,10 +6,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FactCheck
+import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.People
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.inventario.app.data.entity.CashClosingAlertType
 import com.inventario.app.data.entity.UserRole
@@ -46,13 +48,14 @@ import com.inventario.app.ui.theme.BrandWarning
 import com.inventario.app.ui.theme.screenHorizontalPadding
 import com.inventario.app.ui.theme.screenVerticalPadding
 
-private val HubCardMinHeight = 148.dp
+private val HubCardHeight = 176.dp
 
 enum class HubDestination {
     INVENTORY,
     CASH_CLOSING,
     REPORTS,
-    USERS
+    USERS,
+    BATTERY_FINDER
 }
 
 data class HubMenuItem(
@@ -98,6 +101,17 @@ fun MainHubScreen(
                 },
                 icon = Icons.Default.PointOfSale,
                 showAlertBell = cashClosingAlert != null
+            )
+        )
+        // Visible para todos los perfiles: es una herramienta de consulta de
+        // referencia (no afecta inventario, ventas ni cierres), igual que el
+        // buscador de baterías de duncan.com.ve en el que se basa.
+        add(
+            HubMenuItem(
+                destination = HubDestination.BATTERY_FINDER,
+                title = "Validador\nBatería Duncan",
+                subtitle = "Encuentra la batería de tu vehículo",
+                icon = Icons.Default.BatteryChargingFull
             )
         )
         // Consulta no participa en el flujo de aprobación de cierres de caja.
@@ -173,20 +187,19 @@ fun MainHubScreen(
                         }
                     ) { index, item ->
                         val isLonelyLast = index == items.lastIndex && items.size % columns != 0
-                        Box(
-                            modifier = Modifier.fillMaxWidth(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            HubMenuCard(
-                                item = item,
-                                onClick = { onNavigate(item.destination) },
-                                modifier = if (isLonelyLast) {
-                                    Modifier.fillMaxWidth(0.48f)
-                                } else {
-                                    Modifier.fillMaxWidth()
-                                }
-                            )
-                        }
+                        HubMenuCard(
+                            item = item,
+                            onClick = { onNavigate(item.destination) },
+                            modifier = if (isLonelyLast) {
+                                Modifier
+                                    .fillMaxWidth(0.48f)
+                                    .fillMaxHeight()
+                            } else {
+                                Modifier
+                                    .fillMaxWidth()
+                                    .fillMaxHeight()
+                            }
+                        )
                     }
                 }
             }
@@ -202,8 +215,7 @@ private fun HubMenuCard(
 ) {
     Card(
         modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = HubCardMinHeight)
+            .height(HubCardHeight)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -211,12 +223,15 @@ private fun HubMenuCard(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 20.dp),
+                .fillMaxSize()
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Box(contentAlignment = Alignment.TopEnd) {
+            Box(
+                modifier = Modifier.height(40.dp),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(
                     imageVector = item.icon,
                     contentDescription = null,
@@ -234,20 +249,29 @@ private fun HubMenuCard(
                     )
                 }
             }
-            Text(
-                text = item.title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
-            )
-            Text(
-                text = item.subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                minLines = 2,
-                maxLines = 2
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = item.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    minLines = 2,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = item.subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    minLines = 2,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }

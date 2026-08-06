@@ -1,8 +1,11 @@
 package com.inventario.app.data.repository
 
+import com.inventario.app.data.entity.BatteryFinderEntry
 import com.inventario.app.data.entity.CashClosingRecord
 import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.entity.Product
+import com.inventario.app.data.entity.ConfirmedOrderPreview
+import com.inventario.app.data.entity.SaleLineItem
 import com.inventario.app.data.entity.SaleRecord
 import com.inventario.app.data.entity.User
 import com.inventario.app.data.entity.UserRole
@@ -70,6 +73,109 @@ internal fun JSONArray.toSaleList(): List<SaleRecord> {
         )
     }
     return sales
+}
+
+internal fun JSONArray.toSaleLineItemList(): List<SaleLineItem> {
+    val items = mutableListOf<SaleLineItem>()
+    for (i in 0 until length()) {
+        val json = optJSONObject(i) ?: continue
+        val saleSyncId = json.optString("saleSyncId").takeIf { it.isNotBlank() } ?: continue
+        val description = json.optString("description").takeIf { it.isNotBlank() } ?: continue
+        val quantity = json.optDouble("quantity", Double.NaN)
+        if (quantity.isNaN() || quantity <= 0) continue
+        items.add(
+            SaleLineItem(
+                saleSyncId = saleSyncId,
+                description = description,
+                quantity = quantity,
+                unit = json.optString("unit", "UNIDAD"),
+                unitPriceUsd = json.optDouble("unitPriceUsd", 0.0),
+                totalUsd = json.optDouble("totalUsd", 0.0)
+            )
+        )
+    }
+    return items
+}
+
+internal fun buildConfirmedOrderPreviews(
+    sales: List<SaleRecord>,
+    lineItems: List<SaleLineItem>
+): List<ConfirmedOrderPreview> {
+    val linesBySale = lineItems.groupBy { it.saleSyncId }
+    return sales
+        .sortedByDescending { it.createdAt }
+        .map { sale ->
+            ConfirmedOrderPreview(
+                syncId = sale.syncId,
+                createdAt = sale.createdAt,
+                totalUsd = sale.totalUsd,
+                bcvRate = sale.bcvRate,
+                lines = linesBySale[sale.syncId].orEmpty()
+            )
+        }
+}
+
+internal fun ConfirmedOrderPreview.toJsonObject(): JSONObject = JSONObject().apply {
+    put("syncId", syncId)
+    put("createdAt", createdAt)
+    put("totalUsd", totalUsd)
+    put("bcvRate", bcvRate)
+    put(
+        "lines",
+        JSONArray().apply {
+            lines.forEach { line ->
+                put(
+                    JSONObject().apply {
+                        put("saleSyncId", line.saleSyncId)
+                        put("description", line.description)
+                        put("quantity", line.quantity)
+                        put("unit", line.unit)
+                        put("unitPriceUsd", line.unitPriceUsd)
+                        put("totalUsd", line.totalUsd)
+                    }
+                )
+            }
+        }
+    )
+}
+
+internal fun JSONArray.toConfirmedOrderPreviewList(): List<ConfirmedOrderPreview> {
+    val orders = mutableListOf<ConfirmedOrderPreview>()
+    for (i in 0 until length()) {
+        val json = optJSONObject(i) ?: continue
+        val syncId = json.optString("syncId").takeIf { it.isNotBlank() } ?: continue
+        val createdAt = json.optLong("createdAt", 0L)
+        if (createdAt <= 0L) continue
+        val lineItems = json.optJSONArray("lines")?.toSaleLineItemList().orEmpty()
+        orders.add(
+            ConfirmedOrderPreview(
+                syncId = syncId,
+                createdAt = createdAt,
+                totalUsd = json.optDouble("totalUsd", 0.0),
+                bcvRate = json.optDouble("bcvRate", 0.0),
+                lines = lineItems
+            )
+        )
+    }
+    return orders
+}
+
+internal fun mergeConfirmedOrderPreviews(
+    serverOrders: List<ConfirmedOrderPreview>,
+    localOrders: List<ConfirmedOrderPreview>
+): List<ConfirmedOrderPreview> {
+    if (localOrders.isEmpty()) return serverOrders
+    val localBySyncId = localOrders.associateBy { it.syncId }
+    val merged = serverOrders.map { order ->
+        if (order.lines.isNotEmpty()) {
+            order
+        } else {
+            localBySyncId[order.syncId]?.let { local -> order.copy(lines = local.lines) } ?: order
+        }
+    }
+    val serverIds = serverOrders.map { it.syncId }.toSet()
+    val localOnly = localOrders.filter { it.syncId !in serverIds }
+    return (merged + localOnly).sortedByDescending { it.createdAt }
 }
 
 internal fun JSONObject.toCashClosingRecord(): CashClosingRecord = CashClosingRecord(
@@ -145,4 +251,33 @@ internal fun JSONArray.toUserList(): List<User> {
         users.add(json.toUser())
     }
     return users.sortedBy { it.username }
+}
+
+internal fun JSONArray.toBatteryFinderList(): List<BatteryFinderEntry> {
+    val entries = mutableListOf<BatteryFinderEntry>()
+    for (i in 0 until length()) {
+        val json = optJSONObject(i) ?: continue
+        val attributes = json.optJSONObject("attributes")
+        val marca = json.optString("marca").takeIf { it.isNotBlank() }
+            ?: attributes?.optString("attribute_pa_marca")?.takeIf { it.isNotBlank() }
+            ?: continue
+        val modelo = json.optString("modelo").takeIf { it.isNotBlank() }
+            ?: attributes?.optString("attribute_pa_modelo")?.takeIf { it.isNotBlank() }
+            ?: continue
+        val anio = json.optString("anio").takeIf { it.isNotBlank() }
+            ?: attributes?.optString("attribute_pa_ano")?.takeIf { it.isNotBlank() }
+            ?: continue
+        val bateria = json.optString("bateria").takeIf { it.isNotBlank() }
+            ?: attributes?.optString("attribute_pa_bateria")?.takeIf { it.isNotBlank() }
+            ?: continue
+        entries.add(
+            BatteryFinderEntry(
+                marca = marca.trim().lowercase(),
+                modelo = modelo.trim().lowercase(),
+                anio = anio.trim(),
+                bateria = bateria.trim().lowercase()
+            )
+        )
+    }
+    return entries
 }

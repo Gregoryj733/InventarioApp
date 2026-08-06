@@ -1,0 +1,3050 @@
+[
+  {
+    "marca": "audi",
+    "modelo": "a3",
+    "anio": "04-07",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "audi",
+    "modelo": "a4",
+    "anio": "04-07",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "audi",
+    "modelo": "a6",
+    "anio": "04-07",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "audi",
+    "modelo": "a8",
+    "anio": "04-07",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "audi",
+    "modelo": "q7",
+    "anio": "04-07",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "blue-bird",
+    "modelo": "todos",
+    "anio": "00-10",
+    "bateria": "8d-1450"
+  },
+  {
+    "marca": "bmw",
+    "modelo": "116i",
+    "anio": "98-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "bmw",
+    "modelo": "135i",
+    "anio": "98-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "bmw",
+    "modelo": "318i",
+    "anio": "98-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "bmw",
+    "modelo": "525i",
+    "anio": "98-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "bmw",
+    "modelo": "530i",
+    "anio": "98-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "bmw",
+    "modelo": "830i",
+    "anio": "01-10",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "bmw",
+    "modelo": "x3",
+    "anio": "98-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "bmw",
+    "modelo": "x5",
+    "anio": "01-10",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "bmw",
+    "modelo": "x6",
+    "anio": "01-10",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "bmw",
+    "modelo": "x7",
+    "anio": "01-10",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "bmw",
+    "modelo": "z3",
+    "anio": "98-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "bmw",
+    "modelo": "z4",
+    "anio": "98-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "buick",
+    "modelo": "le-sabre",
+    "anio": "92-99",
+    "bateria": "78m-800"
+  },
+  {
+    "marca": "chery",
+    "modelo": "arauca",
+    "anio": "12-16",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "chery",
+    "modelo": "cow-in",
+    "anio": "07-09",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "chery",
+    "modelo": "grand-tigger",
+    "anio": "13-17",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chery",
+    "modelo": "grand-tiggo",
+    "anio": "05-15",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "chery",
+    "modelo": "grand-tiggo",
+    "anio": "16",
+    "bateria": "48mr-1000"
+  },
+  {
+    "marca": "chery",
+    "modelo": "orinoco",
+    "anio": "12-16",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "chery",
+    "modelo": "qq",
+    "anio": "06-12",
+    "bateria": "45m-650"
+  },
+  {
+    "marca": "chery",
+    "modelo": "tiggo",
+    "anio": "07-16",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chery",
+    "modelo": "tiuna",
+    "anio": "13-18",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chery",
+    "modelo": "x1",
+    "anio": "14-15",
+    "bateria": "45m-650"
+  },
+  {
+    "marca": "chery",
+    "modelo": "x5",
+    "anio": "15-16",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "astra",
+    "anio": "02-06",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "avalanche",
+    "anio": "05-06",
+    "bateria": "78m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "avalanche",
+    "anio": "07-08",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "aveo",
+    "anio": "05-15",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "blazer",
+    "anio": "05-15",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "c10",
+    "anio": "56-99",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "c-3500",
+    "anio": "00-05",
+    "bateria": "78m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "c-3500",
+    "anio": "11-15",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "c-3500",
+    "anio": "56-99",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "c60",
+    "anio": "56-99",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "c70",
+    "anio": "56-99",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "camaro",
+    "anio": "94-95",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "caprice",
+    "anio": "78-84",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "captiva",
+    "anio": "07-09",
+    "bateria": "43m-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "cavalier",
+    "anio": "92-94",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "celebrity",
+    "anio": "83-96",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "century",
+    "anio": "83-96",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "chevette",
+    "anio": "81-96",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "chevi-nova",
+    "anio": "78-84",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "chevy",
+    "anio": "08-11",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "cheyenne",
+    "anio": "00-07",
+    "bateria": "78m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "cheyenne",
+    "anio": "08-15",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "cheyenne",
+    "anio": "92-99",
+    "bateria": "43m-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "colorado",
+    "anio": "07-08",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "corsa",
+    "anio": "96-06",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "corsica",
+    "anio": "90-96",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "cruze",
+    "anio": "13-15",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "epica",
+    "anio": "07-09",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "esteem",
+    "anio": "97-02",
+    "bateria": "45mr-650"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "exr",
+    "anio": "08-15",
+    "bateria": "4d-1250"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "exz",
+    "anio": "08-15",
+    "bateria": "4d-1250"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "fsr",
+    "anio": "00-14",
+    "bateria": "4d-1250"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "fsr-2-bat",
+    "anio": "06-11",
+    "bateria": "30h-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "fvr-2-bat",
+    "anio": "06-11",
+    "bateria": "30h-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "grand-blazer",
+    "anio": "92-01",
+    "bateria": "43m-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "grand-vitara",
+    "anio": "03-07",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "impala",
+    "anio": "00-05",
+    "bateria": "78m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "impala-ss",
+    "anio": "07-08",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "jimmy",
+    "anio": "00-03",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "kodiak-157",
+    "anio": "02-10",
+    "bateria": "30h-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "kodiak-175",
+    "anio": "02-10",
+    "bateria": "30h-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "kodiak-229",
+    "anio": "92-10",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "lumina",
+    "anio": "96-99",
+    "bateria": "78m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "luv-dmax",
+    "anio": "09-15",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "luv-dmax-4-cilindros",
+    "anio": "01-06",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "luv-dmax-6-cilindros",
+    "anio": "01-06",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "luv-dmax-gnv",
+    "anio": "09-15",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "malibu",
+    "anio": "78-84",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "meriva",
+    "anio": "07-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "montana",
+    "anio": "90-07",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "montecarlo",
+    "anio": "90-99",
+    "bateria": "78m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "monza",
+    "anio": "90-07",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "nhr",
+    "anio": "92-15",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "nkr",
+    "anio": "92-15",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "nlr",
+    "anio": "14",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "npr",
+    "anio": "92-15",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "npr-turbo",
+    "anio": "10-15",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "optra-advance",
+    "anio": "04-07",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "optra-desing",
+    "anio": "09-11",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "optra-hatchback",
+    "anio": "07-08",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "optra-limited",
+    "anio": "08-12",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "orlando",
+    "anio": "13-15",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "s-10",
+    "anio": "90-99",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "silverado",
+    "anio": "00-07",
+    "bateria": "78m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "silverado",
+    "anio": "08-15",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "silverado",
+    "anio": "92-99",
+    "bateria": "43m-900"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "spark",
+    "anio": "06-15",
+    "bateria": "n40mr-500"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "sunfire",
+    "anio": "90-99",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "super-brigadier",
+    "anio": "98-00",
+    "bateria": "31-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "super-carry",
+    "anio": "93-02",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "swift",
+    "anio": "92-97",
+    "bateria": "45m-650"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "tahoe",
+    "anio": "07-14",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "todos",
+    "anio": "56-00",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "trail-blazer",
+    "anio": "02-08",
+    "bateria": "78m-800"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "vitara",
+    "anio": "93-99",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "chevrolet",
+    "modelo": "wagon-r",
+    "anio": "93-99",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "300-c",
+    "anio": "07-08",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "300m",
+    "anio": "98-01",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "brisa",
+    "anio": "02-07",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "caliber",
+    "anio": "07-12",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "caravan",
+    "anio": "97-00",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "dakota",
+    "anio": "07-08",
+    "bateria": "65-1000"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "dodge-dart",
+    "anio": "70-80",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "dodge-forza",
+    "anio": "13-15",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "grand-caravan",
+    "anio": "97-03",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "intrepid",
+    "anio": "97-03",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "journey",
+    "anio": "09-19",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "le-baron",
+    "anio": "97-03",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "neon",
+    "anio": "00-06",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "neon",
+    "anio": "97-99",
+    "bateria": "59-800"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "pt-cruiser",
+    "anio": "02-08",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "ram",
+    "anio": "83-06",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "ram-2500",
+    "anio": "00-09",
+    "bateria": "65-1000"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "ram-2500",
+    "anio": "97-00",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "sebring",
+    "anio": "97-09",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "spirit-stealth",
+    "anio": "91-95",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "chrysler",
+    "modelo": "stratus",
+    "anio": "97-98",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "citroen",
+    "modelo": "c3",
+    "anio": "01-10",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "citroen",
+    "modelo": "c4",
+    "anio": "01-10",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "daewoo",
+    "modelo": "cielo",
+    "anio": "95-01",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "daewoo",
+    "modelo": "damas",
+    "anio": "97-02",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "daewoo",
+    "modelo": "espero",
+    "anio": "95-01",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "daewoo",
+    "modelo": "lanos",
+    "anio": "98-02",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "daewoo",
+    "modelo": "leganza",
+    "anio": "98-02",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "daewoo",
+    "modelo": "matiz",
+    "anio": "99-01",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "daewoo",
+    "modelo": "nubira",
+    "anio": "98-02",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "daewoo",
+    "modelo": "prince",
+    "anio": "93-98",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "daewoo",
+    "modelo": "racer",
+    "anio": "93-97",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "daewoo",
+    "modelo": "salon",
+    "anio": "93-98",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "daewoo",
+    "modelo": "tacuma",
+    "anio": "01-02",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "daewoo",
+    "modelo": "tico",
+    "anio": "97-99",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "dongfeng",
+    "modelo": "duolika",
+    "anio": "12-15",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "dongfeng",
+    "modelo": "haima-7",
+    "anio": "13-14",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "dongfeng",
+    "modelo": "jimba",
+    "anio": "12-15",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "dongfeng",
+    "modelo": "rich",
+    "anio": "10-16",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "dongfeng",
+    "modelo": "s30",
+    "anio": "12-13",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "dongfeng",
+    "modelo": "xiaoba",
+    "anio": "12-15",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "dongfeng",
+    "modelo": "zna",
+    "anio": "14-16",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "encava",
+    "modelo": "24-puestos",
+    "anio": "67-95",
+    "bateria": "4d-1250"
+  },
+  {
+    "marca": "encava",
+    "modelo": "36-puestos",
+    "anio": "67-95",
+    "bateria": "8d-1450"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "147",
+    "anio": "86-89",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "coupe",
+    "anio": "95-10",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "fiorino-idea",
+    "anio": "95-10",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "marea",
+    "anio": "95-10",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "palio",
+    "anio": "90-14",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "palio-adventure",
+    "anio": "90-14",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "premio",
+    "anio": "86-91",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "punto",
+    "anio": "90-10",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "regata",
+    "anio": "84-90",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "ritmo",
+    "anio": "85-90",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "siena",
+    "anio": "90-14",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "spazio",
+    "anio": "86-89",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "strada",
+    "anio": "90-10",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "tempra",
+    "anio": "86-91",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "tucan",
+    "anio": "86-89",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "fiat",
+    "modelo": "uno",
+    "anio": "86-91",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "ford",
+    "modelo": "bronco-6-cil",
+    "anio": "00-05",
+    "bateria": "59-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "bronco-6-cil",
+    "anio": "90-96",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "bronco-8-cil",
+    "anio": "00-05",
+    "bateria": "59-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "bronco-8-cil",
+    "anio": "90-96",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "cargo-1721",
+    "anio": "04-08",
+    "bateria": "4dlt-1200"
+  },
+  {
+    "marca": "ford",
+    "modelo": "cargo-1721",
+    "anio": "08-15",
+    "bateria": "4d-1250"
+  },
+  {
+    "marca": "ford",
+    "modelo": "cargo-2632",
+    "anio": "02-08",
+    "bateria": "8d-1450"
+  },
+  {
+    "marca": "ford",
+    "modelo": "cargo-4432",
+    "anio": "02-08",
+    "bateria": "8d-1450"
+  },
+  {
+    "marca": "ford",
+    "modelo": "cargo-4532",
+    "anio": "02-08",
+    "bateria": "8d-1450"
+  },
+  {
+    "marca": "ford",
+    "modelo": "cargo-815",
+    "anio": "03-15",
+    "bateria": "30h-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "chana",
+    "anio": "89-98",
+    "bateria": "45m-650"
+  },
+  {
+    "marca": "ford",
+    "modelo": "continental",
+    "anio": "63-75",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "corcel",
+    "anio": "81-14",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "ford",
+    "modelo": "cougar",
+    "anio": "80-85",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "del-rey",
+    "anio": "81-14",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "ford",
+    "modelo": "ecosport",
+    "anio": "06-12",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "ford",
+    "modelo": "ecosport",
+    "anio": "15",
+    "bateria": "42mr-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "escort",
+    "anio": "81-14",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "ford",
+    "modelo": "explorer",
+    "anio": "00-05",
+    "bateria": "59-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "explorer",
+    "anio": "06-15",
+    "bateria": "65-1000"
+  },
+  {
+    "marca": "ford",
+    "modelo": "explorer",
+    "anio": "95-99",
+    "bateria": "43m-900"
+  },
+  {
+    "marca": "ford",
+    "modelo": "f-150",
+    "anio": "00-05",
+    "bateria": "59-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "f-350",
+    "anio": "56-99",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "f-350-super-duty",
+    "anio": "11-14",
+    "bateria": "65-1000"
+  },
+  {
+    "marca": "ford",
+    "modelo": "f-350-triton",
+    "anio": "00-10",
+    "bateria": "59-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "f-7000",
+    "anio": "00-01",
+    "bateria": "31-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "f-8000",
+    "anio": "00-01",
+    "bateria": "31-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "fairline",
+    "anio": "63-75",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "fayrmont",
+    "anio": "63-75",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "festiva",
+    "anio": "82-00",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "fiesta",
+    "anio": "07-17",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "ford",
+    "modelo": "focus",
+    "anio": "06-12",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "ford",
+    "modelo": "fortaleza",
+    "anio": "00-05",
+    "bateria": "59-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "fusion",
+    "anio": "07-14",
+    "bateria": "42mr-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "fx4",
+    "anio": "06-14",
+    "bateria": "65-1000"
+  },
+  {
+    "marca": "ford",
+    "modelo": "galaxie",
+    "anio": "63-75",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "granada",
+    "anio": "82-00",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "ka",
+    "anio": "07-17",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "ford",
+    "modelo": "laser",
+    "anio": "96-04",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "ltd",
+    "anio": "63-81",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "maveric",
+    "anio": "63-81",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "mustang",
+    "anio": "07-14",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "ford",
+    "modelo": "mustang",
+    "anio": "63-81",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "mustang",
+    "anio": "82-00",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "mustang",
+    "anio": "97-06",
+    "bateria": "59-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "orion",
+    "anio": "81-14",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "ford",
+    "modelo": "ranger",
+    "anio": "06-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "ford",
+    "modelo": "ranger",
+    "anio": "97-06",
+    "bateria": "59-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "scape",
+    "anio": "06-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "ford",
+    "modelo": "sierra",
+    "anio": "07-14",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "ford",
+    "modelo": "sport-track",
+    "anio": "06-15",
+    "bateria": "65-1000"
+  },
+  {
+    "marca": "ford",
+    "modelo": "taurus",
+    "anio": "95-01",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "ford",
+    "modelo": "todos",
+    "anio": "56-00",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "ford",
+    "modelo": "tracer",
+    "anio": "92-96",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "ford",
+    "modelo": "zephyr",
+    "anio": "63-81",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "freightliner",
+    "modelo": "112",
+    "anio": "00-10",
+    "bateria": "31-1100"
+  },
+  {
+    "marca": "freightliner",
+    "modelo": "columbia-cl",
+    "anio": "00-10",
+    "bateria": "31-1100"
+  },
+  {
+    "marca": "freightliner",
+    "modelo": "m2-106",
+    "anio": "00-10",
+    "bateria": "31-1100"
+  },
+  {
+    "marca": "geely",
+    "modelo": "ck3",
+    "anio": "05-10",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "great-wall",
+    "modelo": "deer",
+    "anio": "06-09",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "great-wall",
+    "modelo": "hoover",
+    "anio": "06-09",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "great-wall",
+    "modelo": "safe",
+    "anio": "06-09",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "hino",
+    "modelo": "bus",
+    "anio": "12-17",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "honda",
+    "modelo": "accord-4-cil",
+    "anio": "02-08",
+    "bateria": "45m-650"
+  },
+  {
+    "marca": "honda",
+    "modelo": "accord-4-cil",
+    "anio": "90-98",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "honda",
+    "modelo": "accord-6-cil",
+    "anio": "00-08",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "honda",
+    "modelo": "civic",
+    "anio": "93-01",
+    "bateria": "45mr-650"
+  },
+  {
+    "marca": "honda",
+    "modelo": "civic-emotion",
+    "anio": "02-06",
+    "bateria": "45mr-650"
+  },
+  {
+    "marca": "honda",
+    "modelo": "civic-emotion",
+    "anio": "93-01",
+    "bateria": "45mr-650"
+  },
+  {
+    "marca": "honda",
+    "modelo": "civic-evolution",
+    "anio": "07-15",
+    "bateria": "45mr-650"
+  },
+  {
+    "marca": "honda",
+    "modelo": "cr-v",
+    "anio": "93-01",
+    "bateria": "45mr-650"
+  },
+  {
+    "marca": "honda",
+    "modelo": "fit",
+    "anio": "07-09",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "honda",
+    "modelo": "legend",
+    "anio": "97-09",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "honda",
+    "modelo": "odyssey",
+    "anio": "00-08",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "honda",
+    "modelo": "pilot",
+    "anio": "00-08",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "honda",
+    "modelo": "prelude",
+    "anio": "92-96",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "honda",
+    "modelo": "vigor",
+    "anio": "00-08",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "hummer",
+    "modelo": "hummer-h1",
+    "anio": "94-07",
+    "bateria": "78m-800"
+  },
+  {
+    "marca": "hummer",
+    "modelo": "hummer-h2",
+    "anio": "94-07",
+    "bateria": "78m-800"
+  },
+  {
+    "marca": "hummer",
+    "modelo": "hummer-h3",
+    "anio": "06-07",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "accent",
+    "anio": "97-10",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "atos",
+    "anio": "06-08",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "coupe",
+    "anio": "97-10",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "elantra",
+    "anio": "02-13",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "elantra",
+    "anio": "92-01",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "excel",
+    "anio": "92-99",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "galloper",
+    "anio": "97-01",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "getz",
+    "anio": "97-10",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "getz-gls-gnv",
+    "anio": "11-12",
+    "bateria": "45mr-650"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "h-100",
+    "anio": "97-99",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "matrix",
+    "anio": "03-07",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "matrix",
+    "anio": "97-10",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "santa-fe",
+    "anio": "05-15",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "santa-fe-gold",
+    "anio": "07-09",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "sonata",
+    "anio": "02-06",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "sonata",
+    "anio": "92-01",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "hyundai",
+    "modelo": "tucson",
+    "anio": "05-10",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "international",
+    "modelo": "todos",
+    "anio": "00-10",
+    "bateria": "31-1100"
+  },
+  {
+    "marca": "isuzu",
+    "modelo": "amigo",
+    "anio": "92-99",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "isuzu",
+    "modelo": "caribe-442",
+    "anio": "92-99",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "isuzu",
+    "modelo": "rodeo",
+    "anio": "92-99",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "isuzu",
+    "modelo": "trooper",
+    "anio": "92-99",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "daily-gnv",
+    "anio": "11-12",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "daily-livianos",
+    "anio": "98-11",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "escudo",
+    "anio": "11-12",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "euro-cargo",
+    "anio": "12-16",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "euro-cargo",
+    "anio": "89-11",
+    "bateria": "30h-1100"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "euro-tector",
+    "anio": "98-11",
+    "bateria": "30h-1100"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "eurotracker",
+    "anio": "83-11",
+    "bateria": "4dlt-1200"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "new-stralis",
+    "anio": "83-11",
+    "bateria": "4dlt-1200"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "power-daily",
+    "anio": "12-16",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "stralis",
+    "anio": "83-11",
+    "bateria": "4dlt-1200"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "tector",
+    "anio": "12-16",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "tector",
+    "anio": "98-11",
+    "bateria": "30h-1100"
+  },
+  {
+    "marca": "iveco",
+    "modelo": "vertis",
+    "anio": "12-16",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "jac",
+    "modelo": "1040",
+    "anio": "15",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "jac",
+    "modelo": "1061",
+    "anio": "15",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "jac",
+    "modelo": "1131",
+    "anio": "15",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "jac",
+    "modelo": "4253",
+    "anio": "15",
+    "bateria": "4d-1250"
+  },
+  {
+    "marca": "jac",
+    "modelo": "todos",
+    "anio": "08-14",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "cherokee",
+    "anio": "80-01",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "cj-10",
+    "anio": "74-90",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "cj-5",
+    "anio": "74-90",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "cj-6",
+    "anio": "74-90",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "cj-7",
+    "anio": "74-90",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "comanche",
+    "anio": "80-01",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "comander",
+    "anio": "07-10",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "compass",
+    "anio": "07-09",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "grand-cherokee",
+    "anio": "00-05",
+    "bateria": "59-800"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "grand-cherokee",
+    "anio": "06-10",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "grand-cherokee",
+    "anio": "11-17",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "grand-cherokee",
+    "anio": "95-98",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "grand-cherokee",
+    "anio": "99",
+    "bateria": "43m-750"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "grand-wagoneer",
+    "anio": "79-94",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "liberty",
+    "anio": "02-03",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "liberty-limited",
+    "anio": "04-16",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "wagoneer",
+    "anio": "04-16",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "jeep",
+    "modelo": "wrangler",
+    "anio": "04-16",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "kenworth",
+    "modelo": "todos",
+    "anio": "00-10",
+    "bateria": "31-1100"
+  },
+  {
+    "marca": "kia",
+    "modelo": "carens",
+    "anio": "00-03",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "kia",
+    "modelo": "carnival",
+    "anio": "00-09",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "kia",
+    "modelo": "optima",
+    "anio": "00-09",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "kia",
+    "modelo": "picanto",
+    "anio": "06-09",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "kia",
+    "modelo": "pregio",
+    "anio": "00-09",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "kia",
+    "modelo": "rio",
+    "anio": "00-03",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "kia",
+    "modelo": "rio-stylus",
+    "anio": "07-12",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "kia",
+    "modelo": "sedona",
+    "anio": "06-08",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "kia",
+    "modelo": "sephia",
+    "anio": "00-03",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "kia",
+    "modelo": "serato",
+    "anio": "00-03",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "kia",
+    "modelo": "shuma",
+    "anio": "00-03",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "kia",
+    "modelo": "sorento",
+    "anio": "05-09",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "kia",
+    "modelo": "spectra",
+    "anio": "00-03",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "kia",
+    "modelo": "sportage",
+    "anio": "00-03",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "kia",
+    "modelo": "sportage-07-10",
+    "anio": "07-10",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "lada",
+    "modelo": "matriuska",
+    "anio": "92-96",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "lada",
+    "modelo": "niva-camioneta",
+    "anio": "92-96",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "lada",
+    "modelo": "samara",
+    "anio": "92-96",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "land-rover",
+    "modelo": "defender",
+    "anio": "75-17",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "land-rover",
+    "modelo": "discovery",
+    "anio": "07-08",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "land-rover",
+    "modelo": "range-rover",
+    "anio": "75-17",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "lexus",
+    "modelo": "300",
+    "anio": "91-97",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "lexus",
+    "modelo": "400",
+    "anio": "91-97",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "lifan",
+    "modelo": "520-talent",
+    "anio": "08-09",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "lincoln",
+    "modelo": "lincoln-town-car",
+    "anio": "06-10",
+    "bateria": "43m-900"
+  },
+  {
+    "marca": "lincoln",
+    "modelo": "lincoln-town-car",
+    "anio": "90-01",
+    "bateria": "43m-900"
+  },
+  {
+    "marca": "lincoln",
+    "modelo": "navigator",
+    "anio": "06-10",
+    "bateria": "65-1000"
+  },
+  {
+    "marca": "mack",
+    "modelo": "todos",
+    "anio": "97-15",
+    "bateria": "31-1100"
+  },
+  {
+    "marca": "mazda",
+    "modelo": "3",
+    "anio": "05-09",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "mazda",
+    "modelo": "323",
+    "anio": "95-02",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "mazda",
+    "modelo": "5",
+    "anio": "05-09",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "mazda",
+    "modelo": "6",
+    "anio": "05-09",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "mazda",
+    "modelo": "626",
+    "anio": "05-09",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "mazda",
+    "modelo": "929",
+    "anio": "05-09",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "mazda",
+    "modelo": "allegro",
+    "anio": "95-02",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "mazda",
+    "modelo": "b-2600-pick-up",
+    "anio": "97-16",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "mazda",
+    "modelo": "bt-50-pick-up",
+    "anio": "97-16",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "mazda",
+    "modelo": "demio",
+    "anio": "04-08",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "mazda",
+    "modelo": "miata",
+    "anio": "92-98",
+    "bateria": "n40mr-500"
+  },
+  {
+    "marca": "mazda",
+    "modelo": "mpv",
+    "anio": "92-99",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "190e",
+    "anio": "91-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "300e",
+    "anio": "91-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "300ml",
+    "anio": "13-18",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "500sel",
+    "anio": "91-16",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "600sel",
+    "anio": "91-16",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "711",
+    "anio": "07-11",
+    "bateria": "30h-1100"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "a160",
+    "anio": "91-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "a170",
+    "anio": "91-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "c300",
+    "anio": "93-15",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "camion-utilitario",
+    "anio": "07-11",
+    "bateria": "30h-1100"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "e320",
+    "anio": "91-16",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "ls-1634",
+    "anio": "05-09",
+    "bateria": "4d-1250"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "ls-2638",
+    "anio": "05-08",
+    "bateria": "31-1100"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "ls-2640",
+    "anio": "05-09",
+    "bateria": "4d-1250"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "mb-303",
+    "anio": "90-12",
+    "bateria": "31-1100"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "ml230",
+    "anio": "91-16",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "s500",
+    "anio": "91-16",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "mercedes-benz",
+    "modelo": "sprinter-313",
+    "anio": "76-08",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "mini",
+    "modelo": "cooper",
+    "anio": "05-10",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "3000",
+    "anio": "93-95",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "canter",
+    "anio": "92-08",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "canter-2-bat",
+    "anio": "11-15",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "colt",
+    "anio": "93-95",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "diamante",
+    "anio": "93-95",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "eclipse",
+    "anio": "93-95",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "expo",
+    "anio": "93-95",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "galant",
+    "anio": "93-95",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "grandis",
+    "anio": "03-11",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "lancer",
+    "anio": "93-15",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "mf",
+    "anio": "93-95",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "mf",
+    "anio": "98-01",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "mirage",
+    "anio": "98-01",
+    "bateria": "45mr-600"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "montero",
+    "anio": "93-16",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "montero-dakar",
+    "anio": "93-10",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "montero-limited",
+    "anio": "93-16",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "mx",
+    "anio": "93-95",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "mx",
+    "anio": "98-01",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "outlander",
+    "anio": "07-10",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "panel-l300",
+    "anio": "93-95",
+    "bateria": "45m-650"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "signo",
+    "anio": "93-15",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "space-wagon",
+    "anio": "98-01",
+    "bateria": "45mr-600"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "van",
+    "anio": "93-95",
+    "bateria": "45m-650"
+  },
+  {
+    "marca": "mitsubishi",
+    "modelo": "zx",
+    "anio": "93-95",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "almera",
+    "anio": "98-10",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "altima",
+    "anio": "98-08",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "armada",
+    "anio": "08-09",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "frontier",
+    "anio": "05-12",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "maxima",
+    "anio": "98-08",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "murano",
+    "anio": "98-08",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "pathfinder",
+    "anio": "01-02",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "pathfinder",
+    "anio": "93-97",
+    "bateria": "22m-800"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "patrol",
+    "anio": "08-09",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "sentra",
+    "anio": "91-02",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "terrano",
+    "anio": "02-03",
+    "bateria": "34m-900"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "tiida",
+    "anio": "07-08",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "x-salon",
+    "anio": "91-98",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "nissan",
+    "modelo": "x-trail-2",
+    "anio": "00-06",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "pegaso",
+    "modelo": "todos",
+    "anio": "78-95",
+    "bateria": "4d-1250"
+  },
+  {
+    "marca": "peugeot",
+    "modelo": "206",
+    "anio": "06-14",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "peugeot",
+    "modelo": "306",
+    "anio": "06-14",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "peugeot",
+    "modelo": "307",
+    "anio": "06-14",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "peugeot",
+    "modelo": "405",
+    "anio": "92-96",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "peugeot",
+    "modelo": "407",
+    "anio": "06-14",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "peugeot",
+    "modelo": "605",
+    "anio": "92-96",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "peugeot",
+    "modelo": "partner",
+    "anio": "11-12",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "clio",
+    "anio": "92-08",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "duster",
+    "anio": "13-15",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "renault",
+    "modelo": "express",
+    "anio": "92-08",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "fuego",
+    "anio": "92-08",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "gala",
+    "anio": "92-08",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "kangoo",
+    "anio": "92-08",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "laguna",
+    "anio": "94-15",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "logan",
+    "anio": "06-09",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "renault",
+    "modelo": "megane",
+    "anio": "00-07",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "megane-ii",
+    "anio": "06-09",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "renault",
+    "modelo": "r-11",
+    "anio": "00-07",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "r-12",
+    "anio": "00-07",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "r-19",
+    "anio": "06-09",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "renault",
+    "modelo": "r-21",
+    "anio": "06-09",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "renault",
+    "modelo": "r-30",
+    "anio": "80-82",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "renault",
+    "modelo": "r-5",
+    "anio": "00-07",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "sandero",
+    "anio": "12-16",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "scenic",
+    "anio": "99-09",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "symbol",
+    "anio": "99-09",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "todos",
+    "anio": "89-99",
+    "bateria": "4d-1250"
+  },
+  {
+    "marca": "renault",
+    "modelo": "traffic",
+    "anio": "99-09",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "renault",
+    "modelo": "twingo",
+    "anio": "99-09",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "rover",
+    "modelo": "minicord",
+    "anio": "91-95",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "seat",
+    "modelo": "cordoba",
+    "anio": "00-08",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "seat",
+    "modelo": "ibiza",
+    "anio": "00-08",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "seat",
+    "modelo": "leon",
+    "anio": "00-08",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "seat",
+    "modelo": "toledo",
+    "anio": "6",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "subaru",
+    "modelo": "forester",
+    "anio": "98-01",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "subaru",
+    "modelo": "impreza",
+    "anio": "96-01",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "subaru",
+    "modelo": "legacy",
+    "anio": "98-01",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "suzuki",
+    "modelo": "grand-vitara",
+    "anio": "00-08",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "suzuki",
+    "modelo": "sidekick",
+    "anio": "92-94",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "tata",
+    "modelo": "indica",
+    "anio": "07-11",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "tata",
+    "modelo": "indigo",
+    "anio": "07-11",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "4-runner",
+    "anio": "93-19",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "autana",
+    "anio": "93-19",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "camry",
+    "anio": "93-19",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "celica",
+    "anio": "00-01",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "celica",
+    "anio": "92-99",
+    "bateria": "45m-650"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "coaster",
+    "anio": "01-14",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "corolla",
+    "anio": "03-08",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "corolla",
+    "anio": "09-15",
+    "bateria": "45mr-650"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "corolla",
+    "anio": "86-02",
+    "bateria": "45mr-650"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "crown",
+    "anio": "92-03",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "dyna",
+    "anio": "92-99",
+    "bateria": "27r-950"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "fj-40",
+    "anio": "93-19",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "fj-40-macho",
+    "anio": "70-98",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "fortuner",
+    "anio": "05-17",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "hiace",
+    "anio": "70-98",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "hilux",
+    "anio": "92-98",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "hilux-4-cil",
+    "anio": "99-14",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "hilux-6-cil",
+    "anio": "99-15",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "kavak",
+    "anio": "06-18",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "land-cruiser",
+    "anio": "06-17",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "land-cruiser",
+    "anio": "70-93",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "meru",
+    "anio": "99-15",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "paseo",
+    "anio": "93-16",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "prado",
+    "anio": "01-16",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "previa",
+    "anio": "01-16",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "rav-4",
+    "anio": "93-16",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "roraima",
+    "anio": "01-10",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "samurai",
+    "anio": "01-10",
+    "bateria": "24m-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "sienna",
+    "anio": "01-16",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "sky",
+    "anio": "86-02",
+    "bateria": "45mr-650"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "starlet",
+    "anio": "92-00",
+    "bateria": "45m-650"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "station-wagon",
+    "anio": "99-07",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "tercel",
+    "anio": "91-98",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "terios",
+    "anio": "03-05",
+    "bateria": "ns40mr-450"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "terios",
+    "anio": "06-15",
+    "bateria": "n40mr-500"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "tundra",
+    "anio": "99-15",
+    "bateria": "24mr-1100"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "yaris",
+    "anio": "00-05",
+    "bateria": "45m-650"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "yaris",
+    "anio": "06-16",
+    "bateria": "n40mr-500"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "yaris-belta",
+    "anio": "06-16",
+    "bateria": "n40mr-500"
+  },
+  {
+    "marca": "toyota",
+    "modelo": "yaris-sport",
+    "anio": "06-16",
+    "bateria": "n40mr-500"
+  },
+  {
+    "marca": "venirauto",
+    "modelo": "centauro",
+    "anio": "06-16",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "venirauto",
+    "modelo": "saipa",
+    "anio": "06-15",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "venirauto",
+    "modelo": "samana",
+    "anio": "06-16",
+    "bateria": "34mr-900"
+  },
+  {
+    "marca": "venirauto",
+    "modelo": "turpial",
+    "anio": "06-15",
+    "bateria": "22mr-800"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "bora",
+    "anio": "96-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "cross-fox",
+    "anio": "05-13",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "escarabajo",
+    "anio": "70-03",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "fox",
+    "anio": "05-13",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "gol",
+    "anio": "96-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "golf",
+    "anio": "96-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "jetta",
+    "anio": "96-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "new-beattle",
+    "anio": "00-13",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "passat",
+    "anio": "96-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "polo",
+    "anio": "00-13",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "space-fox",
+    "anio": "05-13",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "touareg",
+    "anio": "05-08",
+    "bateria": "49r-1100"
+  },
+  {
+    "marca": "volkswagen",
+    "modelo": "vento",
+    "anio": "96-08",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "volvo",
+    "modelo": "740",
+    "anio": "90-92",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "volvo",
+    "modelo": "94",
+    "anio": "90-92",
+    "bateria": "43mr-900"
+  },
+  {
+    "marca": "volvo",
+    "modelo": "vm",
+    "anio": "05-10",
+    "bateria": "30h-1100"
+  },
+  {
+    "marca": "yutong",
+    "modelo": "todos",
+    "anio": "08-18",
+    "bateria": "4d-1250"
+  },
+  {
+    "marca": "zotye",
+    "modelo": "manza",
+    "anio": "12-14",
+    "bateria": "36mr-700"
+  },
+  {
+    "marca": "zotye",
+    "modelo": "nomada",
+    "anio": "07-10",
+    "bateria": "45mr-650"
+  },
+  {
+    "marca": "zotye",
+    "modelo": "vista",
+    "anio": "12-14",
+    "bateria": "36mr-700"
+  }
+]

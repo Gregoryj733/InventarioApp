@@ -620,107 +620,107 @@ class CashClosingViewModel(
         val balanced = isBalanced()
 
         return buildString {
-            appendLine("━━━━━━━━━━━━━━━━━━━━")
-            appendLine("🧾 *CUADRE DE CAJA*")
-            appendLine("━━━━━━━━━━━━━━━━━━━━")
+            appendLine("================================")
+            appendLine("*CIERRE DE CAJA*")
+            appendLine("================================")
             appendLine()
-            appendLine("📍 *${s.branchName}*")
-            appendLine("📅 ${s.dateText}")
+            appendLine("Sucursal: *${s.branchName}*")
+            appendLine("Fecha: ${s.dateText}")
             if (rate != null) {
-                appendLine("💱 Tasa BCV: Bs ${bcvRateFormat.format(rate)}")
+                appendLine("Tasa BCV: Bs ${bcvRateFormat.format(rate)}")
             }
             val prevCash = prevCashUsd()
             if (prevCash > 0) {
-                appendLine("💵 Efectivo cierre anterior: ${formatPrice(prevCash)} · ${formatBs(prevCashBs())}")
+                appendLine("Efectivo cierre anterior: ${formatPrice(prevCash)} | ${formatBs(prevCashBs())}")
             }
             appendLine()
-            appendLine("──── *Ventas del día* ────")
-            appendLine("💰 ${formatPrice(sales)}")
-            appendLine("   ${formatBs(salesBsVal)}")
+            appendLine("--- VENTAS DEL DIA ---")
+            appendLine("Total: ${formatPrice(sales)}")
+            appendLine("       ${formatBs(salesBsVal)}")
             appendLine()
-            appendLine("──── *Detalle del cuadre* ────")
+            appendLine("--- DETALLE DEL CUADRE ---")
             appendLine()
-            appendLine("🏪 *Puntos de venta (A)*")
+            appendLine("*Puntos de venta (A)*")
             val posWithValues = s.posEntries.filter { it.usdText.isNotBlank() || it.bsText.isNotBlank() }
             if (posWithValues.isEmpty()) {
-                appendLine("   — sin registros —")
+                appendLine("   Sin registros")
             } else {
                 posWithValues.forEach { entry ->
                     val usd = parseUsd(entry.usdText)
                     val bs = parseUsd(entry.bsText)
-                    appendLine("   • *${entry.name}*")
-                    appendLine("     ${formatPrice(usd)} · ${formatBs(bs)}")
+                    appendLine("   - *${entry.name}*")
+                    appendLine("     ${formatPrice(usd)} | ${formatBs(bs)}")
                 }
             }
-            appendLine("   _Subtotal A:_ ${formatPrice(totalA)} · ${formatBs(totalPosBs())}")
+            appendLine("   Subtotal A: ${formatPrice(totalA)} | ${formatBs(totalPosBs())}")
             appendLine()
-            appendLine("📱 *Pago móvil (B)*")
+            appendLine("*Pago movil (B)*")
             val mobileWithValues = s.mobileEntries.filter { it.usdText.isNotBlank() || it.bsText.isNotBlank() }
             if (mobileWithValues.isEmpty()) {
-                appendLine("   — sin registros —")
+                appendLine("   Sin registros")
             } else {
                 mobileWithValues.forEach { entry ->
                     val usd = parseUsd(entry.usdText)
                     val bs = parseUsd(entry.bsText)
                     val refLabel = entry.ref.ifBlank { "—" }
-                    appendLine("   • Ref *$refLabel*")
-                    appendLine("     ${formatPrice(usd)} · ${formatBs(bs)}")
+                    appendLine("   - Ref. *$refLabel*")
+                    appendLine("     ${formatPrice(usd)} | ${formatBs(bs)}")
                 }
             }
-            appendLine("   _Subtotal B:_ ${formatPrice(totalB)} · ${formatBs(totalMobileBs())}")
+            appendLine("   Subtotal B: ${formatPrice(totalB)} | ${formatBs(totalMobileBs())}")
             appendLine()
-            appendLine("💵 *Efectivo (C)*")
+            appendLine("*Efectivo (C)*")
             val cashWithValues = s.cashEntries.filter {
                 it.description.isNotBlank() || it.usdText.isNotBlank() || it.bsText.isNotBlank()
             }
             if (cashWithValues.isEmpty()) {
-                appendLine("   — sin registros —")
+                appendLine("   Sin registros")
             } else {
                 cashWithValues.forEach { entry ->
                     val usd = parseUsd(entry.usdText)
                     val bs = parseUsd(entry.bsText)
-                    appendLine("   • *${entry.description.ifBlank { "Efectivo" }}*")
-                    appendLine("     ${formatPrice(usd)} · ${formatBs(bs)}")
+                    appendLine("   - *${entry.description.ifBlank { "Efectivo" }}*")
+                    appendLine("     ${formatPrice(usd)} | ${formatBs(bs)}")
                 }
             }
-            appendLine("   _Subtotal C:_ ${formatPrice(totalC)} · ${formatBs(totalCashBs())}")
+            appendLine("   Subtotal C: ${formatPrice(totalC)} | ${formatBs(totalCashBs())}")
             appendLine()
-            appendLine("📤 *Salidas (D)*")
+            appendLine("*Salidas (D)*")
             val expensesWithValues = s.expenseEntries.filter { it.usdText.isNotBlank() }
             if (expensesWithValues.isEmpty()) {
-                appendLine("   — sin registros —")
+                appendLine("   Sin registros")
             } else {
                 expensesWithValues.forEach { entry ->
-                    appendLine("   • ${entry.description.ifBlank { "—" }}")
+                    appendLine("   - ${entry.description.ifBlank { "—" }}")
                     appendLine("     ${formatPrice(parseUsd(entry.usdText))}")
                 }
             }
-            appendLine("   _Subtotal D:_ ${formatPrice(totalD)}")
+            appendLine("   Subtotal D: ${formatPrice(totalD)}")
             appendLine()
             val totalE = casheaUsd()
-            appendLine("🏦 *Cashea (E)*")
+            appendLine("*Cashea (E)*")
             appendLine("   ${formatPrice(totalE)}")
             formatBsEquiv(totalE)?.let { appendLine("   $it") }
             appendLine()
-            appendLine("━━━━━━━━━━━━━━━━━━━━")
-            appendLine("📊 *TOTAL (A+B+C+D+E)*")
+            appendLine("================================")
+            appendLine("*TOTAL (A+B+C+D+E)*")
             appendLine("   ${formatPrice(grand)}")
             appendLine("   ${formatBs(grandBs)}")
-            appendLine("━━━━━━━━━━━━━━━━━━━━")
+            appendLine("================================")
             appendLine()
             if (balanced) {
-                appendLine("✅ *Cuadra con ventas*")
+                appendLine("Estado: *Cuadre correcto*")
             } else {
-                appendLine("⚠️ *DIFERENCIA: ${formatPrice(abs(diff))}*")
+                appendLine("Estado: *Diferencia de ${formatPrice(abs(diff))}*")
                 appendLine(
-                    if (diff > 0) "   Faltan en caja — revisar" else "   Sobra en caja — revisar"
+                    if (diff > 0) "   Faltante en caja — requiere revision" else "   Sobrante en caja — requiere revision"
                 )
             }
             appendLine()
-            appendLine("📝 *Observaciones*")
+            appendLine("Observaciones:")
             appendLine("   ${s.observations.ifBlank { "—" }}")
             appendLine()
-            appendLine("👤 Registrado por: ${s.username}")
+            appendLine("Registrado por: ${s.username}")
         }
     }
 

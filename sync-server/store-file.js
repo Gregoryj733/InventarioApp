@@ -17,6 +17,7 @@ function defaultState() {
     saleLineItems: [],
     cashClosings: [],
     users: [],
+    batteryFinder: [],
     nextCashClosingId: 1,
     nextSaleLineItemId: 1,
     nextUserId: 1

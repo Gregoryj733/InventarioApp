@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,6 +43,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.inventario.app.data.entity.ConfirmedOrderPreview
+import com.inventario.app.data.entity.SaleLineItem
 
 @Composable
 fun AppScreenBackground(
@@ -398,10 +402,16 @@ fun ReportMetaChip(
     icon: String,
     text: String,
     modifier: Modifier = Modifier,
-    highlight: Boolean = false
+    highlight: Boolean = false,
+    onClick: (() -> Unit)? = null
 ) {
+    val chipModifier = if (onClick != null) {
+        modifier.clickable(onClick = onClick)
+    } else {
+        modifier
+    }
     Surface(
-        modifier = modifier,
+        modifier = chipModifier,
         shape = RoundedCornerShape(10.dp),
         color = if (highlight) {
             MaterialTheme.colorScheme.secondaryContainer
@@ -438,6 +448,7 @@ fun confirmedOrdersLabel(count: Int): String =
 fun ConfirmedOrdersBanner(
     count: Int,
     onReset: (() -> Unit)? = null,
+    onPreview: (() -> Unit)? = null,
     resetting: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -452,6 +463,7 @@ fun ConfirmedOrdersBanner(
             icon = "🧾",
             text = confirmedOrdersLabel(count),
             highlight = true,
+            onClick = if (count > 0) onPreview else null,
             modifier = Modifier.weight(1f, fill = false)
         )
         if (onReset != null) {
@@ -497,6 +509,173 @@ fun ConfirmedOrdersBanner(
                     Text("Cancelar")
                 }
             }
+        )
+    }
+}
+
+@Composable
+fun ConfirmedOrdersPreviewDialog(
+    orders: List<ConfirmedOrderPreview>,
+    loading: Boolean,
+    error: String?,
+    currentBcvRate: Double?,
+    formatPrice: (Double) -> String,
+    formatQty: (Double) -> String,
+    formatMoney: (Double) -> String,
+    formatTime: (Long) -> String,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Pedidos confirmados hoy",
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            when {
+                loading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+                error != null -> {
+                    Text(
+                        text = error,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                orders.isEmpty() -> {
+                    Text(
+                        text = "No hay pedidos confirmados hoy.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        itemsIndexed(orders, key = { _, order -> order.syncId }) { index, order ->
+                            ConfirmedOrderPreviewCard(
+                                index = index + 1,
+                                order = order,
+                                currentBcvRate = currentBcvRate,
+                                formatPrice = formatPrice,
+                                formatQty = formatQty,
+                                formatMoney = formatMoney,
+                                formatTime = formatTime
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cerrar")
+            }
+        }
+    )
+}
+
+@Composable
+private fun ConfirmedOrderPreviewCard(
+    index: Int,
+    order: ConfirmedOrderPreview,
+    currentBcvRate: Double?,
+    formatPrice: (Double) -> String,
+    formatQty: (Double) -> String,
+    formatMoney: (Double) -> String,
+    formatTime: (Long) -> String
+) {
+    val bcvRate = order.bcvRate.takeIf { it > 0 } ?: currentBcvRate
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Pedido $index · ${formatTime(order.createdAt)}",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = formatPrice(order.totalUsd),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            if (bcvRate != null) {
+                Text(
+                    text = "Bs ${formatMoney(order.totalUsd * bcvRate)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (order.lines.isEmpty()) {
+                Text(
+                    text = "Sin detalle de productos.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                order.lines.forEach { line ->
+                    ConfirmedOrderLineRow(
+                        line = line,
+                        formatQty = formatQty
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfirmedOrderLineRow(
+    line: SaleLineItem,
+    formatQty: (Double) -> String
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            text = line.description,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = "${formatQty(line.quantity)} ${line.unit}",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

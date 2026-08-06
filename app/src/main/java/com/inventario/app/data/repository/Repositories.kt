@@ -6,7 +6,9 @@ import com.inventario.app.data.entity.AppMeta
 import com.inventario.app.data.entity.CashClosingAlertType
 import com.inventario.app.data.entity.CashClosingRecord
 import com.inventario.app.data.entity.CashClosingStatus
+import com.inventario.app.data.entity.ConfirmedOrderPreview
 import com.inventario.app.data.entity.Product
+import com.inventario.app.data.entity.SaleLineItem
 import com.inventario.app.data.entity.SaleRecord
 import com.inventario.app.data.entity.User
 import com.inventario.app.data.entity.UserRole
@@ -160,6 +162,10 @@ class InventoryRepository(
     private val metaFlow = MutableStateFlow<AppMeta?>(null)
     private val confirmedOrdersFlow = MutableStateFlow(0)
     private val pendingOrders = ArrayDeque<PendingOrder>()
+    private val todayOrderPreviewsPrefs =
+        context.getSharedPreferences("today_order_previews", Context.MODE_PRIVATE)
+    private var cachedLocalOrderPreviews: List<ConfirmedOrderPreview>? = null
+    private var cachedLocalOrderDayKey: String? = null
 
     init {
         appScope.launch { refreshInventoryState() }
@@ -304,6 +310,22 @@ class InventoryRepository(
                 bcvRate = rate
             )
             val pending = PendingOrder(lines, sale, syncIdsByProductId)
+            val preview = ConfirmedOrderPreview(
+                syncId = sale.syncId,
+                createdAt = sale.createdAt,
+                totalUsd = sale.totalUsd,
+                bcvRate = sale.bcvRate,
+                lines = lines.map { line ->
+                    SaleLineItem(
+                        saleSyncId = sale.syncId,
+                        description = line.description,
+                        quantity = line.quantity,
+                        unit = line.unit,
+                        unitPriceUsd = line.unitPriceUsd,
+                        totalUsd = line.totalUsd
+                    )
+                }
+            )
 
             runCatching { pushOrder(pending) }
                 .onSuccess { applyLocalDeduction(lines, now) }
@@ -315,6 +337,7 @@ class InventoryRepository(
                         throw error
                     }
                 }
+            saveLocalOrderPreview(preview)
             Unit
         }.onSuccess {
             // No depende solo del evento "sales" por WebSocket (que puede
@@ -330,9 +353,18 @@ class InventoryRepository(
     }
 
     suspend fun confirmedOrdersToday(): Int = withContext(Dispatchers.IO) {
-        val (start, end) = todayBounds()
-        fetchSales(start, end).size
+        mergedConfirmedOrdersToday().size
     }.also { confirmedOrdersFlow.value = it }
+
+    suspend fun confirmedOrdersTodayDetails(): List<ConfirmedOrderPreview> = withContext(Dispatchers.IO) {
+        mergedConfirmedOrdersToday()
+    }
+
+    private suspend fun mergedConfirmedOrdersToday(): List<ConfirmedOrderPreview> {
+        val (start, end) = todayBounds()
+        val serverOrders = fetchConfirmedOrders(start, end)
+        return mergeConfirmedOrderPreviews(serverOrders, loadLocalOrderPreviewsForToday(start, end))
+    }
 
     private suspend fun refreshConfirmedOrdersFlow() {
         confirmedOrdersFlow.value = confirmedOrdersToday()
@@ -341,6 +373,7 @@ class InventoryRepository(
     suspend fun resetTodayOrders() = withContext(Dispatchers.IO) {
         val (start, end) = todayBounds()
         cloudSync.delete("/v1/sales", mapOf("start" to start.toString(), "end" to end.toString()))
+        clearLocalOrderPreviews()
     }.also {
         confirmedOrdersFlow.value = 0
     }
@@ -431,6 +464,7 @@ class InventoryRepository(
             }
         }
         refreshInventoryState()
+        refreshConfirmedOrdersFlow()
     }
 
     private fun applyLocalDeduction(lines: List<OrderLine>, now: Long) {
@@ -463,6 +497,13 @@ class InventoryRepository(
         cloudSync.get("/v1/sales", rangeQuery(start, end)).optJSONArray("sales")?.toSaleList() ?: emptyList()
     }.getOrDefault(emptyList())
 
+    private suspend fun fetchConfirmedOrders(start: Long, end: Long): List<ConfirmedOrderPreview> = runCatching {
+        val response = cloudSync.get("/v1/sales", rangeQuery(start, end))
+        val sales = response.optJSONArray("sales")?.toSaleList() ?: emptyList()
+        val lineItems = response.optJSONArray("lineItems")?.toSaleLineItemList() ?: emptyList()
+        buildConfirmedOrderPreviews(sales, lineItems)
+    }.getOrDefault(emptyList())
+
     private suspend fun fetchCashClosings(start: Long? = null, end: Long? = null): List<CashClosingRecord> = runCatching {
         cloudSync.get("/v1/cash-closings", rangeQuery(start, end)).optJSONArray("cashClosings")?.toCashClosingList()
             ?: emptyList()
@@ -488,6 +529,53 @@ class InventoryRepository(
         cal.add(Calendar.DAY_OF_MONTH, 1)
         val end = cal.timeInMillis
         return start to end
+    }
+
+    private fun todayDayKey(): String {
+        val cal = Calendar.getInstance()
+        return "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.DAY_OF_YEAR)}"
+    }
+
+    private fun loadLocalOrderPreviews(): List<ConfirmedOrderPreview> {
+        val dayKey = todayDayKey()
+        if (cachedLocalOrderDayKey == dayKey && cachedLocalOrderPreviews != null) {
+            return cachedLocalOrderPreviews!!
+        }
+        if (todayOrderPreviewsPrefs.getString("day", null) != dayKey) {
+            cachedLocalOrderDayKey = dayKey
+            cachedLocalOrderPreviews = emptyList()
+            return emptyList()
+        }
+        val raw = todayOrderPreviewsPrefs.getString("orders", null)
+        val loaded = raw?.let {
+            runCatching { JSONArray(it).toConfirmedOrderPreviewList() }.getOrDefault(emptyList())
+        } ?: emptyList()
+        cachedLocalOrderDayKey = dayKey
+        cachedLocalOrderPreviews = loaded
+        return loaded
+    }
+
+    private fun loadLocalOrderPreviewsForToday(start: Long, end: Long): List<ConfirmedOrderPreview> =
+        loadLocalOrderPreviews().filter { it.createdAt in start until end }
+
+    private fun saveLocalOrderPreview(preview: ConfirmedOrderPreview) {
+        val dayKey = todayDayKey()
+        val current = loadLocalOrderPreviews()
+        val updated = (current.filter { it.syncId != preview.syncId } + preview)
+            .sortedByDescending { it.createdAt }
+        cachedLocalOrderDayKey = dayKey
+        cachedLocalOrderPreviews = updated
+        val payload = JSONArray().apply { updated.forEach { put(it.toJsonObject()) } }
+        todayOrderPreviewsPrefs.edit()
+            .putString("day", dayKey)
+            .putString("orders", payload.toString())
+            .commit()
+    }
+
+    private fun clearLocalOrderPreviews() {
+        cachedLocalOrderDayKey = todayDayKey()
+        cachedLocalOrderPreviews = emptyList()
+        todayOrderPreviewsPrefs.edit().clear().commit()
     }
 
     private fun JSONArray.toStringList(): List<String> =

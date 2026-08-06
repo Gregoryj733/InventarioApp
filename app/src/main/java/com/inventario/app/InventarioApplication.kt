@@ -5,6 +5,7 @@ import android.util.Log
 import com.google.firebase.messaging.FirebaseMessaging
 import com.inventario.app.data.bcv.BcvRateFetcher
 import com.inventario.app.data.repository.AuthRepository
+import com.inventario.app.data.repository.BatteryFinderRepository
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.repository.ReportsRepository
 import com.inventario.app.data.session.SessionManager
@@ -41,6 +42,8 @@ class InventarioApplication : Application() {
         private set
     lateinit var reportsRepository: ReportsRepository
         private set
+    lateinit var batteryFinderRepository: BatteryFinderRepository
+        private set
     val bcvRateFetcher = BcvRateFetcher()
 
     private lateinit var cloudSync: CloudSync
@@ -66,6 +69,7 @@ class InventarioApplication : Application() {
         authRepository = AuthRepository(cloudSync, sessionManager)
         inventoryRepository = InventoryRepository(context = this, cloudSync = cloudSync, appScope = appScope)
         reportsRepository = ReportsRepository(cloudSync)
+        batteryFinderRepository = BatteryFinderRepository(this, cloudSync)
 
         cloudSync.start(appScope)
         startNetworkMonitor(cloudSync)
@@ -116,6 +120,7 @@ class InventarioApplication : Application() {
         inventoryRepository.setCloudSync(sync)
         authRepository.setCloudSync(sync)
         reportsRepository.setCloudSync(sync)
+        batteryFinderRepository.setCloudSync(sync)
         sync.start(appScope)
         networkMonitor?.stop()
         startNetworkMonitor(sync)

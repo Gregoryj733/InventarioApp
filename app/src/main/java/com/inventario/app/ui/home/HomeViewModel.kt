@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.inventario.app.data.bcv.BcvRateFetcher
 import com.inventario.app.data.cashea.CasheaCalculator
+import com.inventario.app.data.entity.ConfirmedOrderPreview
 import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.order.OrderLine
@@ -68,7 +69,11 @@ data class HomeUiState(
     val cloudConfigApiKey: String = "",
     val cloudConfigMessage: String? = null,
     val confirmedOrdersToday: Int = 0,
-    val resettingOrders: Boolean = false
+    val resettingOrders: Boolean = false,
+    val showConfirmedOrdersPreview: Boolean = false,
+    val confirmedOrdersPreviewLoading: Boolean = false,
+    val confirmedOrdersPreview: List<ConfirmedOrderPreview> = emptyList(),
+    val confirmedOrdersPreviewError: String? = null
 )
 
 class HomeViewModel(
@@ -148,7 +153,10 @@ class HomeViewModel(
                     _state.update {
                         it.copy(
                             resettingOrders = false,
-                            confirmedOrdersToday = 0
+                            confirmedOrdersToday = 0,
+                            showConfirmedOrdersPreview = false,
+                            confirmedOrdersPreview = emptyList(),
+                            confirmedOrdersPreviewError = null
                         )
                     }
                     AppSnackbarController.show("Contador de pedidos del día reiniciado.")
@@ -165,6 +173,49 @@ class HomeViewModel(
                 }
         }
     }
+
+    fun openConfirmedOrdersPreview() {
+        if (_state.value.confirmedOrdersToday <= 0) return
+        _state.update {
+            it.copy(
+                showConfirmedOrdersPreview = true,
+                confirmedOrdersPreviewLoading = true,
+                confirmedOrdersPreviewError = null
+            )
+        }
+        viewModelScope.launch {
+            runCatching { inventoryRepository.confirmedOrdersTodayDetails() }
+                .onSuccess { orders ->
+                    _state.update {
+                        it.copy(
+                            confirmedOrdersPreviewLoading = false,
+                            confirmedOrdersPreview = orders
+                        )
+                    }
+                }
+                .onFailure { err ->
+                    _state.update {
+                        it.copy(
+                            confirmedOrdersPreviewLoading = false,
+                            confirmedOrdersPreviewError =
+                                err.toUserMessage("No se pudieron cargar los pedidos confirmados.")
+                        )
+                    }
+                }
+        }
+    }
+
+    fun dismissConfirmedOrdersPreview() {
+        _state.update {
+            it.copy(
+                showConfirmedOrdersPreview = false,
+                confirmedOrdersPreview = emptyList(),
+                confirmedOrdersPreviewError = null
+            )
+        }
+    }
+
+    fun formatOrderTime(createdAt: Long): String = timeFormat.format(Date(createdAt))
 
     private fun subscribeCloudSync() {
         cloudSyncJob?.cancel()
@@ -427,35 +478,35 @@ class HomeViewModel(
         val bcv = state.bcvRate
 
         return buildString {
-            appendLine("━━━━━━━━━━━━━━━━━━━━")
-            appendLine("📋 *PEDIDO — Total Care*")
-            appendLine("━━━━━━━━━━━━━━━━━━━━")
+            appendLine("================================")
+            appendLine("*PEDIDO — TOTAL CARE AUTOMOTRIZ*")
+            appendLine("================================")
             appendLine()
-            appendLine("👤 Usuario: ${state.username}")
-            appendLine("📅 ${dateFormat.format(now)} · ${timeFormat.format(now)}")
+            appendLine("Usuario: ${state.username}")
+            appendLine("Fecha: ${dateFormat.format(now)}  ${timeFormat.format(now)}")
             if (bcv != null) {
-                appendLine("💱 Tasa BCV: Bs ${bcvRateFormat.format(bcv)}")
+                appendLine("Tasa BCV: Bs ${bcvRateFormat.format(bcv)}")
             }
             appendLine()
-            appendLine("──── *Detalle* ────")
+            appendLine("--- DETALLE ---")
             lines.forEachIndexed { index, line ->
                 appendLine()
                 appendLine("${index + 1}. *${line.description}*")
-                appendLine("   ${formatQty(line.quantity)} ${line.unit} × ${formatPrice(line.unitPriceUsd)}")
+                appendLine("   ${formatQty(line.quantity)} ${line.unit} x ${formatPrice(line.unitPriceUsd)}")
                 append("   Subtotal: ${formatPrice(line.totalUsd)}")
                 if (bcv != null) {
-                    append(" · Bs ${moneyFormat.format(line.totalUsd * bcv)}")
+                    append(" | Bs ${moneyFormat.format(line.totalUsd * bcv)}")
                 }
                 appendLine()
             }
             appendLine()
-            appendLine("──── *Totales* ────")
-            appendLine("💵 *TOTAL USD: ${formatPrice(totalUsd)}*")
+            appendLine("--- TOTALES ---")
+            appendLine("*Total USD: ${formatPrice(totalUsd)}*")
             if (totalBs != null) {
-                appendLine("💵 *TOTAL Bs: Bs ${moneyFormat.format(totalBs)}*")
+                appendLine("*Total Bs: Bs ${moneyFormat.format(totalBs)}*")
             }
             appendLine()
-            appendLine("✅ Stock descontado en la app.")
+            appendLine("Stock actualizado en inventario.")
         }
     }
 

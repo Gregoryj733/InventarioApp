@@ -10,7 +10,7 @@ let pool;
 // tráfico hacia Postgres en cada mutación, algo relevante en el plan free de
 // Neon (cómputo medido) y evita que cada venta sea cada vez más costosa de
 // registrar a medida que se acumula historial.
-const ENTITY_KEYS = ["products", "meta", "sales", "cashClosings", "users"];
+const ENTITY_KEYS = ["products", "meta", "sales", "cashClosings", "users", "batteryFinder"];
 
 function defaultMeta() {
   return { bcvRate: null, bcvFetchedAt: null, lastInventoryUpdateAt: null };
@@ -28,6 +28,11 @@ function defaultEntityValue(key) {
       return { items: [], nextId: 1 };
     case "users":
       return { items: [], nextId: 1 };
+    case "batteryFinder":
+      // Catálogo de compatibilidad marca/modelo/año -> batería (módulo
+      // "Validar Batería"), copiado de duncan.com.ve. Cambia muy rara vez,
+      // por eso vive en su propia colección separada de products/sales.
+      return { items: [] };
     default:
       return null;
   }
@@ -64,6 +69,7 @@ function composeState(valuesByKey) {
   const cashClosings = valuesByKey.cashClosings || defaultEntityValue("cashClosings");
   const users = valuesByKey.users || defaultEntityValue("users");
   const meta = valuesByKey.meta || defaultEntityValue("meta");
+  const batteryFinder = valuesByKey.batteryFinder || defaultEntityValue("batteryFinder");
   return {
     inventoryRevision: Number(products.inventoryRevision) || 0,
     meta,
@@ -72,6 +78,7 @@ function composeState(valuesByKey) {
     saleLineItems: asArray(sales.lineItems),
     cashClosings: asArray(cashClosings.items),
     users: asArray(users.items),
+    batteryFinder: asArray(batteryFinder.items),
     nextCashClosingId: Number(cashClosings.nextId) || 1,
     nextSaleLineItemId: Number(sales.nextLineItemId) || 1,
     nextUserId: Number(users.nextId) || 1
@@ -98,6 +105,9 @@ function decomposeState(state) {
     users: {
       items: state.users || [],
       nextId: Number(state.nextUserId) || 1
+    },
+    batteryFinder: {
+      items: state.batteryFinder || []
     }
   };
 }
@@ -194,8 +204,23 @@ async function init() {
       );
     `);
     await migrateLegacyRowIfNeeded(client);
+    await ensureAllEntityKeysExist(client);
   } finally {
     client.release();
+  }
+}
+
+/** Inserta en sync_kv cualquier colección nueva que falte (p. ej. batteryFinder). */
+async function ensureAllEntityKeysExist(client) {
+  const { rows } = await client.query("SELECT key FROM sync_kv");
+  const existing = new Set(rows.map((row) => row.key));
+  for (const key of ENTITY_KEYS) {
+    if (existing.has(key)) continue;
+    await client.query(
+      "INSERT INTO sync_kv (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING",
+      [key, JSON.stringify(defaultEntityValue(key))]
+    );
+    console.log(`store-pg: creada colección faltante sync_kv.${key}`);
   }
 }
 
