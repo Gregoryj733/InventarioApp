@@ -19,3 +19,6 @@ app/debug/
 tools/render-cli/*.exe
 *.keystore
 !debug.keystore
+*.jks
+/keystore/
+app/keystore.properties
