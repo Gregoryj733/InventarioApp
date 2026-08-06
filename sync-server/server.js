@@ -10,6 +10,16 @@ const push = require("./push");
 const API_KEY = process.env.API_KEY || "inventario-sync-key";
 const PORT = Number(process.env.PORT || 8787);
 const MAX_CLOSINGS_PER_DAY = 5;
+// El plan free de Render "duerme" el servicio tras ~15 min sin tráfico
+// entrante y también suspende la base Postgres de Neon tras inactividad.
+// Cuando eso pasa, el WebSocket de TODOS los dispositivos conectados se
+// corta a la vez y la reconexión + "despertar" el servidor puede tardar
+// hasta un minuto, lo que se percibe como pedidos/inventario desfasados
+// entre celulares. Un ping periódico a /health (tráfico HTTP entrante real,
+// no una llamada interna) evita que el contenedor llegue a esos ~15 min de
+// inactividad y mantiene la conexión a la base de datos activa.
+const KEEP_ALIVE_URL = (process.env.KEEP_ALIVE_URL || process.env.RENDER_EXTERNAL_URL || "").trim();
+const KEEP_ALIVE_INTERVAL_MS = Number(process.env.KEEP_ALIVE_INTERVAL_MS) || 4 * 60 * 1000;
 // Roles que el módulo de Usuarios puede crear/editar/eliminar. ADMIN se
 // gestiona fuera de esta API (usuario semilla único).
 const MANAGEABLE_ROLES = ["CONSULTA", "SUPERVISOR"];
@@ -161,6 +171,32 @@ async function seedBatteryFinderData(store) {
       result: null
     };
   });
+}
+
+/**
+ * Ping periódico a la propia URL pública (no localhost: tiene que ser
+ * tráfico HTTP entrante "real" para que la plataforma no cuente al
+ * servicio como inactivo) para evitar el sueño por inactividad del plan
+ * free y mantener viva la conexión a la base de datos. Se desactiva solo
+ * si no hay ninguna URL configurada (p. ej. desarrollo local con `npm
+ * start`, donde no aplica).
+ */
+function startKeepAlive() {
+  if (!KEEP_ALIVE_URL) {
+    console.log(
+      "Keep-alive deshabilitado (define KEEP_ALIVE_URL o usa el RENDER_EXTERNAL_URL " +
+        "automático de Render para evitar que el plan free duerma el servicio)."
+    );
+    return;
+  }
+  const target = `${KEEP_ALIVE_URL.replace(/\/+$/, "")}/health`;
+  const ping = () => {
+    fetch(target).catch((error) => {
+      console.warn("Keep-alive ping falló:", error.message);
+    });
+  };
+  setInterval(ping, KEEP_ALIVE_INTERVAL_MS);
+  console.log(`Keep-alive activo: ping a ${target} cada ${Math.round(KEEP_ALIVE_INTERVAL_MS / 1000)}s`);
 }
 
 async function start() {
@@ -346,13 +382,14 @@ async function start() {
         }
 
         const products = state.products.map((p) => ({ ...p }));
+        const productBySyncId = new Map(products.map((p) => [p.syncId, p]));
         for (const line of lines) {
           const productSyncId = line?.productSyncId;
           const quantity = Number(line?.quantity);
           if (!productSyncId || !Number.isFinite(quantity) || quantity <= 0) {
             throw publicError("Línea de pedido inválida");
           }
-          const product = products.find((item) => item.syncId === productSyncId);
+          const product = productBySyncId.get(productSyncId);
           if (!product) {
             throw publicError(`Producto no encontrado: ${line.description || productSyncId}`);
           }
@@ -366,17 +403,31 @@ async function start() {
 
         const sales = [...state.sales, { syncId, createdAt, totalUsd, bcvRate }];
         let nextId = state.nextSaleLineItemId;
-        const newLineItems = lines.map((line) => ({
-          id: nextId++,
-          saleSyncId: syncId,
-          productSyncId: line.productSyncId || "",
-          description: line.description || "",
-          quantity: Number(line.quantity) || 0,
-          unit: line.unit || "",
-          unitPriceUsd: Number(line.unitPriceUsd) || 0,
-          totalUsd: Number(line.totalUsd) || 0,
-          createdAt
-        }));
+        // El detalle de cada línea (descripción, cantidad, precio) NUNCA debe
+        // quedar vacío en el pedido guardado: si el cliente no lo manda o lo
+        // manda en blanco, se completa desde el registro real de inventario
+        // (ya resuelto arriba en productBySyncId) en vez de persistir un
+        // hueco que luego se muestra como "Sin detalle de productos." en
+        // cualquier dispositivo que consulte este pedido.
+        const newLineItems = lines.map((line) => {
+          const product = productBySyncId.get(line.productSyncId);
+          const quantity = Number(line.quantity) || 0;
+          const unitPriceUsd = Number(line.unitPriceUsd) || product?.price || 0;
+          const description = String(line.description || "").trim() || product?.description || "";
+          const unit = String(line.unit || "").trim() || product?.unit || "UNIDAD";
+          const totalUsd = Number(line.totalUsd) || unitPriceUsd * quantity;
+          return {
+            id: nextId++,
+            saleSyncId: syncId,
+            productSyncId: line.productSyncId || "",
+            description,
+            quantity,
+            unit,
+            unitPriceUsd,
+            totalUsd,
+            createdAt
+          };
+        });
 
         return {
           state: {
@@ -429,19 +480,28 @@ async function start() {
         if (state.sales.some((item) => item.syncId === syncId)) {
           return { state, result: null };
         }
+        const productBySyncId = new Map(state.products.map((p) => [p.syncId, p]));
         const sales = [...state.sales, { syncId, createdAt, totalUsd, bcvRate }];
         let nextId = state.nextSaleLineItemId;
-        const newLineItems = lines.map((line) => ({
-          id: nextId++,
-          saleSyncId: syncId,
-          productSyncId: line.productSyncId || "",
-          description: line.description || "",
-          quantity: Number(line.quantity) || 0,
-          unit: line.unit || "",
-          unitPriceUsd: Number(line.unitPriceUsd) || 0,
-          totalUsd: Number(line.totalUsd) || 0,
-          createdAt
-        }));
+        const newLineItems = lines.map((line) => {
+          const product = productBySyncId.get(line.productSyncId);
+          const quantity = Number(line.quantity) || 0;
+          const unitPriceUsd = Number(line.unitPriceUsd) || product?.price || 0;
+          const description = String(line.description || "").trim() || product?.description || "";
+          const unit = String(line.unit || "").trim() || product?.unit || "UNIDAD";
+          const totalUsd = Number(line.totalUsd) || unitPriceUsd * quantity;
+          return {
+            id: nextId++,
+            saleSyncId: syncId,
+            productSyncId: line.productSyncId || "",
+            description,
+            quantity,
+            unit,
+            unitPriceUsd,
+            totalUsd,
+            createdAt
+          };
+        });
         return {
           state: {
             ...state,
@@ -722,6 +782,7 @@ async function start() {
     }
     console.log(`API key configured: ${API_KEY ? "yes" : "no"}`);
     console.log(`WebSocket endpoint: /v1/ws`);
+    startKeepAlive();
   });
 }
 
