@@ -213,7 +213,8 @@ private fun InventarioRoot(app: InventarioApplication) {
                         reportsRepository = app.reportsRepository,
                         bcvRateProvider = { app.inventoryRepository.currentBcvRate() },
                         sessionManager = app.sessionManager,
-                        userRole = role
+                        userRole = role,
+                        cloudEvents = app.inventoryRepository.observeCloudEvents()
                     )
                 )
                 ReportsScreen(
@@ -230,7 +231,10 @@ private fun InventarioRoot(app: InventarioApplication) {
             AppScreen.USERS -> if (role == UserRole.ADMIN) {
                 val usersVm: UserManagementViewModel = viewModel(
                     key = "users_$loginSessionKey",
-                    factory = UserManagementViewModel.factory(app.authRepository)
+                    factory = UserManagementViewModel.factory(
+                        app.authRepository,
+                        app.inventoryRepository.observeCloudEvents()
+                    )
                 )
                 UserManagementScreen(
                     viewModel = usersVm,

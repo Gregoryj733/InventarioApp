@@ -1,5 +1,6 @@
 package com.inventario.app.ui.users
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -46,6 +47,8 @@ import com.inventario.app.data.entity.displayLabel
 import com.inventario.app.data.entity.displaySucursal
 import com.inventario.app.data.entity.sucursalPending
 import com.inventario.app.data.repository.AuthRepository
+import com.inventario.app.data.sync.CloudEvent
+import com.inventario.app.data.sync.toUserMessage
 import com.inventario.app.ui.theme.AppScreenBackground
 import com.inventario.app.ui.theme.AppSnackbarController
 import com.inventario.app.ui.theme.BrandWarning
@@ -54,6 +57,7 @@ import com.inventario.app.ui.theme.StatusPill
 import com.inventario.app.ui.theme.screenHorizontalPadding
 import com.inventario.app.ui.theme.screenVerticalPadding
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -74,17 +78,31 @@ data class UserManagementUiState(
     val creating: Boolean = false,
     val assignSucursalUserId: Long? = null,
     val assignSucursalText: String = "",
-    val assigningSucursal: Boolean = false
+    val assigningSucursal: Boolean = false,
+    val editingRoleUserId: Long? = null,
+    val editingRoleValue: UserRole = UserRole.CONSULTA,
+    val savingRole: Boolean = false
 )
 
 class UserManagementViewModel(
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val cloudEvents: SharedFlow<CloudEvent>? = null
 ) : ViewModel() {
     private val _state = MutableStateFlow(UserManagementUiState())
     val state: StateFlow<UserManagementUiState> = _state.asStateFlow()
 
     init {
         refresh()
+        cloudEvents?.let { events ->
+            viewModelScope.launch {
+                // Si el rol o estado de un usuario cambia desde otro
+                // dispositivo (u otra sesión de administrador), esta lista
+                // se refresca sola.
+                events.collect { event ->
+                    if (event is CloudEvent.Users) refresh()
+                }
+            }
+        }
     }
 
     fun refresh() {
@@ -96,7 +114,7 @@ class UserManagementViewModel(
                 }
                 .onFailure { err ->
                     _state.update {
-                        it.copy(loading = false, error = err.message ?: "Error al cargar usuarios.")
+                        it.copy(loading = false, error = err.toUserMessage("Error al cargar usuarios."))
                     }
                 }
         }
@@ -164,7 +182,7 @@ class UserManagementViewModel(
                     AppSnackbarController.show("Usuario \"${current.newUsername.trim()}\" creado correctamente.")
                 }
                 .onFailure { err ->
-                    val message = err.message ?: "No se pudo crear el usuario."
+                    val message = err.toUserMessage("No se pudo crear el usuario.")
                     _state.update {
                         it.copy(creating = false, error = message)
                     }
@@ -183,7 +201,7 @@ class UserManagementViewModel(
                     )
                 }
                 .onFailure { err ->
-                    val message = err.message ?: "No se pudo actualizar el usuario."
+                    val message = err.toUserMessage("No se pudo actualizar el usuario.")
                     _state.update { it.copy(error = message) }
                     AppSnackbarController.show(message)
                 }
@@ -199,7 +217,7 @@ class UserManagementViewModel(
                     AppSnackbarController.show("Usuario \"${user.username}\" eliminado.")
                 }
                 .onFailure { err ->
-                    val message = err.message ?: "No se pudo eliminar el usuario."
+                    val message = err.toUserMessage("No se pudo eliminar el usuario.")
                     _state.update { it.copy(error = message) }
                     AppSnackbarController.show(message)
                 }
@@ -208,6 +226,45 @@ class UserManagementViewModel(
 
     fun clearMessage() {
         _state.update { it.copy(message = null, error = null) }
+    }
+
+    fun openEditRoleDialog(user: User) {
+        _state.update {
+            it.copy(editingRoleUserId = user.id, editingRoleValue = user.role, error = null)
+        }
+    }
+
+    fun dismissEditRoleDialog() {
+        _state.update { it.copy(editingRoleUserId = null, savingRole = false) }
+    }
+
+    fun onEditingRoleChange(role: UserRole) {
+        _state.update { it.copy(editingRoleValue = role) }
+    }
+
+    fun saveRole() {
+        val userId = _state.value.editingRoleUserId ?: return
+        val role = _state.value.editingRoleValue
+        viewModelScope.launch {
+            _state.update { it.copy(savingRole = true, error = null) }
+            authRepository.updateManagedUserRole(userId, role)
+                .onSuccess {
+                    _state.update {
+                        it.copy(
+                            savingRole = false,
+                            editingRoleUserId = null,
+                            message = "Perfil actualizado a \"${role.displayLabel()}\"."
+                        )
+                    }
+                    refresh()
+                    AppSnackbarController.show("Perfil actualizado a \"${role.displayLabel()}\".")
+                }
+                .onFailure { err ->
+                    val message = err.toUserMessage("No se pudo actualizar el perfil.")
+                    _state.update { it.copy(savingRole = false, error = message) }
+                    AppSnackbarController.show(message)
+                }
+        }
     }
 
     fun openAssignSucursalDialog(user: User) {
@@ -249,7 +306,7 @@ class UserManagementViewModel(
                     AppSnackbarController.show("Sucursal asignada correctamente.")
                 }
                 .onFailure { err ->
-                    val message = err.message ?: "No se pudo asignar la sucursal."
+                    val message = err.toUserMessage("No se pudo asignar la sucursal.")
                     _state.update {
                         it.copy(
                             assigningSucursal = false,
@@ -262,10 +319,13 @@ class UserManagementViewModel(
     }
 
     companion object {
-        fun factory(authRepository: AuthRepository) = object : ViewModelProvider.Factory {
+        fun factory(
+            authRepository: AuthRepository,
+            cloudEvents: SharedFlow<CloudEvent>? = null
+        ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return UserManagementViewModel(authRepository) as T
+                return UserManagementViewModel(authRepository, cloudEvents) as T
             }
         }
     }
@@ -339,6 +399,44 @@ fun UserManagementScreen(
         )
     }
 
+    if (state.editingRoleUserId != null) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissEditRoleDialog,
+            title = { Text("Cambiar perfil", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Corrige el perfil de la cuenta si quedó asignado por error.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CREATABLE_ROLES.forEach { role ->
+                            FilterChip(
+                                selected = state.editingRoleValue == role,
+                                onClick = { viewModel.onEditingRoleChange(role) },
+                                label = { Text(role.displayLabel()) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = viewModel::saveRole,
+                    enabled = !state.savingRole
+                ) {
+                    Text(if (state.savingRole) "Guardando…" else "Guardar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissEditRoleDialog) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
     if (state.assignSucursalUserId != null) {
         AlertDialog(
             onDismissRequest = viewModel::dismissAssignSucursalDialog,
@@ -393,7 +491,8 @@ fun UserManagementScreen(
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Crear, activar, desactivar o eliminar cuentas con perfil Supervisor o Consulta.",
+                    text = "Crear, activar, desactivar o eliminar cuentas con perfil Supervisor o Consulta. " +
+                        "Toca el perfil de un usuario para corregirlo.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -422,7 +521,8 @@ fun UserManagementScreen(
                             user = user,
                             onToggleActive = { viewModel.toggleActive(user) },
                             onDelete = { viewModel.deleteUser(user) },
-                            onAssignSucursal = { viewModel.openAssignSucursalDialog(user) }
+                            onAssignSucursal = { viewModel.openAssignSucursalDialog(user) },
+                            onEditRole = { viewModel.openEditRoleDialog(user) }
                         )
                     }
                 }
@@ -436,7 +536,8 @@ private fun UserRow(
     user: User,
     onToggleActive: () -> Unit,
     onDelete: () -> Unit,
-    onAssignSucursal: () -> Unit
+    onAssignSucursal: () -> Unit,
+    onEditRole: () -> Unit
 ) {
     val pending = user.sucursalPending()
     Card(
@@ -461,7 +562,8 @@ private fun UserRow(
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     StatusPill(
                         text = user.role.displayLabel(),
-                        color = MaterialTheme.colorScheme.secondary
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.clickable(onClick = onEditRole)
                     )
                     StatusPill(
                         text = if (user.active) "Activo" else "Inactivo",

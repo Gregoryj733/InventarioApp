@@ -61,6 +61,8 @@ import com.inventario.app.data.entity.displaySucursalOrPending
 import com.inventario.app.data.repository.ReportsRepository
 import com.inventario.app.data.repository.ReportsSummary
 import com.inventario.app.data.session.SessionManager
+import com.inventario.app.data.sync.CloudEvent
+import com.inventario.app.data.sync.toUserMessage
 import com.inventario.app.ui.theme.AccentSectionCard
 import com.inventario.app.ui.theme.AppScreenBackground
 import com.inventario.app.ui.theme.BrandAppTopBar
@@ -77,6 +79,7 @@ import com.inventario.app.ui.theme.StatusPill
 import com.inventario.app.ui.theme.screenHorizontalPadding
 import com.inventario.app.ui.theme.screenVerticalPadding
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -146,7 +149,8 @@ class ReportsViewModel(
     private val reportsRepository: ReportsRepository,
     private val bcvRateProvider: suspend () -> Double?,
     private val sessionManager: SessionManager,
-    private val userRole: UserRole
+    private val userRole: UserRole,
+    private val cloudEvents: SharedFlow<CloudEvent>? = null
 ) : ViewModel() {
     private val _state = MutableStateFlow(ReportsUiState(canReviewClosings = userRole.canReviewClosings()))
     val state: StateFlow<ReportsUiState> = _state.asStateFlow()
@@ -165,6 +169,18 @@ class ReportsViewModel(
             it.copy(startDateText = today, endDateText = today)
         }
         load()
+        cloudEvents?.let { events ->
+            viewModelScope.launch {
+                // Otro Admin/Supervisor aprobando, rechazando o revirtiendo un
+                // cierre desde su propio dispositivo debe reflejarse aquí sin
+                // que este usuario tenga que salir y volver a entrar.
+                events.collect { event ->
+                    if (event is CloudEvent.CashClosings) {
+                        load()
+                    }
+                }
+            }
+        }
     }
 
     fun onStartDateChange(value: String) {
@@ -244,7 +260,7 @@ class ReportsViewModel(
                 }
             }.onFailure { err ->
                 _state.update {
-                    it.copy(loading = false, error = err.message ?: "No se pudieron cargar los reportes.")
+                    it.copy(loading = false, error = err.toUserMessage("No se pudieron cargar los reportes."))
                 }
             }
         }
@@ -277,7 +293,7 @@ class ReportsViewModel(
                 load()
                 AppSnackbarController.show(message)
             }.onFailure { err ->
-                val message = err.message ?: "No se pudo completar la acción."
+                val message = err.toUserMessage("No se pudo completar la acción.")
                 _state.update {
                     it.copy(actionError = message)
                 }
@@ -302,7 +318,8 @@ class ReportsViewModel(
             reportsRepository: ReportsRepository,
             bcvRateProvider: suspend () -> Double?,
             sessionManager: SessionManager,
-            userRole: UserRole
+            userRole: UserRole,
+            cloudEvents: SharedFlow<CloudEvent>? = null
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -310,7 +327,8 @@ class ReportsViewModel(
                     reportsRepository,
                     bcvRateProvider,
                     sessionManager,
-                    userRole
+                    userRole,
+                    cloudEvents
                 ) as T
             }
         }

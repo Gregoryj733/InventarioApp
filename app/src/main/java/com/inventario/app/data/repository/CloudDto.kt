@@ -121,10 +121,19 @@ internal fun CashClosingRecord.toJsonBody(): JSONObject = JSONObject().apply {
     put("detailSnapshot", detailSnapshot)
 }
 
+/**
+ * El servidor siempre guarda el rol en mayúsculas, pero se normaliza aquí
+ * (trim + uppercase) como defensa adicional: una cuenta ya existente con el
+ * rol en otro formato (p. ej. datos migrados a mano) no debe degradar
+ * silenciosamente a CONSULTA solo porque `UserRole.valueOf` es sensible a
+ * mayúsculas.
+ */
 internal fun JSONObject.toUser(): User = User(
     id = optLong("id"),
     username = optString("username"),
-    role = runCatching { UserRole.valueOf(optString("role", "CONSULTA")) }.getOrDefault(UserRole.CONSULTA),
+    role = runCatching {
+        UserRole.valueOf(optString("role", "CONSULTA").trim().uppercase())
+    }.getOrDefault(UserRole.CONSULTA),
     active = optBoolean("active", true),
     sucursal = optString("sucursal", "")
 )

@@ -50,6 +50,43 @@ sealed class CloudEvent {
 class ApiException(val code: Int, message: String) : Exception(message)
 
 /**
+ * Mensaje amigable para mostrar en pantallas de acción (confirmar pedido,
+ * guardar cierre, etc.), a diferencia de [CloudSync]'s `toSyncDetail()`
+ * interno que alimenta el banner de estado de conexión.
+ *
+ * Prioriza el mensaje que ya manda el servidor en el cuerpo JSON (p. ej.
+ * "Stock insuficiente para...", "No tienes permisos para esta acción"), que
+ * ya es texto en español listo para el usuario. Solo cae a un mensaje
+ * genérico cuando el servidor no devolvió cuerpo JSON (p. ej. un 404/502 con
+ * una página HTML cruda, como ocurre si el servidor quedó desactualizado o
+ * está "despertando" en el plan gratuito), evitando mostrar texto crudo como
+ * "HTTP 404" al usuario.
+ */
+fun Throwable.toUserMessage(fallback: String = "Ocurrió un error inesperado."): String {
+    if (this !is ApiException) {
+        return when {
+            message?.contains("network", ignoreCase = true) == true ||
+                message?.contains("failed to connect", ignoreCase = true) == true ||
+                message?.contains("Unable to resolve host", ignoreCase = true) == true ->
+                "Sin conexión a internet o servidor inaccesible."
+            else -> localizedMessage ?: fallback
+        }
+    }
+    val raw = message
+    val hasServerMessage = raw != null && raw.isNotBlank() && !raw.matches(Regex("^HTTP \\d+$"))
+    if (hasServerMessage) return raw
+    return when (code) {
+        0 -> "Sin configuración válida en sync_config.json ni en ajustes locales."
+        404 -> "No se pudo contactar al servidor (HTTP 404). Es posible que el servidor de " +
+            "sincronización esté desactualizado; inténtalo de nuevo en unos minutos."
+        502, 503, 504 -> "El servidor de sincronización no responde (HTTP $code). En el plan " +
+            "gratuito puede tardar hasta 1 minuto en iniciar: vuelve a intentarlo."
+        in 500..599 -> "Error del servidor de sincronización (HTTP $code). Vuelve a intentarlo."
+        else -> fallback
+    }
+}
+
+/**
  * Único punto de acceso a la nube: helpers REST (usados por los repositorios)
  * más un cliente WebSocket persistente que sustituye el polling anterior.
  * Todas las pantallas dependen exclusivamente de esta clase para leer o

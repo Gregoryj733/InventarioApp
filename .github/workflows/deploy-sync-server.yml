@@ -10,28 +10,18 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  build-push-deploy:
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: sync-server
-          push: true
-          tags: ghcr.io/gregoryj733/inventario-sync:latest
-
+      # El servicio en Render (ver render.yaml, runtime: docker) construye su
+      # propia imagen directamente desde el Dockerfile del repo en cada push,
+      # así que aquí solo se fuerza el redeploy por API como respaldo (por si
+      # "autodeploy" quedara deshabilitado en el dashboard). No se debe pasar
+      # "imageUrl": ese parámetro es solo para servicios "image-backed" y
+      # provoca un 400 en un servicio "runtime: docker" como este (causa de
+      # que todos los deploys automáticos fallaran silenciosamente).
       - name: Trigger Render deploy
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
@@ -39,4 +29,4 @@ jobs:
           curl -fsS -X POST "https://api.render.com/v1/services/srv-d9o2qejncjis73b4p700/deploys" \
             -H "Authorization: Bearer ${RENDER_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d '{"imageUrl":"ghcr.io/gregoryj733/inventario-sync:latest"}'
+            -d '{"clearCache":"do_not_clear"}'

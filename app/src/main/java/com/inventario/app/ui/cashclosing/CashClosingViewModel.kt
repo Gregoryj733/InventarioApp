@@ -11,6 +11,8 @@ import com.inventario.app.data.entity.CashClosingSnapshotCodec
 import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.session.SessionManager
+import com.inventario.app.data.sync.CloudEvent
+import com.inventario.app.data.sync.toUserMessage
 import com.inventario.app.ui.theme.AppSnackbarController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -118,11 +120,9 @@ class CashClosingViewModel(
         }
         viewModelScope.launch {
             val salesUsd = inventoryRepository.totalSalesToday()
-            val orderCount = inventoryRepository.confirmedOrdersToday()
             _state.update {
                 it.copy(
                     loadingSales = false,
-                    confirmedOrdersToday = orderCount,
                     salesUsdText = if (salesUsd > 0) formatDecimal(salesUsd) else ""
                 )
             }
@@ -130,6 +130,23 @@ class CashClosingViewModel(
             if (rate != null && salesUsd > 0) {
                 _state.update {
                     it.copy(salesBsText = formatDecimal(salesUsd * rate))
+                }
+            }
+        }
+        viewModelScope.launch {
+            // Contador siempre en vivo: se actualiza solo cuando cualquier
+            // dispositivo confirma o reinicia los pedidos del día.
+            inventoryRepository.observeConfirmedOrdersToday().collect { count ->
+                _state.update { it.copy(confirmedOrdersToday = count) }
+            }
+        }
+        viewModelScope.launch {
+            // El estado de aprobación de cierres (aceptado/rechazado por un
+            // Admin o Supervisor desde otro dispositivo) también debe verse
+            // sin recargar la pantalla.
+            inventoryRepository.observeCloudEvents().collect { event ->
+                if (event is CloudEvent.CashClosings) {
+                    refreshClosingStatus()
                 }
             }
         }
@@ -190,7 +207,7 @@ class CashClosingViewModel(
                 }
                 .onFailure { err ->
                     _state.update { it.copy(resettingOrders = false) }
-                    AppSnackbarController.show(err.message ?: "No se pudo reiniciar el contador.")
+                    AppSnackbarController.show(err.toUserMessage("No se pudo reiniciar el contador."))
                 }
         }
     }
@@ -517,7 +534,7 @@ class CashClosingViewModel(
                     AppSnackbarController.show("Cierre de caja guardado. Queda pendiente de aprobación.")
                 }
                 .onFailure { err ->
-                    val message = err.message ?: "No se pudo guardar el cierre."
+                    val message = err.toUserMessage("No se pudo guardar el cierre.")
                     _state.update { it.copy(saveError = message) }
                     onComplete(false)
                     AppSnackbarController.show(message)

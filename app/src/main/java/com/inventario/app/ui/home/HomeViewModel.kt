@@ -17,6 +17,7 @@ import com.inventario.app.data.sync.CloudConfigStore
 import com.inventario.app.data.sync.CloudSyncInfo
 import com.inventario.app.data.sync.CloudSyncStatus
 import com.inventario.app.data.sync.SyncConfig
+import com.inventario.app.data.sync.toUserMessage
 import com.inventario.app.ui.theme.AppSnackbarController
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -127,16 +128,16 @@ class HomeViewModel(
                 }
             }
         }
+        viewModelScope.launch {
+            // StateFlow respaldado por el servidor: se actualiza solo con
+            // cada evento "sales" del WebSocket (pedido propio o de otro
+            // dispositivo), sin cálculos ni caché local.
+            inventoryRepository.observeConfirmedOrdersToday().collect { count ->
+                _state.update { it.copy(confirmedOrdersToday = count) }
+            }
+        }
         subscribeCloudSync()
         refreshBcv()
-        refreshDailySummary()
-    }
-
-    private fun refreshDailySummary() {
-        viewModelScope.launch {
-            val orderCount = inventoryRepository.confirmedOrdersToday()
-            _state.update { it.copy(confirmedOrdersToday = orderCount) }
-        }
     }
 
     fun resetTodayOrders() {
@@ -153,7 +154,7 @@ class HomeViewModel(
                     AppSnackbarController.show("Contador de pedidos del día reiniciado.")
                 }
                 .onFailure { err ->
-                    val message = err.message ?: "No se pudo reiniciar el contador."
+                    val message = err.toUserMessage("No se pudo reiniciar el contador.")
                     _state.update {
                         it.copy(
                             resettingOrders = false,
@@ -468,7 +469,6 @@ class HomeViewModel(
             result.onSuccess {
                 val message = buildWhatsAppMessage()
                 val count = inventoryRepository.productCount()
-                val orderCount = inventoryRepository.confirmedOrdersToday()
                 val q = _state.value.query
                 val results = if (q.trim().isNotEmpty()) inventoryRepository.search(q) else emptyList()
                 _state.update {
@@ -479,7 +479,8 @@ class HomeViewModel(
                         orderSuccessMessage = "Pedido registrado. Stock actualizado.",
                         lastWhatsAppMessage = message,
                         productCount = count,
-                        confirmedOrdersToday = orderCount,
+                        // confirmedOrdersToday llega vía observeConfirmedOrdersToday()
+                        // (ya refrescado por el propio repositorio al confirmar).
                         results = results,
                         selectedProduct = null,
                         selectedQtyText = "1"
@@ -488,7 +489,7 @@ class HomeViewModel(
                 onWhatsApp(message)
                 AppSnackbarController.show("Pedido confirmado. Stock actualizado.")
             }.onFailure { err ->
-                val message = err.message ?: "No se pudo completar el pedido."
+                val message = err.toUserMessage("No se pudo completar el pedido.")
                 _state.update {
                     it.copy(
                         orderProcessing = false,

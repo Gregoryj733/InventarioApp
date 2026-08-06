@@ -9,6 +9,7 @@ import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.session.SessionManager
+import com.inventario.app.data.sync.CloudEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -70,6 +71,17 @@ class HubViewModel(
         }
         refreshBcv()
         refreshClosingAlerts()
+        viewModelScope.launch {
+            // El badge de "Flujo Aprobación" (cierres pendientes) y el aviso
+            // de aprobado/rechazado deben reflejar lo que hace CUALQUIER
+            // usuario (Admin o Supervisor) en tiempo real, sin depender de
+            // reabrir la pantalla.
+            inventoryRepository.observeCloudEvents().collect { event ->
+                if (event is CloudEvent.CashClosings) {
+                    refreshClosingAlerts()
+                }
+            }
+        }
     }
 
     fun refreshClosingAlerts() {

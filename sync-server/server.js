@@ -81,6 +81,18 @@ function publicError(message, statusCode = 400) {
   return error;
 }
 
+/**
+ * Filtra `items` por `[start, end)` sobre `field` cuando ambos vienen en la
+ * query string. Si faltan (o son inválidos), devuelve `items` sin cambios
+ * para no romper compatibilidad con clientes que aún no envían el rango.
+ */
+function filterByRange(items, field, query) {
+  const start = Number(query?.start);
+  const end = Number(query?.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return items;
+  return items.filter((item) => item[field] >= start && item[field] < end);
+}
+
 function todayBoundsFrom(dateMillis) {
   const date = new Date(dateMillis);
   date.setHours(0, 0, 0, 0);
@@ -337,9 +349,14 @@ async function start() {
   );
 
   // ---------- Ventas ----------
-  app.get("/v1/sales", auth.requireAuth(), asyncRoute(async (_req, res) => {
+  // start/end (epoch ms) son opcionales: si se envían, filtra en el servidor
+  // en vez de mandar todo el historial de ventas al cliente en cada
+  // consulta (p. ej. el total de "hoy"), lo que ahorra datos móviles y
+  // ancho de banda del plan free de Render a medida que crece el historial.
+  app.get("/v1/sales", auth.requireAuth(), asyncRoute(async (req, res) => {
     const state = await store.loadState();
-    res.json({ sales: state.sales });
+    const sales = filterByRange(state.sales, "createdAt", req.query);
+    res.json({ sales });
   }));
 
   app.post(
@@ -416,9 +433,10 @@ async function start() {
   );
 
   // ---------- Cierres de caja ----------
-  app.get("/v1/cash-closings", auth.requireAuth(), asyncRoute(async (_req, res) => {
+  app.get("/v1/cash-closings", auth.requireAuth(), asyncRoute(async (req, res) => {
     const state = await store.loadState();
-    res.json({ cashClosings: state.cashClosings });
+    const cashClosings = filterByRange(state.cashClosings, "closedAt", req.query);
+    res.json({ cashClosings });
   }));
 
   app.post(

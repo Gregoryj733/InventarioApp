@@ -19,9 +19,11 @@ import com.inventario.app.data.sync.CloudEvent
 import com.inventario.app.data.sync.CloudSync
 import com.inventario.app.data.sync.CloudSyncInfo
 import com.inventario.app.data.sync.CloudSyncStatus
+import com.inventario.app.data.sync.toUserMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -120,6 +122,18 @@ class AuthRepository(
         }
     }
 
+    /**
+     * Corrige el perfil de una cuenta ya creada (p. ej. si quedó como
+     * Consulta por error y debía ser Supervisor) sin tener que eliminarla y
+     * volver a crearla.
+     */
+    suspend fun updateManagedUserRole(id: Long, role: UserRole): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            cloudSync.patchJson("/v1/users/$id", JSONObject().put("role", role.name))
+            Unit
+        }
+    }
+
     suspend fun assignManagedUserSucursal(id: Long, sucursal: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val branch = sucursal.trim()
@@ -144,13 +158,24 @@ class InventoryRepository(
 ) {
     private val productsFlow = MutableStateFlow<List<Product>>(emptyList())
     private val metaFlow = MutableStateFlow<AppMeta?>(null)
+    private val confirmedOrdersFlow = MutableStateFlow(0)
     private val pendingOrders = ArrayDeque<PendingOrder>()
 
     init {
         appScope.launch { refreshInventoryState() }
+        appScope.launch { refreshConfirmedOrdersFlow() }
+        // Cada dispositivo conectado recibe estos eventos por WebSocket en
+        // cuanto CUALQUIER usuario confirma un pedido, aprueba/rechaza un
+        // cierre o cambia inventario: así todas las pantallas quedan
+        // sincronizadas en tiempo real con la base central, sin polling ni
+        // recargas manuales.
         appScope.launch {
             cloudSync.events.collect { event ->
-                if (event is CloudEvent.Inventory) refreshInventoryState()
+                when (event) {
+                    is CloudEvent.Inventory -> refreshInventoryState()
+                    is CloudEvent.Sales -> refreshConfirmedOrdersFlow()
+                    else -> Unit
+                }
             }
         }
         appScope.launch {
@@ -165,6 +190,7 @@ class InventoryRepository(
     fun setCloudSync(sync: CloudSync) {
         cloudSync = sync
         appScope.launch { refreshInventoryState() }
+        appScope.launch { refreshConfirmedOrdersFlow() }
     }
 
     fun observeAllProducts(): StateFlow<List<Product>> = productsFlow.asStateFlow()
@@ -172,6 +198,18 @@ class InventoryRepository(
     fun observeMeta(): StateFlow<AppMeta?> = metaFlow.asStateFlow()
 
     fun observeCloudSyncStatus(): StateFlow<CloudSyncInfo> = cloudSync.status
+
+    /**
+     * Conteo de "Pedidos confirmados hoy" siempre consultado al servidor
+     * (nunca calculado ni cacheado localmente) y refrescado automáticamente
+     * ante cada evento "sales" del WebSocket, para que se actualice solo en
+     * todos los dispositivos en cuanto cualquiera de ellos confirma un
+     * pedido.
+     */
+    fun observeConfirmedOrdersToday(): StateFlow<Int> = confirmedOrdersFlow.asStateFlow()
+
+    /** Eventos push crudos del servidor, para pantallas que necesiten reaccionar a Sales/CashClosings/Users. */
+    fun observeCloudEvents(): SharedFlow<CloudEvent> = cloudSync.events
 
     suspend fun search(query: String): List<Product> = withContext(Dispatchers.IO) {
         val q = query.trim()
@@ -208,7 +246,7 @@ class InventoryRepository(
         }.onSuccess {
             refreshInventoryState()
         }.getOrElse { error ->
-            ImportResult(0, 0, listOf(error.message ?: "No se pudo importar el archivo."))
+            ImportResult(0, 0, listOf(error.toUserMessage("No se pudo importar el archivo.")))
         }
     }
 
@@ -278,22 +316,33 @@ class InventoryRepository(
                     }
                 }
             Unit
+        }.onSuccess {
+            // No depende solo del evento "sales" por WebSocket (que puede
+            // tardar un instante en llegar): este mismo dispositivo refresca
+            // el contador de inmediato al confirmar su propio pedido.
+            refreshConfirmedOrdersFlow()
         }
     }
 
     suspend fun totalSalesToday(): Double = withContext(Dispatchers.IO) {
         val (start, end) = todayBounds()
-        fetchSales().filter { it.createdAt in start until end }.sumOf { it.totalUsd }
+        fetchSales(start, end).sumOf { it.totalUsd }
     }
 
     suspend fun confirmedOrdersToday(): Int = withContext(Dispatchers.IO) {
         val (start, end) = todayBounds()
-        fetchSales().count { it.createdAt in start until end }
+        fetchSales(start, end).size
+    }.also { confirmedOrdersFlow.value = it }
+
+    private suspend fun refreshConfirmedOrdersFlow() {
+        confirmedOrdersFlow.value = confirmedOrdersToday()
     }
 
     suspend fun resetTodayOrders() = withContext(Dispatchers.IO) {
         val (start, end) = todayBounds()
         cloudSync.delete("/v1/sales", mapOf("start" to start.toString(), "end" to end.toString()))
+    }.also {
+        confirmedOrdersFlow.value = 0
     }
 
     suspend fun saveCashClosing(record: CashClosingRecord): Result<Long> = withContext(Dispatchers.IO) {
@@ -314,22 +363,22 @@ class InventoryRepository(
 
     suspend fun hasPendingClosings(): Boolean = withContext(Dispatchers.IO) {
         val (dayStart, dayEnd) = todayBounds()
-        fetchCashClosings().any { it.status == CashClosingStatus.PENDING && it.closedAt in dayStart until dayEnd }
+        fetchCashClosings(dayStart, dayEnd).any { it.status == CashClosingStatus.PENDING }
     }
 
     suspend fun latestClosingToday(username: String): CashClosingRecord? = withContext(Dispatchers.IO) {
         val normalized = username.trim().lowercase()
         val (dayStart, dayEnd) = todayBounds()
-        fetchCashClosings()
-            .filter { it.username == normalized && it.closedAt in dayStart until dayEnd }
+        fetchCashClosings(dayStart, dayEnd)
+            .filter { it.username == normalized }
             .maxByOrNull { it.closedAt }
     }
 
     suspend fun maxRevisionToday(username: String): Int = withContext(Dispatchers.IO) {
         val normalized = username.trim().lowercase()
         val (dayStart, dayEnd) = todayBounds()
-        fetchCashClosings()
-            .filter { it.username == normalized && it.closedAt in dayStart until dayEnd }
+        fetchCashClosings(dayStart, dayEnd)
+            .filter { it.username == normalized }
             .maxOfOrNull { it.revisionNumber } ?: 0
     }
 
@@ -406,13 +455,21 @@ class InventoryRepository(
         }
     }
 
-    private suspend fun fetchSales(): List<SaleRecord> = runCatching {
-        cloudSync.get("/v1/sales").optJSONArray("sales")?.toSaleList() ?: emptyList()
+    // start/end (epoch ms) filtran en el servidor para no transferir todo el
+    // historial de ventas/cierres cada vez que solo hace falta el de "hoy":
+    // ahorra datos móviles y tráfico del plan free del servidor a medida que
+    // crece el historial.
+    private suspend fun fetchSales(start: Long? = null, end: Long? = null): List<SaleRecord> = runCatching {
+        cloudSync.get("/v1/sales", rangeQuery(start, end)).optJSONArray("sales")?.toSaleList() ?: emptyList()
     }.getOrDefault(emptyList())
 
-    private suspend fun fetchCashClosings(): List<CashClosingRecord> = runCatching {
-        cloudSync.get("/v1/cash-closings").optJSONArray("cashClosings")?.toCashClosingList() ?: emptyList()
+    private suspend fun fetchCashClosings(start: Long? = null, end: Long? = null): List<CashClosingRecord> = runCatching {
+        cloudSync.get("/v1/cash-closings", rangeQuery(start, end)).optJSONArray("cashClosings")?.toCashClosingList()
+            ?: emptyList()
     }.getOrDefault(emptyList())
+
+    private fun rangeQuery(start: Long?, end: Long?): Map<String, String> =
+        if (start != null && end != null) mapOf("start" to start.toString(), "end" to end.toString()) else emptyMap()
 
     // /v1/orders es idempotente (por syncId), así que cualquier error 5xx del
     // servidor de sincronización es seguro de reintentar en cuanto vuelva la
