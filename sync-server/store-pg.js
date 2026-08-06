@@ -131,6 +131,26 @@ function stableStringify(value) {
   return JSON.stringify(value);
 }
 
+/**
+ * Quita `sslmode` de la connection string antes de pasarla a `pg.Pool`.
+ * TLS ya se controla explícitamente vía la opción `ssl` de abajo (no
+ * dependemos de lo que traiga la URL), así que dejarlo generaba en cada
+ * arranque la advertencia de `pg-connection-string` sobre que 'prefer',
+ * 'require' y 'verify-ca' cambiarán de semántica en la próxima versión
+ * mayor de `pg` — ruido en los logs de Render que tapa señales reales
+ * (p. ej. la línea de keep-alive) sin aportar nada, ya que ese valor
+ * nunca se usa.
+ */
+function stripSslModeParam(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    url.searchParams.delete("sslmode");
+    return url.toString();
+  } catch (error) {
+    return rawUrl;
+  }
+}
+
 async function tableExists(client, tableName) {
   const { rows } = await client.query("SELECT to_regclass($1) AS reg", [tableName]);
   return Boolean(rows[0]?.reg);
@@ -191,7 +211,7 @@ async function init() {
 
   const useSsl = process.env.PGSSL !== "false";
   pool = new Pool({
-    connectionString,
+    connectionString: stripSslModeParam(connectionString),
     ssl: useSsl ? { rejectUnauthorized: false } : undefined
   });
 
