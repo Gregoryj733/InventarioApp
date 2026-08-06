@@ -18,3 +18,21 @@ services:
         sync: false
       - key: FIREBASE_SERVICE_ACCOUNT
         sync: false
+
+  # Instancia AISLADA para la version de prueba de Play Store (flavor "demo"
+  # de la app): base de datos y usuarios propios, sin relacion alguna con el
+  # servicio de arriba. Sin DATABASE_URL a proposito -> usa almacenamiento de
+  # archivo efimero (se reinicia solo si el contenedor se reinicia), no hay
+  # ninguna base de datos compartida con produccion.
+  - type: web
+    name: inventario-sync-demo
+    runtime: docker
+    rootDir: sync-server
+    plan: free
+    region: ohio
+    healthCheckPath: /health
+    envVars:
+      - key: API_KEY
+        value: YwLpcbfduNPIEnk0Rsj1
+      - key: DEMO_MODE
+        value: "true"

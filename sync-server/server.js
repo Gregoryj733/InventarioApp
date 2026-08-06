@@ -10,6 +10,10 @@ const push = require("./push");
 const API_KEY = process.env.API_KEY || "inventario-sync-key";
 const PORT = Number(process.env.PORT || 8787);
 const MAX_CLOSINGS_PER_DAY = 5;
+// Instancia aislada para la version de prueba de Play Store: usuarios y
+// productos de ejemplo en vez de los reales, para no mezclar nunca esta
+// base de datos con la del servidor de produccion (otra URL, otro proceso).
+const DEMO_MODE = process.env.DEMO_MODE === "true";
 // Roles que el módulo de Usuarios puede crear/editar/eliminar. ADMIN se
 // gestiona fuera de esta API (usuario semilla único).
 const MANAGEABLE_ROLES = ["CONSULTA", "SUPERVISOR"];
@@ -117,26 +121,81 @@ async function seedDefaultUsers(store) {
       return { state, result: null };
     }
     const now = state.nextUserId;
-    const seeded = [
-      {
-        id: now,
-        username: "consulta",
-        passwordHash: auth.hashPassword("consulta"),
-        role: "CONSULTA",
-        active: true,
-        sucursal: ""
-      },
-      {
-        id: now + 1,
-        username: "admin",
-        passwordHash: auth.hashPassword("admin"),
-        role: "ADMIN",
-        active: true,
-        sucursal: ""
-      }
-    ];
+    const seeded = DEMO_MODE
+      ? [
+          {
+            id: now,
+            username: "usuario1",
+            passwordHash: auth.hashPassword("usuario"),
+            role: "CONSULTA",
+            active: true,
+            sucursal: "Demo"
+          },
+          {
+            id: now + 1,
+            username: "usuario2",
+            passwordHash: auth.hashPassword("usuario"),
+            role: "SUPERVISOR",
+            active: true,
+            sucursal: "Demo"
+          }
+        ]
+      : [
+          {
+            id: now,
+            username: "consulta",
+            passwordHash: auth.hashPassword("consulta"),
+            role: "CONSULTA",
+            active: true,
+            sucursal: ""
+          },
+          {
+            id: now + 1,
+            username: "admin",
+            passwordHash: auth.hashPassword("admin"),
+            role: "ADMIN",
+            active: true,
+            sucursal: ""
+          }
+        ];
     return {
       state: { ...state, users: seeded, nextUserId: now + 2 },
+      result: null
+    };
+  });
+}
+
+/**
+ * Catalogo breve (5 productos) para la version de prueba de Play Store. Solo
+ * se siembra cuando DEMO_MODE=true y el inventario todavia esta vacio: esta
+ * instancia nunca recibe el Excel real, así que sin esto el inventario
+ * quedaría vacío.
+ */
+async function seedDemoProducts(store) {
+  if (!DEMO_MODE) return;
+  await store.runTransaction(async (state) => {
+    if (state.products.length > 0) {
+      return { state, result: null };
+    }
+    const now = Date.now();
+    const products = [
+      { description: "Bateria 12V 45Ah", quantity: 8, unit: "UND", price: 65 },
+      { description: "Aceite motor 20W-50 (1L)", quantity: 20, unit: "UND", price: 6.5 },
+      { description: "Filtro de aceite", quantity: 15, unit: "UND", price: 4 },
+      { description: "Bujia de encendido", quantity: 30, unit: "UND", price: 2.5 },
+      { description: "Pastillas de freno (juego)", quantity: 10, unit: "UND", price: 18 }
+    ].map((p) => ({
+      syncId: require("crypto").randomUUID(),
+      ...p,
+      updatedAt: now
+    }));
+    return {
+      state: {
+        ...state,
+        products,
+        inventoryRevision: now,
+        meta: { ...state.meta, lastInventoryUpdateAt: now }
+      },
       result: null
     };
   });
@@ -169,6 +228,7 @@ async function start() {
   push.init();
   await seedDefaultUsers(store);
   await seedBatteryFinderData(store);
+  await seedDemoProducts(store);
 
   // ---------- Autenticación ----------
   app.post("/v1/auth/login", asyncRoute(async (req, res) => {
@@ -722,6 +782,9 @@ async function start() {
     }
     console.log(`API key configured: ${API_KEY ? "yes" : "no"}`);
     console.log(`WebSocket endpoint: /v1/ws`);
+    if (DEMO_MODE) {
+      console.log("DEMO_MODE activo: usuarios y productos de prueba (usuario1/usuario2, 5 productos)");
+    }
   });
 }
 

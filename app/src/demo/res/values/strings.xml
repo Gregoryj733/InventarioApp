@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Nombre distinto al de la app real para que quede claro en el
+         dispositivo (y en Play Store) que esta es la versión de prueba. -->
+    <string name="app_name">Inventario App (Prueba)</string>
+</resources>

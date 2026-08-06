@@ -41,6 +41,8 @@ import com.inventario.app.ui.theme.AppSnackbarController
 import com.inventario.app.ui.theme.InventarioTheme
 import com.inventario.app.ui.users.UserManagementScreen
 import com.inventario.app.ui.users.UserManagementViewModel
+import com.inventario.app.trial.TrialExpiredScreen
+import com.inventario.app.trial.TrialGate
 
 class MainActivity : ComponentActivity() {
     private val requestNotificationPermission =
@@ -118,6 +120,15 @@ private fun InventarioRoot(app: InventarioApplication) {
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) {
+        // Solo aplica en el flavor "demo" (BuildConfig.IS_TRIAL); en
+        // "production" TrialGate.isExpired() siempre devuelve false. Se
+        // revisa antes que nada, incluso antes del login, para que una
+        // sesión ya guardada no siga dando acceso tras vencer la prueba.
+        if (TrialGate.isExpired(app.applicationContext)) {
+            TrialExpiredScreen()
+            return@Scaffold
+        }
+
         if (!loggedIn) {
             val loginVm: LoginViewModel = viewModel(
                 key = "login_$loginSessionKey",

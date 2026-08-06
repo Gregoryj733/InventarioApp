@@ -81,6 +81,16 @@ Todas las rutas `/v1/*` requieren el header `X-Api-Key`. Las marcadas con 🔒 a
 
 Usuarios por defecto (se crean automáticamente si la base está vacía): `admin/admin` (ADMIN) y `consulta/consulta` (CONSULTA).
 
+### Instancia de prueba (DEMO_MODE)
+
+Con `DEMO_MODE=true`, esta misma imagen sirve una instancia **aislada** con datos de ejemplo en vez de los reales — pensada para la versión de prueba de Play Store, para que ninguna interacción de los testers toque el inventario/ventas/usuarios reales:
+
+- Usuarios semilla: `usuario1/usuario` (CONSULTA) y `usuario2/usuario` (SUPERVISOR). No se crea `admin`.
+- Inventario semilla: 5 productos de ejemplo (batería, aceite, filtro, bujía, pastillas de freno).
+- El seeding solo ocurre si la base está vacía (mismo criterio que la instancia real), así que sobrevive a reinicios pero nunca pisa datos ya generados por los testers.
+
+Se despliega como un **servicio Render separado** (ver `render.yaml`, servicio `inventario-sync-demo`), con su propio `API_KEY` y sin `DATABASE_URL` (usa el almacenamiento de archivo efímero: no hay ninguna base de datos compartida con producción).
+
 ## Desarrollo local
 
 ```powershell

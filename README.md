@@ -116,6 +116,69 @@ Edita `app/src/main/assets/sync_config.json` con `baseUrl` y `apiKey`, luego rec
 2. Las ventas/pedidos que descuentan stock se reflejan en todos los dispositivos.
 3. En la pantalla principal verás **Nube: sincronizado** cuando la conexión esté activa.
 
+## Versión de prueba para Play Store (flavor `demo`)
+
+> Esta sección, el flavor `demo` y todo lo que describe viven **solo en la rama `demo`**
+> (ver "Estrategia de ramas" más abajo). La rama `main` es la app real y no los incluye.
+
+Para distribuir una versión de evaluación por Google Play (Internal testing, privada, no
+buscable) sin tocar la app real ni sus datos, el proyecto tiene dos **product flavors**:
+
+| Flavor | applicationId | Backend | Usuarios | Vence |
+|---|---|---|---|---|
+| `production` | `com.inventario.app` | `inventario-sync-totalcare` (real) | los del negocio | nunca |
+| `demo` | `com.inventario.app.demo` | `inventario-sync-demo` (aislado, ver `render.yaml`) | `usuario1/usuario` (Consulta), `usuario2/usuario` (Supervisor) | 7 días desde el primer uso |
+
+El flavor `demo` usa un servidor de sincronización **completamente separado** (otra URL, otra
+clave API, sin base de datos compartida — ver `sync-server/README.md` § "Instancia de prueba"),
+con un catálogo semilla de 5 productos de ejemplo. Ninguna acción de un tester puede afectar el
+inventario, ventas o usuarios reales.
+
+El vencimiento a los 7 días lo controla `com.inventario.app.trial.TrialGate` (cuenta desde la
+primera apertura en el dispositivo) y solo aplica en este flavor (`BuildConfig.IS_TRIAL`).
+
+### Compilar
+
+```bat
+:: App real (sin cambios respecto a antes)
+gradlew.bat assembleProductionDebug
+gradlew.bat bundleProductionRelease
+
+:: Version de prueba (Play Store)
+gradlew.bat assembleDemoDebug
+gradlew.bat bundleDemoRelease
+```
+
+El `.aab` firmado para subir a Play Console queda en
+`app/build/outputs/bundle/demoRelease/app-demo-release.aab`.
+
+### Firma de release
+
+Las credenciales de firma están en `app/keystore.properties` (fuera de git; plantilla en
+`app/keystore.properties.example`). Sin ese archivo, el build de `release` cae de vuelta a la
+firma de debug automáticamente.
+
+### Desplegar el backend de la demo
+
+1. Aplica el blueprint `render.yaml` en Render (ya incluye el servicio `inventario-sync-demo`
+   junto al real). No requiere Neon/Postgres: usa almacenamiento de archivo efímero.
+2. Verifica `https://inventario-sync-demo.onrender.com/health`.
+3. La app `demo` ya trae la URL y clave API correctas en `app/src/demo/assets/sync_config.json`.
+
+### Publicar en Play Console (Internal testing)
+
+1. Cuenta de desarrollador en [play.google.com/console/signup](https://play.google.com/console/signup) (USD 25, pago único).
+2. Crear la app → completar **Contenido de la app** (política de privacidad: `docs/privacy-policy.html` publicada vía GitHub Pages, clasificación de contenido, público objetivo, anuncios: "No").
+3. Completar la ficha principal: nombre, descripción, ícono (`store/play-icon-512.png`), gráfico de funciones (`store/play-feature-graphic-1024x500.png`), capturas de pantalla.
+4. **Testing → Internal testing → Create new release** → subir `app-demo-release.aab`.
+5. Agregar testers por correo Gmail (hasta 100) y compartir el link de opt-in.
+
+### Estrategia de ramas
+
+- **`main`**: versión completa, estable y productiva. Todo el código funcional y actualizado vive acá.
+- **`demo`**: rama independiente (esta rama), solo para pruebas/demostraciones/desarrollo aislado del flavor de prueba. Nunca se fusiona automáticamente hacia `main`.
+- Los cambios generales que también apliquen a la app real (fixes, features que no dependan de la demo) se desarrollan en `main` y, si `demo` los necesita, se traen con un `git merge main` explícito y revisado — nunca al revés.
+
 ## Notas
 
 - Cada celular mantiene una copia local (SQLite) para búsquedas rápidas y uso sin internet; al reconectar, se sincroniza con el servidor.

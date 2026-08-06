@@ -42,6 +42,27 @@ android {
         // Esto evita empaquetar las ~70 traducciones que traen las librerías
         // (AndroidX, Firebase, Play Services) para idiomas que la app nunca usa.
         resourceConfigurations += listOf("es")
+
+        buildConfigField("boolean", "IS_TRIAL", "false")
+        buildConfigField("int", "TRIAL_DAYS", "0")
+    }
+
+    // "production" = app real (uso interno del negocio, instalación por APK).
+    // "demo" = version de prueba para Play Store Internal testing: aplicationId,
+    // backend y usuarios propios, totalmente separados de los reales, más
+    // vencimiento a los 7 días (ver com.inventario.app.trial.TrialGate).
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("production") {
+            dimension = "distribution"
+        }
+        create("demo") {
+            dimension = "distribution"
+            applicationIdSuffix = ".demo"
+            versionNameSuffix = "-trial"
+            buildConfigField("boolean", "IS_TRIAL", "true")
+            buildConfigField("int", "TRIAL_DAYS", "7")
+        }
     }
 
     signingConfigs {
@@ -88,6 +109,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
