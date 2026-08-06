@@ -1,6 +1,7 @@
 package com.inventario.app.ui.theme
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,18 +16,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -202,15 +201,20 @@ fun BcvRateBanner(
     }
 }
 
+/**
+ * Diálogo de confirmación para acciones sensibles (aprobar/rechazar/revertir)
+ * que reemplaza la antigua clave de acceso numérica por un check explícito.
+ */
 @Composable
-fun AccessCodeDialog(
+fun ConfirmCheckDialog(
     title: String,
     description: String,
-    error: String?,
+    checkLabel: String,
+    confirmLabel: String = "Confirmar",
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
+    onConfirm: () -> Unit
 ) {
-    var code by remember { mutableStateOf("") }
+    var checked by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -219,24 +223,24 @@ fun AccessCodeDialog(
             Column {
                 Text(description, style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = code,
-                    onValueChange = { code = it.filter { ch -> ch.isDigit() } },
-                    label = { Text("Clave de acceso") },
-                    singleLine = true,
-                    isError = error != null,
-                    supportingText = error?.let { { Text(it) } },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { checked = !checked }
+                ) {
+                    Checkbox(checked = checked, onCheckedChange = { checked = it })
+                    Spacer(Modifier.width(4.dp))
+                    Text(checkLabel, style = MaterialTheme.typography.bodyMedium)
+                }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(code) },
-                enabled = code.isNotBlank()
+                onClick = onConfirm,
+                enabled = checked
             ) {
-                Text("Ingresar")
+                Text(confirmLabel)
             }
         },
         dismissButton = {

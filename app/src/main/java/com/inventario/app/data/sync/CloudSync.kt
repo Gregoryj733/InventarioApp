@@ -1,0 +1,381 @@
+package com.inventario.app.data.sync
+
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import org.json.JSONObject
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+
+enum class CloudSyncStatus {
+    IDLE,
+    SYNCING,
+    SYNCED,
+    OFFLINE,
+    ERROR
+}
+
+data class CloudSyncInfo(
+    val status: CloudSyncStatus = CloudSyncStatus.IDLE,
+    val detail: String? = null
+)
+
+/** Eventos push del servidor vía WebSocket: qué colección cambió. */
+sealed class CloudEvent {
+    data object Inventory : CloudEvent()
+    data object Sales : CloudEvent()
+    data object CashClosings : CloudEvent()
+    data object Users : CloudEvent()
+}
+
+class ApiException(val code: Int, message: String) : Exception(message)
+
+/**
+ * Único punto de acceso a la nube: helpers REST (usados por los repositorios)
+ * más un cliente WebSocket persistente que sustituye el polling anterior.
+ * Todas las pantallas dependen exclusivamente de esta clase para leer o
+ * escribir datos; no hay almacenamiento local salvo la caché en memoria que
+ * cada repositorio mantiene actualizada con los eventos de este canal.
+ */
+class CloudSync(private val config: SyncConfig) {
+    private val _status = MutableStateFlow(CloudSyncInfo())
+    val status: StateFlow<CloudSyncInfo> = _status.asStateFlow()
+
+    private val _events = MutableSharedFlow<CloudEvent>(extraBufferCapacity = 16)
+    val events: SharedFlow<CloudEvent> = _events.asSharedFlow()
+
+    /** Emite cuando el servidor rechaza el token de sesión (vencido o inválido). */
+    private val _sessionExpired = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val sessionExpired: SharedFlow<Unit> = _sessionExpired.asSharedFlow()
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .pingInterval(25, TimeUnit.SECONDS)
+        .build()
+
+    @Volatile private var authToken: String? = null
+    @Volatile private var networkAvailable: Boolean = true
+    @Volatile private var intentionalStop = false
+    private var reconnectAttempts = 0
+    private var syncScope: CoroutineScope? = null
+    private var reconnectJob: Job? = null
+    private var webSocket: WebSocket? = null
+
+    fun setAuthToken(token: String?) {
+        authToken = token
+    }
+
+    fun start(scope: CoroutineScope) {
+        syncScope = scope
+        intentionalStop = false
+        if (!config.isConfigured) {
+            setStatus(CloudSyncStatus.ERROR, NOT_CONFIGURED_MESSAGE)
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            setStatus(CloudSyncStatus.SYNCING)
+            runCatching { wakeServerWithRetry() }
+                .onSuccess { connectWebSocket() }
+                .onFailure { error ->
+                    Log.w(TAG, "Sync startup failed", error)
+                    setStatus(CloudSyncStatus.ERROR, error.toSyncDetail())
+                    scheduleReconnect()
+                }
+        }
+    }
+
+    fun setNetworkAvailable(available: Boolean) {
+        val wasAvailable = networkAvailable
+        networkAvailable = available
+        if (!available) {
+            webSocket?.cancel()
+            setStatus(CloudSyncStatus.OFFLINE, "Sin conexión a internet")
+            return
+        }
+        if (!wasAvailable || _status.value.status == CloudSyncStatus.ERROR) {
+            reconnectNow("Reconectando…")
+        }
+    }
+
+    fun stop() {
+        intentionalStop = true
+        reconnectJob?.cancel()
+        webSocket?.close(1000, "app_stop")
+        webSocket = null
+        syncScope = null
+    }
+
+    // ---------- Helpers REST usados por los repositorios ----------
+
+    suspend fun get(path: String, query: Map<String, String> = emptyMap()): JSONObject =
+        withContext(Dispatchers.IO) {
+            requireConfigured()
+            executeJson(Request.Builder().url(endpoint(path, query)).get().withAuth().build())
+        }
+
+    suspend fun postJson(path: String, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+        requireConfigured()
+        executeJson(
+            Request.Builder()
+                .url(endpoint(path))
+                .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .withAuth()
+                .build()
+        )
+    }
+
+    suspend fun putJson(path: String, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+        requireConfigured()
+        executeJson(
+            Request.Builder()
+                .url(endpoint(path))
+                .put(body.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .withAuth()
+                .build()
+        )
+    }
+
+    suspend fun patchJson(path: String, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+        requireConfigured()
+        executeJson(
+            Request.Builder()
+                .url(endpoint(path))
+                .patch(body.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .withAuth()
+                .build()
+        )
+    }
+
+    suspend fun delete(path: String, query: Map<String, String> = emptyMap()): JSONObject =
+        withContext(Dispatchers.IO) {
+            requireConfigured()
+            executeJson(Request.Builder().url(endpoint(path, query)).delete().withAuth().build())
+        }
+
+    suspend fun postMultipart(path: String, fileName: String, bytes: ByteArray): JSONObject =
+        withContext(Dispatchers.IO) {
+            requireConfigured()
+            val body = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart(
+                    "file",
+                    fileName,
+                    bytes.toRequestBody("application/octet-stream".toMediaType())
+                )
+                .build()
+            executeJson(Request.Builder().url(endpoint(path)).post(body).withAuth().build())
+        }
+
+    // ---------- WebSocket ----------
+
+    private fun connectWebSocket() {
+        if (intentionalStop) return
+        if (!networkAvailable) {
+            setStatus(CloudSyncStatus.OFFLINE, "Sin conexión a internet")
+            return
+        }
+        // La clave va como query param (la única forma que revisa el
+        // upgrade "crudo" del WebSocket en el servidor), pero también se
+        // agrega como header X-Api-Key por si la conexión termina llegando
+        // como una request HTTP normal (p. ej. reintento tras un fallo de
+        // negociación de protocolo) en vez de un upgrade real.
+        val request = Request.Builder().url(wsEndpoint()).withAuth().build()
+        webSocket = client.newWebSocket(request, listener)
+    }
+
+    private val listener = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            reconnectAttempts = 0
+            setStatus(CloudSyncStatus.SYNCED)
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            val type = runCatching { JSONObject(text).optString("type") }.getOrNull() ?: return
+            val event = when (type) {
+                "inventory" -> CloudEvent.Inventory
+                "sales" -> CloudEvent.Sales
+                "cashClosings" -> CloudEvent.CashClosings
+                "users" -> CloudEvent.Users
+                else -> null
+            }
+            event?.let { _events.tryEmit(it) }
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            if (intentionalStop) return
+            scheduleReconnect()
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            if (intentionalStop) return
+            Log.w(TAG, "WebSocket failure", t)
+            if (networkAvailable) {
+                // Si el handshake devolvió un código HTTP (p. ej. 401 en vez
+                // de 101), lo traducimos igual que un error REST para que el
+                // usuario vea un mensaje claro en vez del texto crudo de
+                // OkHttp ("Expected HTTP 101 response but was '401 ...'").
+                val detail = response?.let { ApiException(it.code, it.message).toSyncDetail() }
+                    ?: t.toSyncDetail()
+                setStatus(CloudSyncStatus.ERROR, detail)
+            }
+            scheduleReconnect()
+        }
+    }
+
+    private fun scheduleReconnect() {
+        if (intentionalStop || !networkAvailable) return
+        reconnectJob?.cancel()
+        val delayMs = RECONNECT_DELAYS_MS[reconnectAttempts.coerceAtMost(RECONNECT_DELAYS_MS.lastIndex)]
+        reconnectAttempts++
+        reconnectJob = syncScope?.launch(Dispatchers.IO) {
+            delay(delayMs)
+            if (intentionalStop || !networkAvailable) return@launch
+            runCatching { wakeServerWithRetry(maxAttempts = 1) }
+            connectWebSocket()
+        }
+    }
+
+    private fun reconnectNow(detail: String) {
+        setStatus(CloudSyncStatus.SYNCING, detail)
+        reconnectJob?.cancel()
+        reconnectJob = syncScope?.launch(Dispatchers.IO) {
+            runCatching { wakeServerWithRetry() }
+                .onSuccess { connectWebSocket() }
+                .onFailure { error ->
+                    setStatus(CloudSyncStatus.ERROR, error.toSyncDetail())
+                    scheduleReconnect()
+                }
+        }
+    }
+
+    /** Espera a que el servidor (posiblemente "dormido" en el plan free) responda /health. */
+    private suspend fun wakeServerWithRetry(maxAttempts: Int = RETRY_DELAYS_MS.size) {
+        var lastError: Throwable? = null
+        for (attempt in 0 until maxAttempts) {
+            if (attempt > 0) {
+                setStatus(
+                    CloudSyncStatus.SYNCING,
+                    "Servidor iniciando… reintento ${attempt + 1}/$maxAttempts"
+                )
+                delay(RETRY_DELAYS_MS[attempt])
+            }
+            val result = runCatching {
+                executeJson(Request.Builder().url(endpoint("/health")).get().withAuth().build())
+            }
+            if (result.isSuccess) return
+            lastError = result.exceptionOrNull()
+            if (lastError?.isRetryableSyncError() != true) throw lastError!!
+        }
+        throw lastError ?: ApiException(502, "HTTP 502")
+    }
+
+    // ---------- Internals ----------
+
+    private fun requireConfigured() {
+        if (!config.isConfigured) throw ApiException(0, NOT_CONFIGURED_MESSAGE)
+    }
+
+    private fun executeJson(request: Request): JSONObject {
+        client.newCall(request).execute().use { response ->
+            val bodyText = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val serverMessage = runCatching {
+                    JSONObject(bodyText).optString("error")
+                }.getOrNull()?.takeIf { it.isNotBlank() }
+                if (response.code == 401 && serverMessage?.contains("sesión", ignoreCase = true) == true) {
+                    _sessionExpired.tryEmit(Unit)
+                }
+                throw ApiException(response.code, serverMessage ?: "HTTP ${response.code}")
+            }
+            if (bodyText.isBlank()) return JSONObject()
+            return JSONObject(bodyText)
+        }
+    }
+
+    private fun endpoint(path: String, query: Map<String, String> = emptyMap()): String {
+        val base = config.baseUrl.trimEnd('/')
+        val builder = "$base$path".toHttpUrl().newBuilder()
+        query.forEach { (key, value) -> builder.addQueryParameter(key, value) }
+        return builder.build().toString()
+    }
+
+    private fun wsEndpoint(): String {
+        val base = config.baseUrl.trimEnd('/')
+        val wsBase = when {
+            base.startsWith("https://") -> "wss://" + base.removePrefix("https://")
+            base.startsWith("http://") -> "ws://" + base.removePrefix("http://")
+            else -> base
+        }
+        val apiKey = config.apiKey
+        return if (apiKey.isNotBlank()) "$wsBase/v1/ws?apiKey=$apiKey" else "$wsBase/v1/ws"
+    }
+
+    private fun Request.Builder.withAuth(): Request.Builder {
+        if (config.apiKey.isNotBlank()) {
+            addHeader("X-Api-Key", config.apiKey)
+        }
+        authToken?.let { addHeader("Authorization", "Bearer $it") }
+        return this
+    }
+
+    private fun setStatus(status: CloudSyncStatus, detail: String? = null) {
+        _status.value = CloudSyncInfo(status = status, detail = detail)
+    }
+
+    private fun Throwable.toSyncDetail(): String = when (this) {
+        is ApiException -> when (code) {
+            0 -> message ?: NOT_CONFIGURED_MESSAGE
+            401 -> "Clave API inválida. Revisa la configuración de sincronización."
+            403 -> "Acceso denegado al servidor de sincronización."
+            404 -> "Servidor no encontrado. Verifica la URL del servidor."
+            502, 503, 504 ->
+                "El servidor de sincronización no responde (HTTP $code). " +
+                    "En plan gratuito puede tardar hasta 1 minuto en iniciar; la app reintentará sola."
+            in 500..599 -> "Error del servidor de sincronización (HTTP $code)."
+            else -> message ?: "Error HTTP $code"
+        }
+        else -> when {
+            message?.contains("network", ignoreCase = true) == true ||
+                message?.contains("failed to connect", ignoreCase = true) == true ||
+                message?.contains("Unable to resolve host", ignoreCase = true) == true ->
+                "Sin conexión a internet o servidor inaccesible."
+            else -> localizedMessage ?: "Error de sincronización"
+        }
+    }
+
+    private fun Throwable.isRetryableSyncError(): Boolean =
+        this is ApiException && code in RETRYABLE_HTTP_CODES
+
+    companion object {
+        private const val TAG = "CloudSync"
+        private val RETRYABLE_HTTP_CODES = setOf(502, 503, 504)
+        private val RETRY_DELAYS_MS = longArrayOf(0L, 8_000L, 15_000L, 25_000L, 40_000L)
+        private val RECONNECT_DELAYS_MS = longArrayOf(3_000L, 6_000L, 12_000L, 20_000L, 30_000L)
+        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private const val NOT_CONFIGURED_MESSAGE =
+            "Sin configuración válida en sync_config.json ni en ajustes locales."
+
+        fun newSyncId(): String = UUID.randomUUID().toString()
+    }
+}

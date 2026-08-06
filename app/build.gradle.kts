@@ -2,7 +2,14 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
-    id("com.google.devtools.ksp")
+}
+
+// google-services necesita app/google-services.json (descárgalo desde
+// Firebase Console → Configuración del proyecto → tu app Android).
+// Se aplica solo si el archivo existe para no romper compilaciones sin
+// Firebase configurado todavía.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }
 
 android {
@@ -17,6 +24,10 @@ android {
         versionName = "1.3.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+        // La app usa textos en español fijos (sin recursos de idioma propios).
+        // Esto evita empaquetar las ~70 traducciones que traen las librerías
+        // (AndroidX, Firebase, Play Services) para idiomas que la app nunca usa.
+        resourceConfigurations += listOf("es")
     }
 
     buildTypes {
@@ -67,6 +78,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.navigation:navigation-compose:2.8.5")
+    // Fuerza una versión reciente de Fragment: activity-compose trae 1.1.0 transitivamente,
+    // lo cual dispara un lint vital al compilar release (InvalidFragmentVersionForActivityResult).
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -74,10 +88,9 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
-
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-messaging-ktx")
 }

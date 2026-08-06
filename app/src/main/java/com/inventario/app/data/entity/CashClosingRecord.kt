@@ -1,15 +1,7 @@
 package com.inventario.app.data.entity
 
-import androidx.room.Entity
-import androidx.room.Index
-import androidx.room.PrimaryKey
-
-@Entity(
-    tableName = "cash_closing_records",
-    indices = [Index("closedAt"), Index("username")]
-)
 data class CashClosingRecord(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val branchName: String,
     val dateText: String,
     val closedAt: Long,

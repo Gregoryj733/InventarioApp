@@ -12,6 +12,7 @@ data class CashClosingSnapshot(
     val salesBs: Double = 0.0,
     val posEntries: List<SnapshotPosEntry> = emptyList(),
     val mobileEntries: List<SnapshotMobileEntry> = emptyList(),
+    val cashEntries: List<SnapshotCashEntry> = emptyList(),
     val cashUsd: Double = 0.0,
     val cashBs: Double = 0.0,
     val casheaUsd: Double = 0.0,
@@ -20,6 +21,7 @@ data class CashClosingSnapshot(
 ) {
     data class SnapshotPosEntry(val name: String, val usd: Double, val bs: Double)
     data class SnapshotMobileEntry(val ref: String, val usd: Double, val bs: Double)
+    data class SnapshotCashEntry(val description: String, val usd: Double, val bs: Double)
     data class SnapshotExpenseEntry(val description: String, val usd: Double)
 }
 
@@ -59,6 +61,17 @@ object CashClosingSnapshotCodec {
         }
         root.put("mobileEntries", mobileArray)
 
+        val cashArray = JSONArray()
+        snapshot.cashEntries.forEach { entry ->
+            cashArray.put(
+                JSONObject()
+                    .put("description", entry.description)
+                    .put("usd", entry.usd)
+                    .put("bs", entry.bs)
+            )
+        }
+        root.put("cashEntries", cashArray)
+
         val expenseArray = JSONArray()
         snapshot.expenseEntries.forEach { entry ->
             expenseArray.put(
@@ -97,6 +110,17 @@ object CashClosingSnapshotCodec {
                 )
             }
         }
+        val cashEntries = mutableListOf<CashClosingSnapshot.SnapshotCashEntry>()
+        root.optJSONArray("cashEntries")?.let { array ->
+            for (i in 0 until array.length()) {
+                val item = array.getJSONObject(i)
+                cashEntries += CashClosingSnapshot.SnapshotCashEntry(
+                    description = item.optString("description", ""),
+                    usd = item.optDouble("usd", 0.0),
+                    bs = item.optDouble("bs", 0.0)
+                )
+            }
+        }
         val expenseEntries = mutableListOf<CashClosingSnapshot.SnapshotExpenseEntry>()
         root.optJSONArray("expenseEntries")?.let { array ->
             for (i in 0 until array.length()) {
@@ -116,6 +140,7 @@ object CashClosingSnapshotCodec {
             salesBs = root.optDouble("salesBs", 0.0),
             posEntries = posEntries,
             mobileEntries = mobileEntries,
+            cashEntries = cashEntries,
             cashUsd = root.optDouble("cashUsd", 0.0),
             cashBs = root.optDouble("cashBs", 0.0),
             casheaUsd = root.optDouble("casheaUsd", 0.0),

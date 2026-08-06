@@ -1,18 +1,23 @@
 package com.inventario.app.data.entity
 
-import androidx.room.Entity
-import androidx.room.PrimaryKey
-
 enum class UserRole {
     CONSULTA,
+    SUPERVISOR,
     ADMIN
 }
 
-@Entity(tableName = "users")
+fun UserRole.displayLabel(): String = when (this) {
+    UserRole.ADMIN -> "Administrador"
+    UserRole.SUPERVISOR -> "Supervisor"
+    UserRole.CONSULTA -> "Consulta"
+}
+
+/** Roles con permiso para aprobar, rechazar o revertir cierres de caja (Flujo Aprobación). */
+fun UserRole.canReviewClosings(): Boolean = this == UserRole.ADMIN || this == UserRole.SUPERVISOR
+
 data class User(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val username: String,
-    val passwordHash: String,
     val role: UserRole,
     val active: Boolean = true,
     val sucursal: String = ""

@@ -18,7 +18,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.automirrored.filled.FactCheck
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.People
@@ -30,10 +30,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -42,8 +38,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.inventario.app.data.entity.CashClosingAlertType
 import com.inventario.app.data.entity.UserRole
-import com.inventario.app.data.repository.ReportsRepository
-import com.inventario.app.ui.theme.AccessCodeDialog
+import com.inventario.app.data.entity.displayLabel
 import com.inventario.app.ui.theme.AppScreenBackground
 import com.inventario.app.ui.theme.BcvRateBanner
 import com.inventario.app.ui.theme.BrandAppTopBar
@@ -80,8 +75,7 @@ fun MainHubScreen(
     onRefreshBcv: () -> Unit,
     onLogout: () -> Unit
 ) {
-    val roleLabel = if (role == UserRole.ADMIN) "Administrador" else "Consulta"
-    val subtitle = "$username · $roleLabel"
+    val subtitle = "$username · ${role.displayLabel()}"
     val items = buildList {
         add(
             HubMenuItem(
@@ -106,64 +100,34 @@ fun MainHubScreen(
                 showAlertBell = cashClosingAlert != null
             )
         )
-        add(
-            HubMenuItem(
-                destination = HubDestination.REPORTS,
-                title = "Reportes",
-                subtitle = if (pendingReportsCount > 0) {
-                    "Cierres pendientes de validar"
-                } else {
-                    "KPIs y ventas"
-                },
-                icon = Icons.Default.Assessment,
-                showAlertBell = pendingReportsCount > 0
+        // Consulta no participa en el flujo de aprobación de cierres de caja.
+        if (role == UserRole.ADMIN || role == UserRole.SUPERVISOR) {
+            add(
+                HubMenuItem(
+                    destination = HubDestination.REPORTS,
+                    title = "Flujo Aprobación",
+                    subtitle = if (pendingReportsCount > 0) {
+                        "Cierres pendientes de validar"
+                    } else {
+                        "KPIs y aprobaciones"
+                    },
+                    icon = Icons.AutoMirrored.Filled.FactCheck,
+                    showAlertBell = pendingReportsCount > 0
+                )
             )
-        )
+        }
         if (role == UserRole.ADMIN) {
             add(
                 HubMenuItem(
                     destination = HubDestination.USERS,
                     title = "Usuarios",
-                    subtitle = "Gestionar consulta",
+                    subtitle = "Gestionar supervisores y consulta",
                     icon = Icons.Default.People
                 )
             )
         }
     }
     val columns = 2
-
-    var showReportsAccessDialog by remember { mutableStateOf(false) }
-    var reportsAccessError by remember { mutableStateOf<String?>(null) }
-
-    fun onMenuItemClick(destination: HubDestination) {
-        if (destination == HubDestination.REPORTS) {
-            reportsAccessError = null
-            showReportsAccessDialog = true
-        } else {
-            onNavigate(destination)
-        }
-    }
-
-    if (showReportsAccessDialog) {
-        AccessCodeDialog(
-            title = "Acceso a Reportes",
-            description = "Ingresa la clave de acceso para abrir el módulo de reportes.",
-            error = reportsAccessError,
-            onDismiss = {
-                showReportsAccessDialog = false
-                reportsAccessError = null
-            },
-            onConfirm = { code ->
-                if (code == ReportsRepository.VERIFICATION_CODE) {
-                    showReportsAccessDialog = false
-                    reportsAccessError = null
-                    onNavigate(HubDestination.REPORTS)
-                } else {
-                    reportsAccessError = "Clave de acceso incorrecta."
-                }
-            }
-        )
-    }
 
     Scaffold(
         topBar = {
@@ -215,7 +179,7 @@ fun MainHubScreen(
                         ) {
                             HubMenuCard(
                                 item = item,
-                                onClick = { onMenuItemClick(item.destination) },
+                                onClick = { onNavigate(item.destination) },
                                 modifier = if (isLonelyLast) {
                                     Modifier.fillMaxWidth(0.48f)
                                 } else {

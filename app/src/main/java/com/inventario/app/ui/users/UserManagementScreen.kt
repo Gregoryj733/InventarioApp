@@ -18,6 +18,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,10 +41,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.inventario.app.data.entity.User
+import com.inventario.app.data.entity.UserRole
+import com.inventario.app.data.entity.displayLabel
 import com.inventario.app.data.entity.displaySucursal
 import com.inventario.app.data.entity.sucursalPending
 import com.inventario.app.data.repository.AuthRepository
 import com.inventario.app.ui.theme.AppScreenBackground
+import com.inventario.app.ui.theme.AppSnackbarController
 import com.inventario.app.ui.theme.BrandWarning
 import com.inventario.app.ui.theme.BrandAppTopBar
 import com.inventario.app.ui.theme.StatusPill
@@ -54,6 +59,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+private val CREATABLE_ROLES = listOf(UserRole.CONSULTA, UserRole.SUPERVISOR)
+
 data class UserManagementUiState(
     val users: List<User> = emptyList(),
     val loading: Boolean = true,
@@ -63,6 +70,7 @@ data class UserManagementUiState(
     val newUsername: String = "",
     val newPassword: String = "",
     val newSucursal: String = "",
+    val newRole: UserRole = UserRole.CONSULTA,
     val creating: Boolean = false,
     val assignSucursalUserId: Long? = null,
     val assignSucursalText: String = "",
@@ -82,7 +90,7 @@ class UserManagementViewModel(
     fun refresh() {
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
-            runCatching { authRepository.listConsultaUsers() }
+            runCatching { authRepository.listManagedUsers() }
                 .onSuccess { users ->
                     _state.update { it.copy(loading = false, users = users) }
                 }
@@ -101,6 +109,7 @@ class UserManagementViewModel(
                 newUsername = "",
                 newPassword = "",
                 newSucursal = "",
+                newRole = UserRole.CONSULTA,
                 message = null,
                 error = null
             )
@@ -125,11 +134,20 @@ class UserManagementViewModel(
         _state.update { it.copy(newSucursal = value, error = null) }
     }
 
+    fun onNewRoleChange(role: UserRole) {
+        _state.update { it.copy(newRole = role, error = null) }
+    }
+
     fun createUser() {
         val current = _state.value
         viewModelScope.launch {
             _state.update { it.copy(creating = true, error = null) }
-            authRepository.createConsultaUser(current.newUsername, current.newPassword, current.newSucursal)
+            authRepository.createManagedUser(
+                current.newUsername,
+                current.newPassword,
+                current.newSucursal,
+                current.newRole
+            )
                 .onSuccess {
                     _state.update {
                         it.copy(
@@ -138,38 +156,52 @@ class UserManagementViewModel(
                             newUsername = "",
                             newPassword = "",
                             newSucursal = "",
+                            newRole = UserRole.CONSULTA,
                             message = "Usuario creado correctamente."
                         )
                     }
                     refresh()
+                    AppSnackbarController.show("Usuario \"${current.newUsername.trim()}\" creado correctamente.")
                 }
                 .onFailure { err ->
+                    val message = err.message ?: "No se pudo crear el usuario."
                     _state.update {
-                        it.copy(creating = false, error = err.message ?: "No se pudo crear el usuario.")
+                        it.copy(creating = false, error = message)
                     }
+                    AppSnackbarController.show(message)
                 }
         }
     }
 
     fun toggleActive(user: User) {
         viewModelScope.launch {
-            authRepository.setConsultaUserActive(user.id, !user.active)
-                .onSuccess { refresh() }
+            authRepository.setManagedUserActive(user.id, !user.active)
+                .onSuccess {
+                    refresh()
+                    AppSnackbarController.show(
+                        if (!user.active) "Usuario \"${user.username}\" activado." else "Usuario \"${user.username}\" desactivado."
+                    )
+                }
                 .onFailure { err ->
-                    _state.update { it.copy(error = err.message ?: "No se pudo actualizar el usuario.") }
+                    val message = err.message ?: "No se pudo actualizar el usuario."
+                    _state.update { it.copy(error = message) }
+                    AppSnackbarController.show(message)
                 }
         }
     }
 
     fun deleteUser(user: User) {
         viewModelScope.launch {
-            authRepository.deleteConsultaUser(user.id)
+            authRepository.deleteManagedUser(user.id)
                 .onSuccess {
                     _state.update { it.copy(message = "Usuario eliminado.") }
                     refresh()
+                    AppSnackbarController.show("Usuario \"${user.username}\" eliminado.")
                 }
                 .onFailure { err ->
-                    _state.update { it.copy(error = err.message ?: "No se pudo eliminar el usuario.") }
+                    val message = err.message ?: "No se pudo eliminar el usuario."
+                    _state.update { it.copy(error = message) }
+                    AppSnackbarController.show(message)
                 }
         }
     }
@@ -203,7 +235,7 @@ class UserManagementViewModel(
         val branch = _state.value.assignSucursalText
         viewModelScope.launch {
             _state.update { it.copy(assigningSucursal = true, error = null) }
-            authRepository.assignConsultaUserSucursal(userId, branch)
+            authRepository.assignManagedUserSucursal(userId, branch)
                 .onSuccess {
                     _state.update {
                         it.copy(
@@ -214,14 +246,17 @@ class UserManagementViewModel(
                         )
                     }
                     refresh()
+                    AppSnackbarController.show("Sucursal asignada correctamente.")
                 }
                 .onFailure { err ->
+                    val message = err.message ?: "No se pudo asignar la sucursal."
                     _state.update {
                         it.copy(
                             assigningSucursal = false,
-                            error = err.message ?: "No se pudo asignar la sucursal."
+                            error = message
                         )
                     }
+                    AppSnackbarController.show(message)
                 }
         }
     }
@@ -248,7 +283,7 @@ fun UserManagementScreen(
     if (state.showCreateDialog) {
         AlertDialog(
             onDismissRequest = viewModel::dismissCreateDialog,
-            title = { Text("Nuevo usuario consulta", fontWeight = FontWeight.Bold) },
+            title = { Text("Nuevo usuario", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -272,6 +307,20 @@ fun UserManagementScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Text(
+                        "Perfil",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CREATABLE_ROLES.forEach { role ->
+                            FilterChip(
+                                selected = state.newRole == role,
+                                onClick = { viewModel.onNewRoleChange(role) },
+                                label = { Text(role.displayLabel()) }
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -338,13 +387,13 @@ fun UserManagementScreen(
                     .padding(horizontal = screenHorizontalPadding(), vertical = screenVerticalPadding())
             ) {
                 Text(
-                    text = "Usuarios consulta",
+                    text = "Usuarios",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Crear, activar, desactivar o eliminar usuarios con rol consulta.",
+                    text = "Crear, activar, desactivar o eliminar cuentas con perfil Supervisor o Consulta.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -409,10 +458,16 @@ private fun UserRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = if (pending) BrandWarning else MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                StatusPill(
-                    text = if (user.active) "Activo" else "Inactivo",
-                    color = if (user.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    StatusPill(
+                        text = user.role.displayLabel(),
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                    StatusPill(
+                        text = if (user.active) "Activo" else "Inactivo",
+                        color = if (user.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    )
+                }
                 if (pending) {
                     Spacer(Modifier.height(6.dp))
                     OutlinedButton(

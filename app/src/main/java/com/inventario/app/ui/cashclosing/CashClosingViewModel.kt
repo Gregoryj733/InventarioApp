@@ -11,6 +11,7 @@ import com.inventario.app.data.entity.CashClosingSnapshotCodec
 import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.session.SessionManager
+import com.inventario.app.ui.theme.AppSnackbarController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,6 +44,13 @@ data class ExpenseEntry(
     val usdText: String = ""
 )
 
+data class CashEntry(
+    val id: Long,
+    val description: String,
+    val usdText: String = "",
+    val bsText: String = ""
+)
+
 data class CashClosingUiState(
     val branchName: String = "",
     val dateText: String = "",
@@ -53,8 +61,7 @@ data class CashClosingUiState(
     val salesBsText: String = "",
     val posEntries: List<PosEntry> = emptyList(),
     val mobileEntries: List<MobilePaymentEntry> = emptyList(),
-    val cashUsdText: String = "",
-    val cashBsText: String = "",
+    val cashEntries: List<CashEntry> = emptyList(),
     val casheaUsdText: String = "",
     val expenseEntries: List<ExpenseEntry> = emptyList(),
     val observations: String = "",
@@ -99,6 +106,7 @@ class CashClosingViewModel(
                 username = sessionManager.username().orEmpty(),
                 dateText = dateFormat.format(Date()),
                 posEntries = listOf(newPosEntry("Punto 1")),
+                cashEntries = listOf(newCashEntry("")),
                 branchName = userSucursal.ifBlank { it.branchName }
             )
         }
@@ -178,9 +186,11 @@ class CashClosingViewModel(
                             salesBsText = ""
                         )
                     }
+                    AppSnackbarController.show("Contador de pedidos del día reiniciado.")
                 }
-                .onFailure {
+                .onFailure { err ->
                     _state.update { it.copy(resettingOrders = false) }
+                    AppSnackbarController.show(err.message ?: "No se pudo reiniciar el contador.")
                 }
         }
     }
@@ -346,18 +356,53 @@ class CashClosingViewModel(
         _state.update { it.copy(mobileEntries = it.mobileEntries.filter { e -> e.id != id }) }
     }
 
-    fun onCashUsdChange(raw: String) {
-        val cleaned = cleanDecimal(raw)
-        val rate = currentRate()
-        val bs = convertUsdToBs(cleaned, rate)
-        _state.update { it.copy(cashUsdText = cleaned, cashBsText = bs) }
+    fun onCashDescChange(id: Long, desc: String) {
+        _state.update {
+            it.copy(cashEntries = it.cashEntries.map { e ->
+                if (e.id == id) e.copy(description = desc) else e
+            })
+        }
     }
 
-    fun onCashBsChange(raw: String) {
+    fun onCashUsdChange(id: Long, raw: String) {
         val cleaned = cleanDecimal(raw)
         val rate = currentRate()
-        val usd = convertBsToUsd(cleaned, rate)
-        _state.update { it.copy(cashBsText = cleaned, cashUsdText = usd) }
+        _state.update {
+            it.copy(cashEntries = it.cashEntries.map { e ->
+                if (e.id != id) e
+                else {
+                    val bs = convertUsdToBs(cleaned, rate)
+                    e.copy(usdText = cleaned, bsText = bs)
+                }
+            })
+        }
+    }
+
+    fun onCashBsChange(id: Long, raw: String) {
+        val cleaned = cleanDecimal(raw)
+        val rate = currentRate()
+        _state.update {
+            it.copy(cashEntries = it.cashEntries.map { e ->
+                if (e.id != id) e
+                else {
+                    val usd = convertBsToUsd(cleaned, rate)
+                    e.copy(bsText = cleaned, usdText = usd)
+                }
+            })
+        }
+    }
+
+    fun addCashEntry() {
+        _state.update {
+            it.copy(cashEntries = it.cashEntries + newCashEntry(""))
+        }
+    }
+
+    fun removeCashEntry(id: Long) {
+        _state.update {
+            val remaining = it.cashEntries.filter { e -> e.id != id }
+            it.copy(cashEntries = if (remaining.isEmpty()) listOf(newCashEntry("")) else remaining)
+        }
     }
 
     fun onCasheaUsdChange(raw: String) {
@@ -401,8 +446,8 @@ class CashClosingViewModel(
     fun totalMobileUsd(): Double = _state.value.mobileEntries.sumOf { parseUsd(it.usdText) }
     fun totalMobileBs(): Double = _state.value.mobileEntries.sumOf { parseUsd(it.bsText) }
 
-    fun totalCashUsd(): Double = parseUsd(_state.value.cashUsdText)
-    fun totalCashBs(): Double = parseUsd(_state.value.cashBsText)
+    fun totalCashUsd(): Double = _state.value.cashEntries.sumOf { parseUsd(it.usdText) }
+    fun totalCashBs(): Double = _state.value.cashEntries.sumOf { parseUsd(it.bsText) }
 
     fun totalExpenseUsd(): Double = _state.value.expenseEntries.sumOf { parseUsd(it.usdText) }
 
@@ -469,10 +514,13 @@ class CashClosingViewModel(
                     _state.update { it.copy(saveSuccess = true) }
                     refreshClosingStatus()
                     onComplete(true)
+                    AppSnackbarController.show("Cierre de caja guardado. Queda pendiente de aprobación.")
                 }
                 .onFailure { err ->
-                    _state.update { it.copy(saveError = err.message ?: "No se pudo guardar el cierre.") }
+                    val message = err.message ?: "No se pudo guardar el cierre."
+                    _state.update { it.copy(saveError = message) }
                     onComplete(false)
+                    AppSnackbarController.show(message)
                 }
         }
     }
@@ -511,6 +559,15 @@ class CashClosingViewModel(
                 .map {
                     CashClosingSnapshot.SnapshotMobileEntry(
                         ref = it.ref,
+                        usd = parseUsd(it.usdText),
+                        bs = parseUsd(it.bsText)
+                    )
+                },
+            cashEntries = s.cashEntries
+                .filter { it.description.isNotBlank() || it.usdText.isNotBlank() || it.bsText.isNotBlank() }
+                .map {
+                    CashClosingSnapshot.SnapshotCashEntry(
+                        description = it.description,
                         usd = parseUsd(it.usdText),
                         bs = parseUsd(it.bsText)
                     )
@@ -596,7 +653,20 @@ class CashClosingViewModel(
             appendLine("   _Subtotal B:_ ${formatPrice(totalB)} · ${formatBs(totalMobileBs())}")
             appendLine()
             appendLine("💵 *Efectivo (C)*")
-            appendLine("   ${formatPrice(totalC)} · ${formatBs(totalCashBs())}")
+            val cashWithValues = s.cashEntries.filter {
+                it.description.isNotBlank() || it.usdText.isNotBlank() || it.bsText.isNotBlank()
+            }
+            if (cashWithValues.isEmpty()) {
+                appendLine("   — sin registros —")
+            } else {
+                cashWithValues.forEach { entry ->
+                    val usd = parseUsd(entry.usdText)
+                    val bs = parseUsd(entry.bsText)
+                    appendLine("   • *${entry.description.ifBlank { "Efectivo" }}*")
+                    appendLine("     ${formatPrice(usd)} · ${formatBs(bs)}")
+                }
+            }
+            appendLine("   _Subtotal C:_ ${formatPrice(totalC)} · ${formatBs(totalCashBs())}")
             appendLine()
             appendLine("📤 *Salidas (D)*")
             val expensesWithValues = s.expenseEntries.filter { it.usdText.isNotBlank() }
@@ -676,10 +746,12 @@ class CashClosingViewModel(
             } else {
                 state.salesBsText
             },
-            cashBsText = if (state.cashUsdText.isNotBlank()) {
-                convertUsdToBs(state.cashUsdText, rate)
-            } else {
-                state.cashBsText
+            cashEntries = state.cashEntries.map { entry ->
+                if (entry.usdText.isNotBlank()) {
+                    entry.copy(bsText = convertUsdToBs(entry.usdText, rate))
+                } else {
+                    entry
+                }
             },
             posEntries = state.posEntries.map { entry ->
                 if (entry.usdText.isNotBlank()) {
@@ -701,6 +773,8 @@ class CashClosingViewModel(
         text.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0 }
 
     private fun newPosEntry(name: String) = PosEntry(id = nextId(), name = name)
+
+    private fun newCashEntry(description: String) = CashEntry(id = nextId(), description = description)
 
     private fun nextId(): Long = nextId++
 

@@ -322,14 +322,25 @@ fun CashClosingScreen(
             Spacer(Modifier.height(12.dp))
 
             SectionCard(title = "Efectivo") {
-                DualCurrencyField(
-                    usdLabel = "USD",
-                    bsLabel = "Bs",
-                    usdText = state.cashUsdText,
-                    bsText = state.cashBsText,
-                    onUsdChange = viewModel::onCashUsdChange,
-                    onBsChange = viewModel::onCashBsChange
-                )
+                state.cashEntries.forEach { entry ->
+                    CashEntryRow(
+                        entry = entry,
+                        onDescChange = { viewModel.onCashDescChange(entry.id, it) },
+                        onUsdChange = { viewModel.onCashUsdChange(entry.id, it) },
+                        onBsChange = { viewModel.onCashBsChange(entry.id, it) },
+                        onRemove = { viewModel.removeCashEntry(entry.id) }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                OutlinedButton(
+                    onClick = viewModel::addCashEntry,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Agregar descripción")
+                }
                 Spacer(Modifier.height(8.dp))
                 TotalLine(
                     label = "TOTAL (C)",
@@ -568,7 +579,9 @@ private fun CashClosingPreviewDialog(
     var casheaClosureDone by remember { mutableStateOf(false) }
     var fiscalZReportDone by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
+    var closingSaved by remember { mutableStateOf(false) }
     val allPrerequisitesMet = posClosureDone && casheaClosureDone && fiscalZReportDone
+    val context = LocalContext.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -622,7 +635,28 @@ private fun CashClosingPreviewDialog(
                 Spacer(Modifier.height(6.dp))
                 ReportKeyValueRow("Puntos de venta (A)", viewModel.formatPrice(viewModel.totalPosUsd()))
                 ReportKeyValueRow("Pago móvil (B)", viewModel.formatPrice(viewModel.totalMobileUsd()))
-                ReportKeyValueRow("Efectivo (C)", viewModel.formatPrice(viewModel.totalCashUsd()))
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Efectivo (C)",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val cashWithValues = state.cashEntries.filter {
+                    it.description.isNotBlank() || it.usdText.isNotBlank() || it.bsText.isNotBlank()
+                }
+                if (cashWithValues.isEmpty()) {
+                    ReportKeyValueRow("— sin registros —", viewModel.formatPrice(viewModel.totalCashUsd()))
+                } else {
+                    cashWithValues.forEach { entry ->
+                        ReportKeyValueRow(
+                            entry.description.ifBlank { "Efectivo" },
+                            viewModel.formatPrice(viewModel.textToAmount(entry.usdText))
+                        )
+                    }
+                    ReportKeyValueRow("Subtotal (C)", viewModel.formatPrice(viewModel.totalCashUsd()))
+                }
+                Spacer(Modifier.height(6.dp))
                 ReportKeyValueRow("Salidas (D)", viewModel.formatPrice(viewModel.totalExpenseUsd()))
                 ReportKeyValueRow("Cashea (E)", viewModel.formatPrice(viewModel.casheaUsd()))
 
@@ -650,7 +684,33 @@ private fun CashClosingPreviewDialog(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                if (!allPrerequisitesMet) {
+                if (closingSaved) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .background(
+                                BrandSuccess.copy(alpha = 0.14f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = null,
+                            tint = BrandSuccess,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Caja cerrada correctamente. Ya puedes enviarla por WhatsApp.",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = BrandSuccess
+                        )
+                    }
+                } else if (!allPrerequisitesMet) {
                     Text(
                         text = "Confirme los cierres pendientes para cerrar caja",
                         style = MaterialTheme.typography.labelSmall,
@@ -675,10 +735,17 @@ private fun CashClosingPreviewDialog(
                         saving = true
                         viewModel.saveClosingRecord { success ->
                             saving = false
-                            if (success) onDismiss()
+                            if (success) {
+                                closingSaved = true
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Caja cerrada correctamente",
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
                         }
                     },
-                    enabled = allPrerequisitesMet && !saving,
+                    enabled = allPrerequisitesMet && !saving && !closingSaved,
                     modifier = Modifier.fillMaxWidth(),
                     colors = androidx.compose.material3.ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary
@@ -695,12 +762,15 @@ private fun CashClosingPreviewDialog(
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                     }
                     Spacer(Modifier.width(6.dp))
-                    Text("Aceptar cerrar caja", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (closingSaved) "Caja cerrada ✓" else "Aceptar cerrar caja",
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = onShare,
-                    enabled = allPrerequisitesMet && !saving,
+                    enabled = closingSaved && !saving,
                     modifier = Modifier.fillMaxWidth(),
                     colors = androidx.compose.material3.ButtonDefaults.buttonColors(
                         containerColor = WhatsAppGreen,
@@ -718,7 +788,7 @@ private fun CashClosingPreviewDialog(
                     onClick = onDismiss,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Volver a editar")
+                    Text(if (closingSaved) "Cerrar" else "Volver a editar")
                 }
             }
         }
@@ -809,7 +879,7 @@ private fun DifferenceBanner(
 ) {
     val totalA = state.posEntries.sumOf { viewModel.textToAmount(it.usdText) }
     val totalB = state.mobileEntries.sumOf { viewModel.textToAmount(it.usdText) }
-    val totalC = viewModel.textToAmount(state.cashUsdText)
+    val totalC = state.cashEntries.sumOf { viewModel.textToAmount(it.usdText) }
     val totalD = state.expenseEntries.sumOf { viewModel.textToAmount(it.usdText) }
     val totalE = viewModel.textToAmount(state.casheaUsdText)
     val salesUsd = viewModel.textToAmount(state.salesUsdText)
@@ -1063,6 +1133,41 @@ private fun MobileEntryRow(
 }
 
 @Composable
+private fun CashEntryRow(
+    entry: CashEntry,
+    onDescChange: (String) -> Unit,
+    onUsdChange: (String) -> Unit,
+    onBsChange: (String) -> Unit,
+    onRemove: () -> Unit
+) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            KeyboardAwareTextField(
+                value = entry.description,
+                onValueChange = onDescChange,
+                label = "Descripción",
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onRemove) {
+                Icon(Icons.Default.Delete, contentDescription = "Eliminar", tint = MaterialTheme.colorScheme.error)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        DualCurrencyField(
+            usdLabel = "USD",
+            bsLabel = "Bs",
+            usdText = entry.usdText,
+            bsText = entry.bsText,
+            onUsdChange = onUsdChange,
+            onBsChange = onBsChange
+        )
+    }
+}
+
+@Composable
 private fun ExpenseEntryRow(
     entry: ExpenseEntry,
     bsEquiv: String?,
@@ -1128,8 +1233,8 @@ private fun SummaryCard(
     val totalABs = state.posEntries.sumOf { viewModel.textToAmount(it.bsText) }
     val totalB = state.mobileEntries.sumOf { viewModel.textToAmount(it.usdText) }
     val totalBBs = state.mobileEntries.sumOf { viewModel.textToAmount(it.bsText) }
-    val totalC = viewModel.textToAmount(state.cashUsdText)
-    val totalCBs = viewModel.textToAmount(state.cashBsText)
+    val totalC = state.cashEntries.sumOf { viewModel.textToAmount(it.usdText) }
+    val totalCBs = state.cashEntries.sumOf { viewModel.textToAmount(it.bsText) }
     val totalD = state.expenseEntries.sumOf { viewModel.textToAmount(it.usdText) }
     val totalE = viewModel.textToAmount(state.casheaUsdText)
     val salesUsd = viewModel.textToAmount(state.salesUsdText)

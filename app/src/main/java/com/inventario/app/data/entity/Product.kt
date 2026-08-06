@@ -1,15 +1,12 @@
 package com.inventario.app.data.entity
 
-import androidx.room.Entity
-import androidx.room.Index
-import androidx.room.PrimaryKey
-
-@Entity(
-    tableName = "products",
-    indices = [Index(value = ["description"])]
-)
+/**
+ * Producto de inventario. Vive exclusivamente en la nube: `id` es un
+ * identificador estable derivado de `syncId`, usado solo para referenciar el
+ * producto dentro de la sesión actual (selección, líneas de pedido).
+ */
 data class Product(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val id: Long = 0,
     val syncId: String = "",
     val description: String,
     val quantity: Double,
@@ -17,3 +14,5 @@ data class Product(
     val price: Double,
     val updatedAt: Long = System.currentTimeMillis()
 )
+
+fun stableProductId(syncId: String): Long = syncId.hashCode().toLong()

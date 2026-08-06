@@ -1,9 +1,5 @@
-# Room
--keep class * extends androidx.room.RoomDatabase
--keep @androidx.room.Entity class *
+# Modelos de datos (JSON <-> entidades vía reflexión/serialización)
 -keep class com.inventario.app.data.entity.** { *; }
--keep class com.inventario.app.data.dao.** { *; }
--dontwarn androidx.room.paging.**
 
 # OkHttp
 -dontwarn okhttp3.**

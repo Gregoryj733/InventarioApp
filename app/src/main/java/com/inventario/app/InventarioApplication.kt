@@ -2,29 +2,26 @@ package com.inventario.app
 
 import android.app.Application
 import android.util.Log
-import androidx.room.Room
-import com.inventario.app.data.AppDatabase
-import com.inventario.app.data.MIGRATION_1_2
-import com.inventario.app.data.MIGRATION_2_3
-import com.inventario.app.data.MIGRATION_3_4
-import com.inventario.app.data.MIGRATION_4_5
-import com.inventario.app.data.MIGRATION_5_6
-import com.inventario.app.data.MIGRATION_6_7
-import com.inventario.app.data.MIGRATION_7_8
+import com.google.firebase.messaging.FirebaseMessaging
 import com.inventario.app.data.bcv.BcvRateFetcher
 import com.inventario.app.data.repository.AuthRepository
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.repository.ReportsRepository
 import com.inventario.app.data.session.SessionManager
+import com.inventario.app.data.sync.CloudSync
 import com.inventario.app.data.sync.CloudSyncInfo
-import com.inventario.app.data.sync.InventoryCloudSync
 import com.inventario.app.data.sync.NetworkMonitor
 import com.inventario.app.data.sync.SyncConfig
-import kotlinx.coroutines.flow.StateFlow
+import com.inventario.app.push.INVENTORY_UPDATED_TOPIC
+import com.inventario.app.push.NotificationHelper
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 
 class InventarioApplication : Application() {
@@ -36,8 +33,6 @@ class InventarioApplication : Application() {
             }
     )
 
-    lateinit var database: AppDatabase
-        private set
     lateinit var sessionManager: SessionManager
         private set
     lateinit var authRepository: AuthRepository
@@ -48,107 +43,84 @@ class InventarioApplication : Application() {
         private set
     val bcvRateFetcher = BcvRateFetcher()
 
-    private var cloudSync: InventoryCloudSync? = null
+    private lateinit var cloudSync: CloudSync
     private var networkMonitor: NetworkMonitor? = null
+
+    /**
+     * Estable a través de reinicios de [cloudSync] (p. ej. al cambiar de
+     * servidor desde ajustes): reenvía el evento de sesión vencida para que
+     * la UI pueda forzar el cierre de sesión sin quedar suscrita a una
+     * instancia de CloudSync que ya fue reemplazada.
+     */
+    private val _sessionExpired = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val sessionExpired: SharedFlow<Unit> = _sessionExpired.asSharedFlow()
 
     override fun onCreate() {
         super.onCreate()
-        database = openDatabase()
+        NotificationHelper.createChannel(this)
+
         sessionManager = SessionManager(this)
-        authRepository = AuthRepository(database.userDao())
+        cloudSync = buildCloudSync()
+        cloudSync.setAuthToken(sessionManager.token())
 
-        val sync = initCloudSync()
-        cloudSync = sync
-        inventoryRepository = InventoryRepository(
-            context = this,
-            productDao = database.productDao(),
-            appMetaDao = database.appMetaDao(),
-            saleRecordDao = database.saleRecordDao(),
-            saleLineItemDao = database.saleLineItemDao(),
-            cashClosingRecordDao = database.cashClosingRecordDao(),
-            cloudSync = sync
-        )
-        reportsRepository = ReportsRepository(
-            saleRecordDao = database.saleRecordDao(),
-            cashClosingRecordDao = database.cashClosingRecordDao()
-        )
+        authRepository = AuthRepository(cloudSync, sessionManager)
+        inventoryRepository = InventoryRepository(context = this, cloudSync = cloudSync, appScope = appScope)
+        reportsRepository = ReportsRepository(cloudSync)
 
-        appScope.launch {
-            authRepository.ensureDefaultUsers()
-            inventoryRepository.ensureMeta()
-            inventoryRepository.rebuildSearchIndex()
-        }
-
-        sync?.start(appScope)
-        sync?.let { cloud ->
-            val monitor = NetworkMonitor(this)
-            networkMonitor = monitor
-            monitor.start()
-            appScope.launch {
-                monitor.isOnline.collect { online ->
-                    cloud.setNetworkAvailable(online)
-                }
-            }
-        }
+        cloudSync.start(appScope)
+        startNetworkMonitor(cloudSync)
+        subscribeToInventoryTopic()
+        forwardSessionExpiredEvents(cloudSync)
     }
 
     override fun onTerminate() {
         networkMonitor?.stop()
-        cloudSync?.stop()
+        cloudSync.stop()
         super.onTerminate()
     }
 
-    private fun openDatabase(): AppDatabase {
-        val dbName = "inventario.db"
-        val builder = Room.databaseBuilder(
-            applicationContext,
-            AppDatabase::class.java,
-            dbName
-        ).addMigrations(
-            MIGRATION_1_2,
-            MIGRATION_2_3,
-            MIGRATION_3_4,
-            MIGRATION_4_5,
-            MIGRATION_5_6,
-            MIGRATION_6_7,
-            MIGRATION_7_8
-        )
-
-        return runCatching { builder.build() }.getOrElse { migrationError ->
-            Log.w(TAG, "Database migration failed, recreating local database", migrationError)
-            applicationContext.deleteDatabase(dbName)
-            builder
-                .fallbackToDestructiveMigration()
-                .build()
+    private fun forwardSessionExpiredEvents(sync: CloudSync) {
+        appScope.launch {
+            sync.sessionExpired.collect { _sessionExpired.emit(Unit) }
         }
     }
 
-    private fun initCloudSync(): InventoryCloudSync? {
-        val config = SyncConfig.load(this)
-        if (config == null || !config.isConfigured) {
-            Log.i(TAG, "Sync server not configured; cloud sync disabled")
-            return null
+    private fun startNetworkMonitor(cloud: CloudSync) {
+        val monitor = NetworkMonitor(this)
+        networkMonitor = monitor
+        monitor.start()
+        appScope.launch {
+            monitor.isOnline.collect { online -> cloud.setNetworkAvailable(online) }
         }
+    }
 
-        return runCatching {
-            InventoryCloudSync(
-                config = config,
-                productDao = database.productDao(),
-                appMetaDao = database.appMetaDao(),
-                saleRecordDao = database.saleRecordDao()
-            )
+    private fun subscribeToInventoryTopic() {
+        runCatching {
+            FirebaseMessaging.getInstance().subscribeToTopic(INVENTORY_UPDATED_TOPIC)
         }.onFailure { error ->
-            Log.w(TAG, "Cloud sync unavailable", error)
-        }.getOrNull()
+            Log.w(TAG, "No se pudo suscribir al topic de notificaciones", error)
+        }
     }
 
-    fun restartCloudSync(): StateFlow<CloudSyncInfo>? {
-        cloudSync?.stop()
-        val sync = initCloudSync()
+    private fun buildCloudSync(): CloudSync {
+        val config = SyncConfig.load(this) ?: SyncConfig(baseUrl = "", apiKey = "")
+        return CloudSync(config)
+    }
+
+    /** Reconstruye el cliente de nube tras cambiar la URL/clave desde la pantalla de configuración. */
+    fun restartCloudSync(): StateFlow<CloudSyncInfo> {
+        cloudSync.stop()
+        val sync = buildCloudSync()
+        sync.setAuthToken(sessionManager.token())
         cloudSync = sync
         inventoryRepository.setCloudSync(sync)
-        sync?.start(appScope)
-        return sync?.status
+        authRepository.setCloudSync(sync)
+        reportsRepository.setCloudSync(sync)
+        sync.start(appScope)
+        networkMonitor?.stop()
+        startNetworkMonitor(sync)
+        forwardSessionExpiredEvents(sync)
+        return sync.status
     }
 
     companion object {

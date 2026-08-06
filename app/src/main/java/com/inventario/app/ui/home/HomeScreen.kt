@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.UserRole
+import com.inventario.app.data.entity.displayLabel
 import com.inventario.app.data.order.OrderLine
 import com.inventario.app.ui.theme.AccentSectionCard
 import com.inventario.app.ui.theme.AppScreenBackground
@@ -548,7 +549,7 @@ private fun InfoHeader(state: HomeUiState) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             StatusPill(
-                text = if (state.role == UserRole.ADMIN) "Administrador" else "Consulta",
+                text = state.role.displayLabel(),
                 color = MaterialTheme.colorScheme.secondary
             )
             StatusPill(

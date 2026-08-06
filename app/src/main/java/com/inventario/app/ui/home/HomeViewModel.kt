@@ -17,6 +17,7 @@ import com.inventario.app.data.sync.CloudConfigStore
 import com.inventario.app.data.sync.CloudSyncInfo
 import com.inventario.app.data.sync.CloudSyncStatus
 import com.inventario.app.data.sync.SyncConfig
+import com.inventario.app.ui.theme.AppSnackbarController
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,7 +75,7 @@ class HomeViewModel(
     private val inventoryRepository: InventoryRepository,
     private val sessionManager: SessionManager,
     private val bcvRateFetcher: BcvRateFetcher,
-    private val restartCloudSync: () -> StateFlow<CloudSyncInfo>?
+    private val restartCloudSync: () -> StateFlow<CloudSyncInfo>
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(HomeUiState())
@@ -149,14 +150,17 @@ class HomeViewModel(
                             confirmedOrdersToday = 0
                         )
                     }
+                    AppSnackbarController.show("Contador de pedidos del día reiniciado.")
                 }
                 .onFailure { err ->
+                    val message = err.message ?: "No se pudo reiniciar el contador."
                     _state.update {
                         it.copy(
                             resettingOrders = false,
-                            error = err.message ?: "No se pudo reiniciar el contador."
+                            error = message
                         )
                     }
+                    AppSnackbarController.show(message)
                 }
         }
     }
@@ -164,15 +168,6 @@ class HomeViewModel(
     private fun subscribeCloudSync() {
         cloudSyncJob?.cancel()
         val syncFlow = inventoryRepository.observeCloudSyncStatus()
-        if (syncFlow == null) {
-            _state.update {
-                it.copy(
-                    cloudSyncLabel = "Nube: no configurada",
-                    cloudSyncDetail = "Toca «Configurar sincronización» e ingresa la URL del servidor."
-                )
-            }
-            return
-        }
         cloudSyncJob = viewModelScope.launch {
             syncFlow.collect { info ->
                 _state.update {
@@ -388,16 +383,22 @@ class HomeViewModel(
                 error = null
             )
         }
+        AppSnackbarController.show("\"${product.description}\" agregado al pedido.")
     }
 
     fun removeOrderLine(productId: Long) {
+        val removed = _state.value.orderLines.find { it.productId == productId }
         _state.update {
             it.copy(orderLines = it.orderLines.filter { line -> line.productId != productId })
+        }
+        if (removed != null) {
+            AppSnackbarController.show("\"${removed.description}\" quitado del pedido.")
         }
     }
 
     fun clearOrder() {
         _state.update { it.copy(orderLines = emptyList(), showReceipt = false) }
+        AppSnackbarController.show("Pedido vaciado.")
     }
 
     fun orderTotalUsd(): Double = _state.value.orderLines.sumOf { it.totalUsd }
@@ -485,13 +486,16 @@ class HomeViewModel(
                     )
                 }
                 onWhatsApp(message)
+                AppSnackbarController.show("Pedido confirmado. Stock actualizado.")
             }.onFailure { err ->
+                val message = err.message ?: "No se pudo completar el pedido."
                 _state.update {
                     it.copy(
                         orderProcessing = false,
-                        error = err.message ?: "No se pudo completar el pedido."
+                        error = message
                     )
                 }
+                AppSnackbarController.show(message)
             }
         }
     }
@@ -532,6 +536,7 @@ class HomeViewModel(
             val result = inventoryRepository.replaceInventoryFromExcel(uri)
             val count = inventoryRepository.productCount()
             val alert = buildImportAlert(result, count)
+            AppSnackbarController.show(alert.title)
             val q = _state.value.query
             val results = if (q.trim().isNotEmpty()) inventoryRepository.search(q) else emptyList()
             val selectedId = _state.value.selectedProduct?.id
@@ -653,6 +658,7 @@ class HomeViewModel(
         }
         restartCloudSync()
         subscribeCloudSync()
+        AppSnackbarController.show("Configuración de sincronización guardada.")
     }
 
     fun needsCloudConfigButton(): Boolean {
@@ -710,7 +716,7 @@ class HomeViewModel(
             inventoryRepository: InventoryRepository,
             sessionManager: SessionManager,
             bcvRateFetcher: BcvRateFetcher,
-            restartCloudSync: () -> StateFlow<CloudSyncInfo>?
+            restartCloudSync: () -> StateFlow<CloudSyncInfo>
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {

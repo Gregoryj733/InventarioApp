@@ -14,6 +14,12 @@ class SessionManager(context: Context) {
             .apply()
     }
 
+    fun saveToken(token: String) {
+        prefs.edit().putString(KEY_TOKEN, token).apply()
+    }
+
+    fun token(): String? = prefs.getString(KEY_TOKEN, null)?.takeIf { it.isNotBlank() }
+
     fun clear() {
         prefs.edit().clear().apply()
     }
@@ -41,5 +47,6 @@ class SessionManager(context: Context) {
         private const val KEY_USER = "username"
         private const val KEY_ROLE = "role"
         private const val KEY_SUCURSAL = "sucursal"
+        private const val KEY_TOKEN = "auth_token"
     }
 }

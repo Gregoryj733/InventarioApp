@@ -1,12 +1,11 @@
 package com.inventario.app.data.repository
 
-import com.inventario.app.data.dao.CashClosingRecordDao
-import com.inventario.app.data.dao.SaleRecordDao
 import com.inventario.app.data.entity.CashClosingRecord
 import com.inventario.app.data.entity.CashClosingStatus
+import com.inventario.app.data.sync.CloudSync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.Calendar
+import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 data class ReportsSummary(
@@ -21,13 +20,16 @@ data class ReportsSummary(
     val rejectedClosings: List<CashClosingRecord>
 )
 
-class ReportsRepository(
-    private val saleRecordDao: SaleRecordDao,
-    private val cashClosingRecordDao: CashClosingRecordDao
-) {
+class ReportsRepository(private var cloudSync: CloudSync) {
+
+    fun setCloudSync(sync: CloudSync) {
+        cloudSync = sync
+    }
+
     suspend fun loadSummary(start: Long, end: Long, bcvRate: Double?): ReportsSummary =
         withContext(Dispatchers.IO) {
-            val sales = saleRecordDao.listBetween(start, end)
+            val sales = cloudSync.get("/v1/sales").optJSONArray("sales")?.toSaleList().orEmpty()
+                .filter { it.createdAt >= start && it.createdAt < end }
             val totalUsd = sales.sumOf { it.totalUsd }
             val fallbackRate = bcvRate ?: 0.0
             val totalBs = sales.sumOf { sale ->
@@ -36,7 +38,10 @@ class ReportsRepository(
             }
             val orderCount = sales.size
 
-            val approvedClosings = cashClosingRecordDao.listApprovedBetween(start, end)
+            val closings = cloudSync.get("/v1/cash-closings").optJSONArray("cashClosings")?.toCashClosingList().orEmpty()
+                .filter { it.closedAt >= start && it.closedAt < end }
+            val approvedClosings = closings.filter { it.status == CashClosingStatus.APPROVED }
+                .sortedByDescending { it.closedAt }
             val approvedIncomeUsd = approvedClosings.sumOf { it.grandTotalUsd }
             val approvedIncomeBs = approvedClosings.sumOf { it.grandTotalBs }
 
@@ -44,59 +49,50 @@ class ReportsRepository(
                 totalSalesUsd = totalUsd,
                 totalSalesBs = totalBs,
                 orderCount = orderCount,
-                balancedPendingClosings = cashClosingRecordDao.listBalancedPendingBetween(start, end),
-                differencePendingClosings = cashClosingRecordDao.listDifferencePendingBetween(start, end),
+                balancedPendingClosings = closings
+                    .filter { it.status == CashClosingStatus.PENDING && !it.hasDifference }
+                    .sortedByDescending { it.closedAt },
+                differencePendingClosings = closings
+                    .filter { it.status == CashClosingStatus.PENDING && it.hasDifference }
+                    .sortedByDescending { it.closedAt },
                 approvedClosings = approvedClosings,
                 approvedClosingIncomeUsd = approvedIncomeUsd,
                 approvedClosingIncomeBs = approvedIncomeBs,
-                rejectedClosings = cashClosingRecordDao.listRejectedBetween(start, end)
+                rejectedClosings = closings
+                    .filter { it.status == CashClosingStatus.REJECTED }
+                    .sortedByDescending { it.closedAt }
             )
         }
 
-    suspend fun approveClosing(id: Long, reviewerUsername: String, verificationCode: String): Result<Unit> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                require(verificationCode == VERIFICATION_CODE) { "Código de verificación incorrecto." }
-                val updated = cashClosingRecordDao.updateStatus(
-                    id = id,
-                    status = CashClosingStatus.APPROVED,
-                    reviewedBy = reviewerUsername,
-                    reviewedAt = System.currentTimeMillis()
-                )
-                if (updated == 0) error("No se pudo aprobar el cierre. Verifica que esté pendiente.")
-            }
-        }
+    suspend fun approveClosing(id: Long, reviewerUsername: String): Result<Unit> =
+        updateStatus(id, "APPROVED", reviewerUsername)
 
-    suspend fun rejectClosing(id: Long, reviewerUsername: String, verificationCode: String): Result<Unit> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                require(verificationCode == VERIFICATION_CODE) { "Código de verificación incorrecto." }
-                val updated = cashClosingRecordDao.updateStatus(
-                    id = id,
-                    status = CashClosingStatus.REJECTED,
-                    reviewedBy = reviewerUsername,
-                    reviewedAt = System.currentTimeMillis()
-                )
-                if (updated == 0) error("No se pudo rechazar el cierre. Verifica que esté pendiente.")
-            }
-        }
+    suspend fun rejectClosing(id: Long, reviewerUsername: String): Result<Unit> =
+        updateStatus(id, "REJECTED", reviewerUsername)
 
-    suspend fun revertClosing(id: Long, reviewerUsername: String, verificationCode: String): Result<Unit> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                require(verificationCode == VERIFICATION_CODE) { "Código de verificación incorrecto." }
-                val updated = cashClosingRecordDao.revertApproved(
-                    id = id,
-                    reviewedBy = reviewerUsername,
-                    reviewedAt = System.currentTimeMillis()
-                )
-                if (updated == 0) error("No se pudo revertir el cierre. Verifica que esté aprobado.")
-            }
+    suspend fun revertClosing(id: Long, reviewerUsername: String): Result<Unit> =
+        updateStatus(id, "REVERTED", reviewerUsername)
+
+    private suspend fun updateStatus(
+        id: Long,
+        status: String,
+        reviewerUsername: String
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            cloudSync.patchJson(
+                "/v1/cash-closings/$id/status",
+                JSONObject().apply {
+                    put("status", status)
+                    put("reviewedBy", reviewerUsername)
+                    put("reviewedAt", System.currentTimeMillis())
+                }
+            )
+            Unit
         }
+    }
 
     companion object {
         const val MAX_RANGE_DAYS = 90
-        const val VERIFICATION_CODE = "4321"
 
         fun clampRange(start: Long, end: Long): Pair<Long, Long> {
             val maxMillis = TimeUnit.DAYS.toMillis(MAX_RANGE_DAYS.toLong())

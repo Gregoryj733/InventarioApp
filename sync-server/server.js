@@ -10,6 +10,12 @@ const push = require("./push");
 const API_KEY = process.env.API_KEY || "inventario-sync-key";
 const PORT = Number(process.env.PORT || 8787);
 const MAX_CLOSINGS_PER_DAY = 5;
+// Roles que el módulo de Usuarios puede crear/editar/eliminar. ADMIN se
+// gestiona fuera de esta API (usuario semilla único).
+const MANAGEABLE_ROLES = ["CONSULTA", "SUPERVISOR"];
+// Roles con permiso para aprobar, rechazar o revertir cierres de caja
+// (Flujo Aprobación).
+const CLOSING_REVIEW_ROLES = ["ADMIN", "SUPERVISOR"];
 
 const app = express();
 app.use(express.json({ limit: "12mb" }));
@@ -251,6 +257,85 @@ async function start() {
     })
   );
 
+  // ---------- Pedidos (descuento de stock + venta, atómico) ----------
+  // Combina lo que antes eran dos llamadas separadas (deduct + sales) en una
+  // sola transacción idempotente (por syncId), para que un reintento por
+  // fallo de red nunca descuente el stock dos veces ni deje una venta a
+  // medio registrar.
+  app.post(
+    "/v1/orders",
+    auth.requireAuth(),
+    asyncRoute(async (req, res) => {
+      const body = req.body || {};
+      const syncId = body.syncId;
+      const createdAt = Number(body.createdAt);
+      const totalUsd = Number(body.totalUsd);
+      const bcvRate = Number(body.bcvRate) || 0;
+      const lines = Array.isArray(body.lines) ? body.lines : [];
+
+      if (!syncId || !Number.isFinite(createdAt) || !Number.isFinite(totalUsd) || lines.length === 0) {
+        throw publicError("Pedido inválido");
+      }
+
+      await store.runTransaction(async (state) => {
+        if (state.sales.some((item) => item.syncId === syncId)) {
+          // Ya se procesó este pedido (reintento tras un corte de red);
+          // no volver a descontar stock ni duplicar la venta.
+          return { state, result: null };
+        }
+
+        const products = state.products.map((p) => ({ ...p }));
+        for (const line of lines) {
+          const productSyncId = line?.productSyncId;
+          const quantity = Number(line?.quantity);
+          if (!productSyncId || !Number.isFinite(quantity) || quantity <= 0) {
+            throw publicError("Línea de pedido inválida");
+          }
+          const product = products.find((item) => item.syncId === productSyncId);
+          if (!product) {
+            throw publicError(`Producto no encontrado: ${line.description || productSyncId}`);
+          }
+          const newQty = Number(product.quantity) - quantity;
+          if (newQty < 0) {
+            throw publicError(`Stock insuficiente para "${product.description}"`);
+          }
+          product.quantity = newQty;
+          product.updatedAt = createdAt;
+        }
+
+        const sales = [...state.sales, { syncId, createdAt, totalUsd, bcvRate }];
+        let nextId = state.nextSaleLineItemId;
+        const newLineItems = lines.map((line) => ({
+          id: nextId++,
+          saleSyncId: syncId,
+          productSyncId: line.productSyncId || "",
+          description: line.description || "",
+          quantity: Number(line.quantity) || 0,
+          unit: line.unit || "",
+          unitPriceUsd: Number(line.unitPriceUsd) || 0,
+          totalUsd: Number(line.totalUsd) || 0,
+          createdAt
+        }));
+
+        return {
+          state: {
+            ...state,
+            products,
+            inventoryRevision: createdAt,
+            sales,
+            saleLineItems: [...state.saleLineItems, ...newLineItems],
+            nextSaleLineItemId: nextId
+          },
+          result: null
+        };
+      });
+
+      realtime.broadcast("inventory", {});
+      realtime.broadcast("sales", {});
+      res.json({ ok: true });
+    })
+  );
+
   // ---------- Ventas ----------
   app.get("/v1/sales", auth.requireAuth(), asyncRoute(async (_req, res) => {
     const state = await store.loadState();
@@ -409,7 +494,7 @@ async function start() {
 
   app.patch(
     "/v1/cash-closings/:id/status",
-    auth.requireAuth(),
+    auth.requireAuth(CLOSING_REVIEW_ROLES),
     asyncRoute(async (req, res) => {
       const id = Number(req.params.id);
       const { status, reviewedBy, reviewedAt } = req.body || {};
@@ -449,7 +534,9 @@ async function start() {
     auth.requireAuth("ADMIN"),
     asyncRoute(async (_req, res) => {
       const state = await store.loadState();
-      res.json({ users: state.users.filter((u) => u.role === "CONSULTA").map(sanitizeUser) });
+      res.json({
+        users: state.users.filter((u) => MANAGEABLE_ROLES.includes(u.role)).map(sanitizeUser)
+      });
     })
   );
 
@@ -460,11 +547,15 @@ async function start() {
       const username = String(req.body?.username || "").trim().toLowerCase();
       const password = String(req.body?.password || "");
       const sucursal = String(req.body?.sucursal || "").trim();
+      const requestedRole = String(req.body?.role || "CONSULTA").trim().toUpperCase();
 
       if (username.length < 3) throw publicError("El usuario debe tener al menos 3 caracteres.");
       if (password.length < 4) throw publicError("La contraseña debe tener al menos 4 caracteres.");
       if (!sucursal) throw publicError("Indica la sucursal del usuario.");
       if (username === "admin") throw publicError('Ese nombre de usuario no está permitido.');
+      if (!MANAGEABLE_ROLES.includes(requestedRole)) {
+        throw publicError("Rol de usuario inválido.");
+      }
 
       const created = await store.runTransaction(async (state) => {
         if (state.users.some((u) => u.username.toLowerCase() === username)) {
@@ -475,7 +566,7 @@ async function start() {
           id,
           username,
           passwordHash: auth.hashPassword(password),
-          role: "CONSULTA",
+          role: requestedRole,
           active: true,
           sucursal
         };
@@ -496,7 +587,7 @@ async function start() {
     asyncRoute(async (req, res) => {
       const id = Number(req.params.id);
       await store.runTransaction(async (state) => {
-        const target = state.users.find((u) => u.id === id && u.role === "CONSULTA");
+        const target = state.users.find((u) => u.id === id && MANAGEABLE_ROLES.includes(u.role));
         if (!target) throw publicError("No se pudo eliminar el usuario.");
         const users = state.users.filter((u) => u.id !== id);
         return { state: { ...state, users }, result: null };
@@ -511,14 +602,19 @@ async function start() {
     auth.requireAuth("ADMIN"),
     asyncRoute(async (req, res) => {
       const id = Number(req.params.id);
-      const { active, sucursal } = req.body || {};
+      const { active, sucursal, role } = req.body || {};
+      const requestedRole = typeof role === "string" ? role.trim().toUpperCase() : null;
+      if (requestedRole && !MANAGEABLE_ROLES.includes(requestedRole)) {
+        throw publicError("Rol de usuario inválido.");
+      }
       const updated = await store.runTransaction(async (state) => {
-        const target = state.users.find((u) => u.id === id && u.role === "CONSULTA");
+        const target = state.users.find((u) => u.id === id && MANAGEABLE_ROLES.includes(u.role));
         if (!target) throw publicError("No se pudo actualizar el usuario.");
         const updatedUser = {
           ...target,
           active: typeof active === "boolean" ? active : target.active,
-          sucursal: typeof sucursal === "string" && sucursal.trim() ? sucursal.trim() : target.sucursal
+          sucursal: typeof sucursal === "string" && sucursal.trim() ? sucursal.trim() : target.sucursal,
+          role: requestedRole || target.role
         };
         const users = state.users.map((u) => (u.id === id ? updatedUser : u));
         return { state: { ...state, users }, result: updatedUser };

@@ -10,10 +10,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Visibility
@@ -23,13 +25,18 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -39,7 +46,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -50,6 +56,7 @@ import com.inventario.app.data.entity.CashClosingSnapshotCodec
 import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.entity.PENDING_SUCURSAL_LABEL
 import com.inventario.app.data.entity.UserRole
+import com.inventario.app.data.entity.canReviewClosings
 import com.inventario.app.data.entity.displaySucursalOrPending
 import com.inventario.app.data.repository.ReportsRepository
 import com.inventario.app.data.repository.ReportsSummary
@@ -60,10 +67,12 @@ import com.inventario.app.ui.theme.BrandAppTopBar
 import com.inventario.app.ui.theme.BrandOutflow
 import com.inventario.app.ui.theme.BrandSuccess
 import com.inventario.app.ui.theme.BrandWarning
+import com.inventario.app.ui.theme.ConfirmCheckDialog
 import com.inventario.app.ui.theme.ReportDivider
 import com.inventario.app.ui.theme.ReportHeader
 import com.inventario.app.ui.theme.ReportKeyValueRow
 import com.inventario.app.ui.theme.ReportTotalBanner
+import com.inventario.app.ui.theme.AppSnackbarController
 import com.inventario.app.ui.theme.StatusPill
 import com.inventario.app.ui.theme.screenHorizontalPadding
 import com.inventario.app.ui.theme.screenVerticalPadding
@@ -76,6 +85,7 @@ import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
@@ -83,6 +93,40 @@ enum class ClosingReviewAction {
     APPROVE,
     REJECT,
     REVERT
+}
+
+/** Convierte los milisegundos UTC-medianoche que entrega el DatePicker de Material3
+ *  al texto "dd/MM/yyyy" en la zona horaria local del dispositivo. */
+private fun utcMidnightMillisToLocalDateText(utcMidnightMillis: Long, dateFormat: SimpleDateFormat): String {
+    val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = utcMidnightMillis }
+    val localCal = Calendar.getInstance().apply {
+        clear()
+        set(utcCal.get(Calendar.YEAR), utcCal.get(Calendar.MONTH), utcCal.get(Calendar.DAY_OF_MONTH))
+    }
+    return dateFormat.format(localCal.time)
+}
+
+/** Inverso de [utcMidnightMillisToLocalDateText]: usado para posicionar el DatePicker
+ *  en la fecha ya seleccionada. */
+private fun localDateTextToUtcMidnightMillis(text: String, dateFormat: SimpleDateFormat): Long? {
+    val date = runCatching { dateFormat.parse(text.trim()) }.getOrNull() ?: return null
+    val localCal = Calendar.getInstance().apply { time = date }
+    val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+        clear()
+        set(localCal.get(Calendar.YEAR), localCal.get(Calendar.MONTH), localCal.get(Calendar.DAY_OF_MONTH))
+    }
+    return utcCal.timeInMillis
+}
+
+/** Rango seleccionable en el calendario: hoy y hasta MAX_RANGE_DAYS hacia atrás (en UTC-medianoche). */
+private fun selectableUtcRangeBounds(): Pair<Long, Long> {
+    val now = Calendar.getInstance()
+    val utcToday = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+        clear()
+        set(now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH))
+    }.timeInMillis
+    val minMillis = utcToday - TimeUnit.DAYS.toMillis(ReportsRepository.MAX_RANGE_DAYS.toLong())
+    return minMillis to utcToday
 }
 
 data class ReportsUiState(
@@ -104,7 +148,7 @@ class ReportsViewModel(
     private val sessionManager: SessionManager,
     private val userRole: UserRole
 ) : ViewModel() {
-    private val _state = MutableStateFlow(ReportsUiState(canReviewClosings = userRole == UserRole.ADMIN))
+    private val _state = MutableStateFlow(ReportsUiState(canReviewClosings = userRole.canReviewClosings()))
     val state: StateFlow<ReportsUiState> = _state.asStateFlow()
 
     private val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale("es", "VE"))
@@ -114,15 +158,11 @@ class ReportsViewModel(
     }
 
     init {
-        val cal = Calendar.getInstance()
-        val end = cal.timeInMillis
-        cal.add(Calendar.DAY_OF_MONTH, -30)
-        val start = cal.timeInMillis
+        // Por defecto se muestra únicamente el día en curso; el usuario puede
+        // ampliar el rango hasta MAX_RANGE_DAYS con el selector de calendario.
+        val today = dateFormat.format(Calendar.getInstance().time)
         _state.update {
-            it.copy(
-                startDateText = dateFormat.format(start),
-                endDateText = dateFormat.format(end)
-            )
+            it.copy(startDateText = today, endDateText = today)
         }
         load()
     }
@@ -133,6 +173,27 @@ class ReportsViewModel(
 
     fun onEndDateChange(value: String) {
         _state.update { it.copy(endDateText = value, error = null) }
+    }
+
+    /** [utcMidnightMillis] proviene del DatePicker de Material3, que trabaja siempre en UTC. */
+    fun onDatePicked(isStart: Boolean, utcMidnightMillis: Long) {
+        val text = utcMidnightMillisToLocalDateText(utcMidnightMillis, dateFormat)
+        if (isStart) onStartDateChange(text) else onEndDateChange(text)
+        load()
+    }
+
+    /** Atajo de calendario: "Hoy", "7 días", "30 días" o "90 días" hacia atrás. */
+    fun selectQuickRange(daysBack: Int) {
+        val end = Calendar.getInstance()
+        val start = Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, -daysBack) }
+        _state.update {
+            it.copy(
+                startDateText = dateFormat.format(start.time),
+                endDateText = dateFormat.format(end.time),
+                error = null
+            )
+        }
+        load()
     }
 
     fun clearActionFeedback() {
@@ -189,9 +250,9 @@ class ReportsViewModel(
         }
     }
 
-    fun reviewClosing(id: Long, action: ClosingReviewAction, verificationCode: String) {
-        if (userRole != UserRole.ADMIN) {
-            _state.update { it.copy(actionError = "Solo administradores pueden validar cierres.") }
+    fun reviewClosing(id: Long, action: ClosingReviewAction) {
+        if (!userRole.canReviewClosings()) {
+            _state.update { it.copy(actionError = "No tienes permisos para validar cierres.") }
             return
         }
         viewModelScope.launch {
@@ -199,11 +260,11 @@ class ReportsViewModel(
             val reviewer = sessionManager.username().orEmpty()
             val result = when (action) {
                 ClosingReviewAction.APPROVE ->
-                    reportsRepository.approveClosing(id, reviewer, verificationCode)
+                    reportsRepository.approveClosing(id, reviewer)
                 ClosingReviewAction.REJECT ->
-                    reportsRepository.rejectClosing(id, reviewer, verificationCode)
+                    reportsRepository.rejectClosing(id, reviewer)
                 ClosingReviewAction.REVERT ->
-                    reportsRepository.revertClosing(id, reviewer, verificationCode)
+                    reportsRepository.revertClosing(id, reviewer)
             }
             result.onSuccess {
                 val message = when (action) {
@@ -214,10 +275,13 @@ class ReportsViewModel(
                 }
                 _state.update { it.copy(actionMessage = message) }
                 load()
+                AppSnackbarController.show(message)
             }.onFailure { err ->
+                val message = err.message ?: "No se pudo completar la acción."
                 _state.update {
-                    it.copy(actionError = err.message ?: "No se pudo completar la acción.")
+                    it.copy(actionError = message)
                 }
+                AppSnackbarController.show(message)
             }
         }
     }
@@ -283,33 +347,30 @@ fun ReportsScreen(
                     .padding(horizontal = screenHorizontalPadding(), vertical = screenVerticalPadding())
             ) {
                 Text(
-                    text = "Reportes",
+                    text = "Flujo Aprobación",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Histórico hasta ${ReportsRepository.MAX_RANGE_DAYS} días.",
+                    text = "Por defecto se muestra el día en curso. Histórico hasta " +
+                        "${ReportsRepository.MAX_RANGE_DAYS} días.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = state.startDateText,
-                        onValueChange = viewModel::onStartDateChange,
-                        label = { Text("Desde") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = state.endDateText,
-                        onValueChange = viewModel::onEndDateChange,
-                        label = { Text("Hasta") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-                }
+                DateRangeSelector(
+                    startDateText = state.startDateText,
+                    endDateText = state.endDateText,
+                    onStartPicked = { viewModel.onDatePicked(isStart = true, utcMidnightMillis = it) },
+                    onEndPicked = { viewModel.onDatePicked(isStart = false, utcMidnightMillis = it) }
+                )
+                Spacer(Modifier.height(8.dp))
+                QuickRangeChips(
+                    onSelectRange = { days ->
+                        viewModel.selectQuickRange(days)
+                    }
+                )
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = viewModel::load,
@@ -352,6 +413,108 @@ fun ReportsScreen(
                 }
             }
         }
+    }
+}
+
+/** Selector de rango de fechas mediante calendario nativo (Material3 DatePicker). */
+@Composable
+private fun DateRangeSelector(
+    startDateText: String,
+    endDateText: String,
+    onStartPicked: (Long) -> Unit,
+    onEndPicked: (Long) -> Unit
+) {
+    val (minMillis, maxMillis) = remember { selectableUtcRangeBounds() }
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        DatePickerField(
+            label = "Desde",
+            dateText = startDateText,
+            minMillis = minMillis,
+            maxMillis = maxMillis,
+            onDatePicked = onStartPicked,
+            modifier = Modifier.weight(1f)
+        )
+        DatePickerField(
+            label = "Hasta",
+            dateText = endDateText,
+            minMillis = minMillis,
+            maxMillis = maxMillis,
+            onDatePicked = onEndPicked,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DatePickerField(
+    label: String,
+    dateText: String,
+    minMillis: Long,
+    maxMillis: Long,
+    onDatePicked: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var showPicker by remember { mutableStateOf(false) }
+    val fieldDateFormat = remember { SimpleDateFormat("dd/MM/yyyy", Locale("es", "VE")) }
+
+    OutlinedButton(
+        onClick = { showPicker = true },
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Column {
+            Text(label, style = MaterialTheme.typography.labelSmall)
+            Text(dateText.ifBlank { "Seleccionar" }, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+
+    if (showPicker) {
+        val initialMillis = localDateTextToUtcMidnightMillis(dateText, fieldDateFormat)
+            ?.coerceIn(minMillis, maxMillis) ?: maxMillis
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = initialMillis,
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean =
+                    utcTimeMillis in minMillis..maxMillis
+            }
+        )
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let(onDatePicked)
+                    showPicker = false
+                }) {
+                    Text("Aceptar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) {
+                    Text("Cancelar")
+                }
+            }
+        ) {
+            DatePicker(state = pickerState, showModeToggle = false)
+        }
+    }
+}
+
+@Composable
+private fun QuickRangeChips(onSelectRange: (Int) -> Unit) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.horizontalScroll(rememberScrollState())
+    ) {
+        FilterChip(selected = false, onClick = { onSelectRange(0) }, label = { Text("Hoy") })
+        FilterChip(selected = false, onClick = { onSelectRange(7) }, label = { Text("7 días") })
+        FilterChip(selected = false, onClick = { onSelectRange(30) }, label = { Text("30 días") })
+        FilterChip(selected = false, onClick = { onSelectRange(ReportsRepository.MAX_RANGE_DAYS) }, label = { Text("90 días") })
     }
 }
 
@@ -556,11 +719,11 @@ private fun CashClosingDetailRow(
     }
 
     if (reviewAction != null) {
-        VerificationCodeDialog(
+        ClosingReviewConfirmDialog(
             action = reviewAction!!,
             onDismiss = { reviewAction = null },
-            onConfirm = { code ->
-                viewModel.reviewClosing(closing.id, reviewAction!!, code)
+            onConfirm = {
+                viewModel.reviewClosing(closing.id, reviewAction!!)
                 reviewAction = null
             }
         )
@@ -710,13 +873,11 @@ private fun ClosingStatusPill(status: CashClosingStatus) {
 }
 
 @Composable
-private fun VerificationCodeDialog(
+private fun ClosingReviewConfirmDialog(
     action: ClosingReviewAction,
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
+    onConfirm: () -> Unit
 ) {
-    var code by remember { mutableStateOf("") }
-
     val title = when (action) {
         ClosingReviewAction.APPROVE -> "Aprobar cierre de caja"
         ClosingReviewAction.REJECT -> "Rechazar cierre de caja"
@@ -724,46 +885,31 @@ private fun VerificationCodeDialog(
     }
     val description = when (action) {
         ClosingReviewAction.APPROVE ->
-            "Ingresa el código de verificación para aprobar y contabilizar este cierre."
+            "Confirma que deseas aprobar y contabilizar este cierre."
         ClosingReviewAction.REJECT ->
-            "Ingresa el código de verificación para rechazar. El usuario deberá volver a ejecutar su cierre."
+            "Confirma que deseas rechazar este cierre. El usuario deberá volver a ejecutarlo."
         ClosingReviewAction.REVERT ->
-            "Ingresa el código de verificación para revertir este cierre aprobado. " +
+            "Confirma que deseas revertir este cierre aprobado. " +
                 "Se descontará de Recaudación Total y el usuario podrá registrar un nuevo cierre del día."
     }
+    val checkLabel = when (action) {
+        ClosingReviewAction.APPROVE -> "Confirmo que quiero aprobar este cierre."
+        ClosingReviewAction.REJECT -> "Confirmo que quiero rechazar este cierre."
+        ClosingReviewAction.REVERT -> "Confirmo que quiero revertir este cierre."
+    }
+    val confirmLabel = when (action) {
+        ClosingReviewAction.APPROVE -> "Aprobar"
+        ClosingReviewAction.REJECT -> "Rechazar"
+        ClosingReviewAction.REVERT -> "Revertir"
+    }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column {
-                Text(description, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = code,
-                    onValueChange = { code = it.filter { ch -> ch.isDigit() } },
-                    label = { Text("Código de verificación") },
-                    singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        keyboardType = KeyboardType.NumberPassword
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(code) },
-                enabled = code.isNotBlank()
-            ) {
-                Text("Confirmar")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancelar")
-            }
-        }
+    ConfirmCheckDialog(
+        title = title,
+        description = description,
+        checkLabel = checkLabel,
+        confirmLabel = confirmLabel,
+        onDismiss = onDismiss,
+        onConfirm = onConfirm
     )
 }
 
@@ -939,10 +1085,23 @@ private fun CashClosingDetailDialog(
                     Spacer(Modifier.height(10.dp))
                     ReportDivider(label = "Efectivo (C)")
                     Spacer(Modifier.height(6.dp))
-                    ReportKeyValueRow(
-                        label = "Total",
-                        value = "${viewModel.formatUsd(snapshot.cashUsd)} · ${viewModel.formatBs(snapshot.cashBs)}"
-                    )
+                    if (snapshot.cashEntries.isEmpty()) {
+                        ReportKeyValueRow(
+                            label = "Total",
+                            value = "${viewModel.formatUsd(snapshot.cashUsd)} · ${viewModel.formatBs(snapshot.cashBs)}"
+                        )
+                    } else {
+                        snapshot.cashEntries.forEach { entry ->
+                            ReportKeyValueRow(
+                                label = entry.description.ifBlank { "Efectivo" },
+                                value = "${viewModel.formatUsd(entry.usd)} · ${viewModel.formatBs(entry.bs)}"
+                            )
+                        }
+                        ReportKeyValueRow(
+                            label = "Subtotal C",
+                            value = "${viewModel.formatUsd(snapshot.cashUsd)} · ${viewModel.formatBs(snapshot.cashBs)}"
+                        )
+                    }
                     Spacer(Modifier.height(10.dp))
                     ReportDivider(label = "Salidas (D)")
                     Spacer(Modifier.height(6.dp))
