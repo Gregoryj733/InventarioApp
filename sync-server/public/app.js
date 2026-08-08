@@ -8,6 +8,9 @@
   const state = {
     token: localStorage.getItem(TOKEN_KEY),
     user: JSON.parse(localStorage.getItem(USER_KEY) || "null"),
+    canViewDiscounts: false,
+    canManageDiscounts: false,
+    portalMode: "none",
     tickets: [],
     stats: null,
     selected: null,
@@ -53,9 +56,12 @@
     }[s] || "badge-used";
   }
 
-  function saveSession(token, user) {
+  function saveSession(token, user, permissions = {}) {
     state.token = token;
     state.user = user;
+    state.canViewDiscounts = permissions.canViewDiscounts === true;
+    state.canManageDiscounts = permissions.canManageDiscounts === true;
+    state.portalMode = permissions.portalMode || (state.canManageDiscounts ? "manage" : "read");
     localStorage.setItem(TOKEN_KEY, token);
     localStorage.setItem(USER_KEY, JSON.stringify(user));
   }
@@ -64,8 +70,29 @@
     disconnectRealtime();
     state.token = null;
     state.user = null;
+    state.canViewDiscounts = false;
+    state.canManageDiscounts = false;
+    state.portalMode = "none";
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+  }
+
+  function canManagePortal() {
+    return state.canManageDiscounts === true;
+  }
+
+  function applyUiPermissions() {
+    const manage = canManagePortal();
+    $("#generate-panel")?.classList.toggle("hidden", !manage);
+    const modeEl = $("#access-mode");
+    if (modeEl) {
+      modeEl.textContent = manage ? "" : "Modo consulta — solo lectura";
+      modeEl.classList.toggle("hidden", manage);
+    }
+    const listTitle = $("#list-panel-title");
+    if (listTitle) {
+      listTitle.textContent = manage ? "Gestión y seguimiento" : "Consulta y seguimiento";
+    }
   }
 
   function setLiveStatus(live) {
@@ -128,27 +155,40 @@
     $("#login-view").classList.add("hidden");
     $("#main-view").classList.remove("hidden");
     $("#user-label").textContent = `${state.user.username} (${roleLabel(state.user.role)})`;
+    applyUiPermissions();
   }
 
   function roleLabel(role) {
-    return { ADMIN: "Admin", SUPERVISOR: "Supervisor", CONSULTA: "Consulta" }[role] || role;
+    return {
+      ADMIN: "Admin",
+      SUPERVISOR: "Supervisor",
+      CONSULTA: "Consulta",
+      VENTAS: "Ventas"
+    }[role] || role;
+  }
+
+  function applyAuthPayload(data) {
+    if (!data?.canViewDiscounts) {
+      throw new Error("Tu perfil no tiene acceso al portal de descuentos.");
+    }
+    saveSession(state.token, data.user, {
+      canViewDiscounts: data.canViewDiscounts,
+      canManageDiscounts: data.canManageDiscounts,
+      portalMode: data.portalMode
+    });
   }
 
   async function verifySession() {
     if (!state.token) return showLogin();
     try {
       const data = await api("/v1/auth/me");
-      if (!data.canManageDiscounts) {
-        clearSession();
-        return showLogin("Tu perfil no tiene acceso al portal de descuentos.");
-      }
-      saveSession(state.token, data.user);
+      applyAuthPayload(data);
       showMain();
       connectRealtime();
       await loadTickets();
-    } catch (_) {
+    } catch (err) {
       clearSession();
-      showLogin("Sesión expirada. Inicia sesión de nuevo.");
+      showLogin(err.message || "Sesión expirada. Inicia sesión de nuevo.");
     }
   }
 
@@ -164,10 +204,8 @@
         method: "POST",
         body: JSON.stringify({ username, password })
       });
-      if (!["ADMIN", "SUPERVISOR"].includes(data.user.role)) {
-        throw new Error("Solo usuarios Admin o Supervisor pueden acceder al portal.");
-      }
-      saveSession(data.token, data.user);
+      state.token = data.token;
+      applyAuthPayload(data);
       showMain();
       connectRealtime();
       await loadTickets();
@@ -248,7 +286,7 @@
         <td><span class="badge ${badgeClass(t.displayStatus)}">${statusLabel(t.displayStatus)}</span></td>
         <td>
           <button class="btn btn-ghost btn-sm" data-action="detail" data-code="${t.code}">Ver</button>
-          ${t.displayStatus === "ACTIVE" ? `<button class="btn btn-danger btn-sm" data-action="void" data-code="${t.code}">Anular</button>` : ""}
+          ${canManagePortal() && t.displayStatus === "ACTIVE" ? `<button class="btn btn-danger btn-sm" data-action="void" data-code="${t.code}">Anular</button>` : ""}
         </td>
       </tr>
     `).join("");
@@ -349,6 +387,7 @@
   }
 
   async function voidCode(code) {
+    if (!canManagePortal()) return;
     const reason = prompt("Motivo de anulación (opcional):");
     if (reason === null) return;
     try {
@@ -372,7 +411,9 @@
   function bindEvents() {
     $("#login-form").addEventListener("submit", login);
     $("#logout-btn").addEventListener("click", logout);
-    $("#generate-form").addEventListener("submit", generateCode);
+    if ($("#generate-form")) {
+      $("#generate-form").addEventListener("submit", generateCode);
+    }
     $("#filter-form").addEventListener("submit", (ev) => { ev.preventDefault(); loadTickets(); });
     $("#clear-filters").addEventListener("click", () => {
       $("#filter-status").value = "";

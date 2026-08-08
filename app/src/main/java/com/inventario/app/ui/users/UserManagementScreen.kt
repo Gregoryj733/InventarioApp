@@ -47,6 +47,7 @@ import com.inventario.app.data.entity.displayLabel
 import com.inventario.app.data.entity.displaySucursal
 import com.inventario.app.data.entity.sucursalPending
 import com.inventario.app.data.repository.AuthRepository
+import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.sync.CloudEvent
 import com.inventario.app.data.sync.toUserMessage
 import com.inventario.app.ui.theme.AppScreenBackground
@@ -63,7 +64,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-private val CREATABLE_ROLES = listOf(UserRole.CONSULTA, UserRole.SUPERVISOR)
+private val CREATABLE_ROLES = listOf(UserRole.CONSULTA, UserRole.VENTAS, UserRole.SUPERVISOR)
 
 data class UserManagementUiState(
     val users: List<User> = emptyList(),
@@ -81,12 +82,17 @@ data class UserManagementUiState(
     val assigningSucursal: Boolean = false,
     val editingRoleUserId: Long? = null,
     val editingRoleValue: UserRole = UserRole.CONSULTA,
-    val savingRole: Boolean = false
+    val savingRole: Boolean = false,
+    val discountPercentText: String = "",
+    val savingDiscountPercent: Boolean = false,
+    val discountPercentMessage: String? = null,
+    val discountPercentMessageIsError: Boolean = false
 )
 
 class UserManagementViewModel(
     private val authRepository: AuthRepository,
-    private val cloudEvents: SharedFlow<CloudEvent>? = null
+    private val cloudEvents: SharedFlow<CloudEvent>? = null,
+    private val inventoryRepository: InventoryRepository? = null
 ) : ViewModel() {
     private val _state = MutableStateFlow(UserManagementUiState())
     val state: StateFlow<UserManagementUiState> = _state.asStateFlow()
@@ -103,7 +109,66 @@ class UserManagementViewModel(
                 }
             }
         }
+        inventoryRepository?.let { repository ->
+            viewModelScope.launch {
+                repository.observeMeta().collect { meta ->
+                    meta?.discountPercent?.let { percent ->
+                        _state.update {
+                            if (it.savingDiscountPercent) it else it.copy(discountPercentText = formatPercent(percent))
+                        }
+                    }
+                }
+            }
+        }
     }
+
+    fun onDiscountPercentTextChange(value: String) {
+        val cleaned = value.filter { it.isDigit() || it == '.' || it == ',' }.replace(',', '.')
+        _state.update {
+            it.copy(discountPercentText = cleaned, discountPercentMessage = null, discountPercentMessageIsError = false)
+        }
+    }
+
+    fun saveDiscountPercent() {
+        val repository = inventoryRepository ?: return
+        val percent = _state.value.discountPercentText.toDoubleOrNull()
+        if (percent == null || percent <= 0 || percent > 100) {
+            _state.update {
+                it.copy(
+                    discountPercentMessage = "Ingresa un porcentaje válido (1-100).",
+                    discountPercentMessageIsError = true
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(savingDiscountPercent = true, discountPercentMessage = null) }
+            repository.saveDiscountPercent(percent)
+                .onSuccess {
+                    _state.update {
+                        it.copy(
+                            savingDiscountPercent = false,
+                            discountPercentText = formatPercent(percent),
+                            discountPercentMessage = "Porcentaje de descuento actualizado.",
+                            discountPercentMessageIsError = false
+                        )
+                    }
+                    AppSnackbarController.show("Descuento de tickets actualizado a ${formatPercent(percent)}%.")
+                }
+                .onFailure { err ->
+                    _state.update {
+                        it.copy(
+                            savingDiscountPercent = false,
+                            discountPercentMessage = err.toUserMessage("No se pudo guardar el porcentaje."),
+                            discountPercentMessageIsError = true
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun formatPercent(value: Double): String =
+        if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()
 
     fun refresh() {
         viewModelScope.launch {
@@ -321,11 +386,12 @@ class UserManagementViewModel(
     companion object {
         fun factory(
             authRepository: AuthRepository,
-            cloudEvents: SharedFlow<CloudEvent>? = null
+            cloudEvents: SharedFlow<CloudEvent>? = null,
+            inventoryRepository: InventoryRepository? = null
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return UserManagementViewModel(authRepository, cloudEvents) as T
+                return UserManagementViewModel(authRepository, cloudEvents, inventoryRepository) as T
             }
         }
     }
@@ -496,7 +562,9 @@ fun UserManagementScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(16.dp))
+                DiscountPercentCard(state = state, viewModel = viewModel)
+                Spacer(Modifier.height(16.dp))
                 Button(
                     onClick = viewModel::openCreateDialog,
                     modifier = Modifier.fillMaxWidth(),
@@ -526,6 +594,69 @@ fun UserManagementScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Porcentaje de descuento fijo aplicado a todos los tickets nuevos (se guarda
+ * en `meta.discountPercent` vía el endpoint genérico PUT /v1/meta). Solo
+ * ADMIN puede verlo/editarlo, ya que `UserManagementScreen` está restringida
+ * a ese rol.
+ */
+@Composable
+private fun DiscountPercentCard(
+    state: UserManagementUiState,
+    viewModel: UserManagementViewModel
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                "Descuento de tickets",
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text(
+                "Porcentaje aplicado a todos los tickets de descuento generados (vigencia de 30 días).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = state.discountPercentText,
+                    onValueChange = viewModel::onDiscountPercentTextChange,
+                    label = { Text("Porcentaje (%)") },
+                    singleLine = true,
+                    enabled = !state.savingDiscountPercent,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(10.dp))
+                Button(
+                    onClick = viewModel::saveDiscountPercent,
+                    enabled = !state.savingDiscountPercent,
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(if (state.savingDiscountPercent) "Guardando…" else "Guardar")
+                }
+            }
+            if (state.discountPercentMessage != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    state.discountPercentMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (state.discountPercentMessageIsError) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    }
+                )
             }
         }
     }

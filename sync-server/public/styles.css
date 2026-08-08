@@ -339,6 +339,12 @@ tr:hover td { background: #f8fafc; }
 .live-on::before { background: var(--success); }
 .live-off::before { background: var(--warning); }
 
+.access-mode {
+  margin-right: 10px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 @media (max-width: 640px) {
   .topbar { flex-direction: column; align-items: flex-start; }
 }

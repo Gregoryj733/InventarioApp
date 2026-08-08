@@ -14,7 +14,7 @@
     <section id="login-view" class="login-wrap">
       <div class="login-card">
         <h1>Códigos de descuento</h1>
-        <p>Portal administrativo. Acceso exclusivo para Admin y Supervisor.</p>
+        <p>Portal de códigos de descuento. Acceso según perfil: Consulta/Ventas (consulta), Supervisor y Admin (gestión).</p>
         <div id="login-error" class="alert alert-error hidden"></div>
         <form id="login-form">
           <div class="field">
@@ -37,7 +37,10 @@
       <header class="topbar">
         <div>
           <h1>Portal de códigos de descuento</h1>
-          <div class="topbar-meta">Vigencia máxima: 30 días · <span id="live-status" class="live-dot live-off">Reconectando…</span></div>
+          <div class="topbar-meta">
+            Vigencia máxima: 30 días · <span id="access-mode" class="access-mode hidden"></span>
+            <span id="live-status" class="live-dot live-off">Reconectando…</span>
+          </div>
         </div>
         <div class="topbar-actions">
           <span id="user-label" class="topbar-meta"></span>
@@ -54,7 +57,7 @@
         <div class="stat-card"><div class="label">Anulados</div><div id="stat-voided" class="value">0</div></div>
       </div>
 
-      <div class="panel">
+      <div id="generate-panel" class="panel">
         <h2>Generar código</h2>
         <div id="generate-error" class="alert alert-error hidden"></div>
         <div id="generate-success" class="alert alert-success hidden"></div>
@@ -78,7 +81,7 @@
       </div>
 
       <div class="panel">
-        <h2>Gestión y seguimiento</h2>
+        <h2 id="list-panel-title">Gestión y seguimiento</h2>
         <form id="filter-form" class="grid-2" style="margin-bottom:16px;">
           <div class="field">
             <label for="filter-customer">Buscar (cliente, teléfono o código)</label>

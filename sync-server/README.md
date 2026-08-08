@@ -109,8 +109,10 @@ Usuarios por defecto (se crean automáticamente si la base está vacía): `admin
 ## Portal de códigos de descuento
 
 - **URL:** `https://<tu-servidor>/portal/`
-- **Acceso:** solo usuarios con rol `ADMIN` o `SUPERVISOR`
-- **Generación:** exclusivamente desde el portal (la app móvil solo valida y canjea códigos en el carrito)
+- **Acceso al portal:**
+  - **Consulta** y **Ventas** — solo lectura (ver códigos, clientes, fechas, estados e historial)
+  - **Supervisor** y **Admin** — gestión completa (generar, anular, administrar)
+- **Generación:** solo Supervisor y Admin desde el portal (la app móvil valida y canjea códigos en el carrito)
 - **Tiempo real:** el portal se conecta por WebSocket (`/v1/ws?token=...`) y actualiza el listado al instante cuando la app canjea un código
 
 ### API de códigos de descuento
@@ -118,11 +120,11 @@ Usuarios por defecto (se crean automáticamente si la base está vacía): `admin
 | Método | Ruta | Auth | Descripción |
 |--------|------|------|-------------|
 | `GET` | `/v1/discount-tickets?code=ABC123` | 🔒 | Validar un código (app móvil) |
-| `GET` | `/v1/discount-tickets?list=1&status=ACTIVE&customer=...` | 🔒 Admin/Supervisor | Listado con filtros |
-| `GET` | `/v1/discount-tickets/:code` | 🔒 Admin/Supervisor | Detalle + auditoría |
-| `POST` | `/v1/discount-tickets` | 🔒 Admin/Supervisor | Generar código |
-| `PATCH` | `/v1/discount-tickets/:code/void` | 🔒 Admin/Supervisor | Anular código activo |
-| `GET` | `/v1/auth/me` | 🔒 | Sesión actual + `canManageDiscounts` |
+| `GET` | `/v1/discount-tickets?list=1&status=ACTIVE&customer=...` | 🔒 Consulta/Ventas/Supervisor/Admin | Listado con filtros |
+| `GET` | `/v1/discount-tickets/:code` | 🔒 Consulta/Ventas/Supervisor/Admin | Detalle + auditoría |
+| `POST` | `/v1/discount-tickets` | 🔒 Supervisor/Admin | Generar código |
+| `PATCH` | `/v1/discount-tickets/:code/void` | 🔒 Supervisor/Admin | Anular código activo |
+| `GET` | `/v1/auth/me` | 🔒 | Sesión actual + `canViewDiscounts` / `canManageDiscounts` |
 
 El portal web puede autenticarse solo con JWT (sin `X-Api-Key`). La app Android sigue usando ambos.
 

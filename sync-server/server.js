@@ -23,13 +23,15 @@ const KEEP_ALIVE_URL = (process.env.KEEP_ALIVE_URL || process.env.RENDER_EXTERNA
 const KEEP_ALIVE_INTERVAL_MS = Number(process.env.KEEP_ALIVE_INTERVAL_MS) || 4 * 60 * 1000;
 // Roles que el módulo de Usuarios puede crear/editar/eliminar. ADMIN se
 // gestiona fuera de esta API (usuario semilla único).
-const MANAGEABLE_ROLES = ["CONSULTA", "SUPERVISOR"];
+const MANAGEABLE_ROLES = ["CONSULTA", "VENTAS", "SUPERVISOR"];
 // Roles con permiso para aprobar, rechazar o revertir cierres de caja
 // (Flujo Aprobación).
 const CLOSING_REVIEW_ROLES = ["ADMIN", "SUPERVISOR"];
 // Roles con permiso para reiniciar (borrar) los pedidos confirmados del día.
 const SALES_RESET_ROLES = ["ADMIN", "SUPERVISOR"];
-// Roles con acceso al portal web de códigos de descuento y emisión/anulación.
+// Portal web: ver listado, detalle, clientes y estados (solo lectura).
+const DISCOUNT_VIEW_ROLES = ["CONSULTA", "VENTAS", "SUPERVISOR", "ADMIN"];
+// Portal web: generar, anular y administrar códigos (acceso completo).
 const DISCOUNT_MANAGE_ROLES = ["ADMIN", "SUPERVISOR"];
 // Vigencia fija de 30 días desde la emisión del ticket de descuento (ligada
 // a la compra que lo origina). El estado "expirado" no se persiste: se
@@ -265,6 +267,16 @@ function sanitizeUser(user) {
   };
 }
 
+function discountPortalPermissions(role) {
+  const canViewDiscounts = DISCOUNT_VIEW_ROLES.includes(role);
+  const canManageDiscounts = DISCOUNT_MANAGE_ROLES.includes(role);
+  return {
+    canViewDiscounts,
+    canManageDiscounts,
+    portalMode: canManageDiscounts ? "manage" : canViewDiscounts ? "read" : "none"
+  };
+}
+
 async function seedDefaultUsers(store) {
   await store.runTransaction(async (state) => {
     if (state.users.length > 0) {
@@ -282,6 +294,14 @@ async function seedDefaultUsers(store) {
       },
       {
         id: now + 1,
+        username: "ventas",
+        passwordHash: auth.hashPassword("ventas"),
+        role: "VENTAS",
+        active: true,
+        sucursal: ""
+      },
+      {
+        id: now + 2,
         username: "admin",
         passwordHash: auth.hashPassword("admin"),
         role: "ADMIN",
@@ -290,7 +310,7 @@ async function seedDefaultUsers(store) {
       }
     ];
     return {
-      state: { ...state, users: seeded, nextUserId: now + 2 },
+      state: { ...state, users: seeded, nextUserId: now + 3 },
       result: null
     };
   });
@@ -375,7 +395,11 @@ async function start() {
       return res.status(403).json({ error: "Usuario desactivado. Contacta al administrador." });
     }
     const token = auth.signToken(user);
-    res.json({ token, user: sanitizeUser(user) });
+    res.json({
+      token,
+      user: sanitizeUser(user),
+      ...discountPortalPermissions(user.role)
+    });
   }));
 
   app.get("/v1/auth/me", auth.requireAuth(), asyncRoute(async (req, res) => {
@@ -386,7 +410,7 @@ async function start() {
     }
     res.json({
       user: sanitizeUser(user),
-      canManageDiscounts: DISCOUNT_MANAGE_ROLES.includes(user.role)
+      ...discountPortalPermissions(user.role)
     });
   }));
 
@@ -913,7 +937,7 @@ async function start() {
         return res.json({ tickets });
       }
       if (listAll) {
-        if (!DISCOUNT_MANAGE_ROLES.includes(req.user?.role)) {
+        if (!DISCOUNT_VIEW_ROLES.includes(req.user?.role)) {
           return res.status(403).json({ error: "No tienes permisos para listar códigos de descuento." });
         }
         const tickets = filterDiscountTickets(state.discountTickets, req.query, now);
@@ -932,7 +956,7 @@ async function start() {
 
   app.get(
     "/v1/discount-tickets/:code",
-    auth.requireAuth(DISCOUNT_MANAGE_ROLES),
+    auth.requireAuth(DISCOUNT_VIEW_ROLES),
     asyncRoute(async (req, res) => {
       const code = String(req.params.code || "").trim().toUpperCase();
       const state = await store.loadState();
