@@ -101,9 +101,72 @@ Todas las rutas `/v1/*` requieren el header `X-Api-Key`. Las marcadas con 🔒 a
 - `GET /v1/sales` 🔒 / `POST /v1/sales` 🔒 (legacy) / `DELETE /v1/sales?start=&end=` 🔒ADMIN
 - `GET /v1/cash-closings` 🔒 / `POST /v1/cash-closings` 🔒 / `PATCH /v1/cash-closings/:id/status` 🔒
 - `GET /v1/users` 🔒ADMIN / `POST /v1/users` 🔒ADMIN / `PATCH /v1/users/:id` 🔒ADMIN / `DELETE /v1/users/:id` 🔒ADMIN
-- `GET /v1/ws?apiKey=...` — WebSocket; emite `{ type: "inventory" | "sales" | "cashClosings" | "users" }` tras cada cambio
+- `GET /v1/ws?apiKey=...` — WebSocket; emite `{ type: "inventory" | "sales" | "cashClosings" | "users" | "discountTickets" }` tras cada cambio
+- `GET /v1/ws?token=<JWT>` — WebSocket para el portal web (sin `X-Api-Key`)
 
 Usuarios por defecto (se crean automáticamente si la base está vacía): `admin/admin` (ADMIN) y `consulta/consulta` (CONSULTA).
+
+## Portal de códigos de descuento
+
+- **URL:** `https://<tu-servidor>/portal/`
+- **Acceso:** solo usuarios con rol `ADMIN` o `SUPERVISOR`
+- **Generación:** exclusivamente desde el portal (la app móvil solo valida y canjea códigos en el carrito)
+- **Tiempo real:** el portal se conecta por WebSocket (`/v1/ws?token=...`) y actualiza el listado al instante cuando la app canjea un código
+
+### API de códigos de descuento
+
+| Método | Ruta | Auth | Descripción |
+|--------|------|------|-------------|
+| `GET` | `/v1/discount-tickets?code=ABC123` | 🔒 | Validar un código (app móvil) |
+| `GET` | `/v1/discount-tickets?list=1&status=ACTIVE&customer=...` | 🔒 Admin/Supervisor | Listado con filtros |
+| `GET` | `/v1/discount-tickets/:code` | 🔒 Admin/Supervisor | Detalle + auditoría |
+| `POST` | `/v1/discount-tickets` | 🔒 Admin/Supervisor | Generar código |
+| `PATCH` | `/v1/discount-tickets/:code/void` | 🔒 Admin/Supervisor | Anular código activo |
+| `GET` | `/v1/auth/me` | 🔒 | Sesión actual + `canManageDiscounts` |
+
+El portal web puede autenticarse solo con JWT (sin `X-Api-Key`). La app Android sigue usando ambos.
+
+### Modelo JSON — `DiscountTicket`
+
+```json
+{
+  "id": 1,
+  "code": "AB12CD34",
+  "customerName": "María Pérez",
+  "customerPhone": "04141234567",
+  "discountPercent": 10,
+  "issuedAt": 1710000000000,
+  "expiresAt": 1712592000000,
+  "status": "ACTIVE",
+  "displayStatus": "ACTIVE",
+  "usedAt": null,
+  "usedBySaleSyncId": null,
+  "usedByUsername": null,
+  "issuedByUsername": "admin",
+  "issuedChannel": "PORTAL",
+  "sourceSaleSyncId": null,
+  "voidedAt": null,
+  "voidedByUsername": null,
+  "voidReason": null,
+  "auditLog": [
+    {
+      "action": "CREATED",
+      "at": 1710000000000,
+      "by": "admin",
+      "details": { "discountPercent": 10, "channel": "PORTAL", "customerName": "María Pérez", "customerPhone": "04141234567" }
+    }
+  ]
+}
+```
+
+**`status` persistido:** `ACTIVE` | `USED` | `VOIDED`
+
+**`displayStatus` calculado:** `ACTIVE` | `USED` | `EXPIRED` | `VOIDED` (expirado si `expiresAt <= now` y sigue `ACTIVE`)
+
+**Vigencia:** 30 días desde `issuedAt` (`expiresAt = issuedAt + 30 días`)
+
+**Canje:** al confirmar un pedido con `discountTicketCode`, el servidor marca el ticket como `USED` en la misma transacción atómica que la venta y emite `discountTickets` por WebSocket.
+
 
 ## Desarrollo local
 

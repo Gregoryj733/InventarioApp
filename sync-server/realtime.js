@@ -1,5 +1,6 @@
 const { WebSocketServer } = require("ws");
 const url = require("url");
+const auth = require("./auth");
 
 let wss = null;
 
@@ -21,10 +22,21 @@ function attach(httpServer, apiKey) {
     // como por header X-Api-Key, para ser consistentes con el middleware
     // de Express que protege el resto de rutas /v1/*.
     const headerKey = request.headers["x-api-key"];
-    if (apiKey && query.apiKey !== apiKey && headerKey !== apiKey) {
-      // Responder con un 401 explícito (en vez de solo destruir el socket)
-      // para que el cliente reciba un handshake HTTP parseable y pueda
-      // mostrar un mensaje de error claro en vez de un corte de conexión.
+    let authorized = !apiKey;
+    if (apiKey && (query.apiKey === apiKey || headerKey === apiKey)) {
+      authorized = true;
+    }
+    // Portal web: el navegador no puede mandar headers en el upgrade WS;
+    // acepta un JWT de sesión como query param ?token=...
+    if (!authorized && query.token) {
+      try {
+        auth.verifyToken(String(query.token));
+        authorized = true;
+      } catch (_) {
+        // Sigue sin autorizar.
+      }
+    }
+    if (!authorized) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;

@@ -10,7 +10,7 @@ let pool;
 // tráfico hacia Postgres en cada mutación, algo relevante en el plan free de
 // Neon (cómputo medido) y evita que cada venta sea cada vez más costosa de
 // registrar a medida que se acumula historial.
-const ENTITY_KEYS = ["products", "meta", "sales", "cashClosings", "users", "batteryFinder"];
+const ENTITY_KEYS = ["products", "meta", "sales", "cashClosings", "users", "batteryFinder", "discountTickets"];
 
 function defaultMeta() {
   return { bcvRate: null, bcvFetchedAt: null, lastInventoryUpdateAt: null };
@@ -33,6 +33,8 @@ function defaultEntityValue(key) {
       // "Validar Batería"), copiado de duncan.com.ve. Cambia muy rara vez,
       // por eso vive en su propia colección separada de products/sales.
       return { items: [] };
+    case "discountTickets":
+      return { items: [], nextId: 1 };
     default:
       return null;
   }
@@ -70,6 +72,7 @@ function composeState(valuesByKey) {
   const users = valuesByKey.users || defaultEntityValue("users");
   const meta = valuesByKey.meta || defaultEntityValue("meta");
   const batteryFinder = valuesByKey.batteryFinder || defaultEntityValue("batteryFinder");
+  const discountTickets = valuesByKey.discountTickets || defaultEntityValue("discountTickets");
   return {
     inventoryRevision: Number(products.inventoryRevision) || 0,
     meta,
@@ -79,9 +82,11 @@ function composeState(valuesByKey) {
     cashClosings: asArray(cashClosings.items),
     users: asArray(users.items),
     batteryFinder: asArray(batteryFinder.items),
+    discountTickets: asArray(discountTickets.items),
     nextCashClosingId: Number(cashClosings.nextId) || 1,
     nextSaleLineItemId: Number(sales.nextLineItemId) || 1,
-    nextUserId: Number(users.nextId) || 1
+    nextUserId: Number(users.nextId) || 1,
+    nextDiscountTicketId: Number(discountTickets.nextId) || 1
   };
 }
 
@@ -108,6 +113,10 @@ function decomposeState(state) {
     },
     batteryFinder: {
       items: state.batteryFinder || []
+    },
+    discountTickets: {
+      items: state.discountTickets || [],
+      nextId: Number(state.nextDiscountTicketId) || 1
     }
   };
 }
@@ -261,6 +270,22 @@ async function loadState() {
   return composeState(valuesByKey);
 }
 
+/**
+ * Carga solo la colección de ventas (+ line items). Usado por GET /v1/sales
+ * para evitar traer inventario, usuarios y cierres en cada previsualización.
+ */
+async function loadSales() {
+  const { rows } = await pool.query(
+    "SELECT value FROM sync_kv WHERE key = $1",
+    ["sales"]
+  );
+  const sales = rows[0]?.value || defaultEntityValue("sales");
+  return {
+    sales: asArray(sales.items),
+    saleLineItems: asArray(sales.lineItems)
+  };
+}
+
 /** Escribe solo las colecciones cuyo valor cambió respecto a `previousValuesByKey`. */
 async function persistChanged(client, nextValuesByKey, previousValuesByKey) {
   for (const key of ENTITY_KEYS) {
@@ -308,6 +333,7 @@ async function runTransaction(mutator) {
 module.exports = {
   init,
   loadState,
+  loadSales,
   saveState,
   runTransaction,
   backend: "postgres"

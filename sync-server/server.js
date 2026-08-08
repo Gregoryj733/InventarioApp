@@ -1,5 +1,6 @@
 const express = require("express");
 const http = require("http");
+const path = require("path");
 const multer = require("multer");
 const { createStore } = require("./store");
 const auth = require("./auth");
@@ -26,6 +27,19 @@ const MANAGEABLE_ROLES = ["CONSULTA", "SUPERVISOR"];
 // Roles con permiso para aprobar, rechazar o revertir cierres de caja
 // (Flujo Aprobación).
 const CLOSING_REVIEW_ROLES = ["ADMIN", "SUPERVISOR"];
+// Roles con permiso para reiniciar (borrar) los pedidos confirmados del día.
+const SALES_RESET_ROLES = ["ADMIN", "SUPERVISOR"];
+// Roles con acceso al portal web de códigos de descuento y emisión/anulación.
+const DISCOUNT_MANAGE_ROLES = ["ADMIN", "SUPERVISOR"];
+// Vigencia fija de 30 días desde la emisión del ticket de descuento (ligada
+// a la compra que lo origina). El estado "expirado" no se persiste: se
+// calcula comparando expiresAt contra la hora actual, así no hace falta un
+// job en segundo plano para vencer tickets.
+const DISCOUNT_TICKET_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const DEFAULT_DISCOUNT_PERCENT = 10;
+// Sin 0/O/1/I para evitar ambigüedad al leer el código a viva voz o copiarlo a mano.
+const TICKET_CODE_CHARSET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const TICKET_CODE_LENGTH = 8;
 
 const app = express();
 app.use(express.json({ limit: "12mb" }));
@@ -51,23 +65,48 @@ app.get("/", (_req, res) => {
     ok: true,
     service: "inventario-sync",
     health: "/health",
+    portal: "/portal/",
     api: "/v1/state",
     realtime: "/v1/ws",
-    auth: "Header X-Api-Key requerido en rutas /v1/*; Authorization: Bearer <token> en rutas protegidas"
+    auth: "Header X-Api-Key requerido en rutas /v1/* (o JWT Bearer para el portal); Authorization: Bearer <token> en rutas protegidas"
   });
 });
 
+// Portal web: se sirve ANTES del chequeo de X-Api-Key para que el navegador
+// pueda cargar HTML/CSS/JS sin credenciales de dispositivo.
+const portalDir = path.join(__dirname, "public");
+app.get("/portal", (_req, res) => res.redirect(301, "/portal/"));
+app.use("/portal", express.static(portalDir, { index: "index.html", fallthrough: false }));
+
+function isPublicHttpPath(req) {
+  const p = (req.path || "").toLowerCase();
+  const url = String(req.originalUrl || req.url || "").split("?")[0].toLowerCase();
+  if (p.startsWith("/portal") || url.startsWith("/portal")) return true;
+  if (req.method === "POST" && (p === "/v1/auth/login" || url === "/v1/auth/login")) return true;
+  return false;
+}
+
 app.use((req, res, next) => {
   if (!API_KEY) return next();
+  if (isPublicHttpPath(req)) return next();
   // El WebSocket (/v1/ws) manda la clave como query param, no como header;
   // si el upgrade no llega "crudo" (p. ej. reintentos por HTTP/1.1 tras un
   // fallo de negociación, o algún proxy intermedio) la request cae aquí como
   // un GET normal, así que aceptamos ambas formas para no romper el socket.
   const key = req.get("X-Api-Key") || req.query.apiKey;
-  if (key !== API_KEY) {
-    return res.status(401).json({ error: "Clave API inválida" });
+  if (key === API_KEY) return next();
+  // Portal web administrativo: un JWT de sesión válido sustituye la X-Api-Key.
+  const header = req.get("Authorization") || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+  if (token) {
+    try {
+      auth.verifyToken(token);
+      return next();
+    } catch (_) {
+      // Sigue al error de clave inválida.
+    }
   }
-  next();
+  return res.status(401).json({ error: "Clave API inválida" });
 });
 
 function asyncRoute(handler) {
@@ -109,6 +148,112 @@ function todayBoundsFrom(dateMillis) {
   const start = date.getTime();
   const end = start + 24 * 60 * 60 * 1000;
   return { start, end };
+}
+
+function generateTicketCode() {
+  let code = "";
+  for (let i = 0; i < TICKET_CODE_LENGTH; i += 1) {
+    code += TICKET_CODE_CHARSET[Math.floor(Math.random() * TICKET_CODE_CHARSET.length)];
+  }
+  return code;
+}
+
+function normalizePhone(phone) {
+  return String(phone || "").replace(/\D/g, "");
+}
+
+/** Estado legible: ACTIVE | USED | EXPIRED | VOIDED (los dos últimos derivados). */
+function resolveTicketDisplayStatus(ticket, now = Date.now()) {
+  if (ticket.status === "VOIDED") return "VOIDED";
+  if (ticket.status === "USED") return "USED";
+  if (ticket.expiresAt <= now) return "EXPIRED";
+  return "ACTIVE";
+}
+
+function buildLegacyAuditLog(ticket) {
+  const events = [];
+  events.push({
+    action: "CREATED",
+    at: ticket.issuedAt,
+    by: ticket.issuedByUsername || "",
+    details: {
+      discountPercent: ticket.discountPercent,
+      channel: ticket.issuedChannel || "APP"
+    }
+  });
+  if (ticket.status === "USED" && ticket.usedAt) {
+    events.push({
+      action: "USED",
+      at: ticket.usedAt,
+      by: ticket.usedByUsername || "",
+      details: { saleSyncId: ticket.usedBySaleSyncId || null }
+    });
+  }
+  if (ticket.status === "VOIDED" && ticket.voidedAt) {
+    events.push({
+      action: "VOIDED",
+      at: ticket.voidedAt,
+      by: ticket.voidedByUsername || "",
+      details: { reason: ticket.voidReason || "" }
+    });
+  }
+  return events;
+}
+
+function enrichTicket(ticket, now = Date.now()) {
+  const auditLog = Array.isArray(ticket.auditLog) && ticket.auditLog.length > 0
+    ? ticket.auditLog
+    : buildLegacyAuditLog(ticket);
+  return {
+    ...ticket,
+    displayStatus: resolveTicketDisplayStatus(ticket, now),
+    auditLog
+  };
+}
+
+function appendTicketAudit(ticket, action, by, details = {}) {
+  const auditLog = Array.isArray(ticket.auditLog) ? [...ticket.auditLog] : buildLegacyAuditLog(ticket);
+  auditLog.push({ action, at: Date.now(), by: by || "", details });
+  return { ...ticket, auditLog };
+}
+
+function filterDiscountTickets(tickets, query, now = Date.now()) {
+  let result = tickets.map((t) => enrichTicket(t, now));
+  const status = String(query.status || "").trim().toUpperCase();
+  if (status) {
+    result = result.filter((t) => t.displayStatus === status);
+  }
+  const customer = String(query.customer || "").trim().toLowerCase();
+  if (customer) {
+    result = result.filter(
+      (t) =>
+        t.customerName.toLowerCase().includes(customer) ||
+        normalizePhone(t.customerPhone).includes(normalizePhone(customer)) ||
+        t.code.toLowerCase().includes(customer)
+    );
+  }
+  const percent = Number(query.percent);
+  if (Number.isFinite(percent) && percent > 0) {
+    result = result.filter((t) => t.discountPercent === percent);
+  }
+  const issuedStart = Number(query.issuedStart);
+  const issuedEnd = Number(query.issuedEnd);
+  if (Number.isFinite(issuedStart)) {
+    result = result.filter((t) => t.issuedAt >= issuedStart);
+  }
+  if (Number.isFinite(issuedEnd)) {
+    result = result.filter((t) => t.issuedAt <= issuedEnd);
+  }
+  const sort = String(query.sort || "issuedAt").trim();
+  const order = String(query.order || "desc").trim().toLowerCase() === "asc" ? 1 : -1;
+  result.sort((a, b) => {
+    const av = a[sort] ?? 0;
+    const bv = b[sort] ?? 0;
+    if (av < bv) return -1 * order;
+    if (av > bv) return 1 * order;
+    return 0;
+  });
+  return result;
 }
 
 function sanitizeUser(user) {
@@ -223,6 +368,18 @@ async function start() {
     }
     const token = auth.signToken(user);
     res.json({ token, user: sanitizeUser(user) });
+  }));
+
+  app.get("/v1/auth/me", auth.requireAuth(), asyncRoute(async (req, res) => {
+    const state = await store.loadState();
+    const user = state.users.find((u) => String(u.id) === String(req.user.sub));
+    if (!user || !user.active) {
+      return res.status(401).json({ error: "Sesión inválida" });
+    }
+    res.json({
+      user: sanitizeUser(user),
+      canManageDiscounts: DISCOUNT_MANAGE_ROLES.includes(user.role)
+    });
   }));
 
   // Cambio de la propia contraseña: la única vía para rotar la del usuario
@@ -369,16 +526,62 @@ async function start() {
       const totalUsd = Number(body.totalUsd);
       const bcvRate = Number(body.bcvRate) || 0;
       const lines = Array.isArray(body.lines) ? body.lines : [];
+      const discountTicketCode = body.discountTicketCode
+        ? String(body.discountTicketCode).trim().toUpperCase()
+        : null;
+      const discountUsd = Number(body.discountUsd) || 0;
 
       if (!syncId || !Number.isFinite(createdAt) || !Number.isFinite(totalUsd) || lines.length === 0) {
         throw publicError("Pedido inválido");
       }
+
+      let discountTicketApplied = false;
 
       await store.runTransaction(async (state) => {
         if (state.sales.some((item) => item.syncId === syncId)) {
           // Ya se procesó este pedido (reintento tras un corte de red);
           // no volver a descontar stock ni duplicar la venta.
           return { state, result: null };
+        }
+
+        // Validación + canje del ticket de descuento en la MISMA transacción
+        // que la venta: si el ticket es inválido, toda la venta se rechaza; si
+        // la venta falla más abajo (p. ej. stock insuficiente), el ticket no
+        // queda marcado como usado. Así quedan atómicos.
+        let discountTickets = state.discountTickets;
+        let appliedDiscountPercent = 0;
+        if (discountTicketCode) {
+          const ticketIndex = state.discountTickets.findIndex((t) => t.code === discountTicketCode);
+          if (ticketIndex === -1) {
+            throw publicError("Ticket de descuento no encontrado");
+          }
+          const ticket = state.discountTickets[ticketIndex];
+          if (ticket.status === "VOIDED") {
+            throw publicError("Este ticket de descuento fue anulado");
+          }
+          if (ticket.status !== "ACTIVE") {
+            throw publicError("Este ticket de descuento ya fue utilizado");
+          }
+          if (ticket.expiresAt <= createdAt) {
+            throw publicError("Este ticket de descuento está expirado");
+          }
+          appliedDiscountPercent = Number(ticket.discountPercent) || 0;
+          const usedTicket = appendTicketAudit(
+            {
+              ...ticket,
+              status: "USED",
+              usedAt: createdAt,
+              usedBySaleSyncId: syncId,
+              usedByUsername: req.user?.username || ""
+            },
+            "USED",
+            req.user?.username || "",
+            { saleSyncId: syncId }
+          );
+          discountTickets = state.discountTickets.map((t, i) =>
+            i === ticketIndex ? usedTicket : t
+          );
+          discountTicketApplied = true;
         }
 
         const products = state.products.map((p) => ({ ...p }));
@@ -401,7 +604,18 @@ async function start() {
           product.updatedAt = createdAt;
         }
 
-        const sales = [...state.sales, { syncId, createdAt, totalUsd, bcvRate }];
+        const sales = [
+          ...state.sales,
+          {
+            syncId,
+            createdAt,
+            totalUsd,
+            bcvRate,
+            discountTicketCode: discountTicketCode || null,
+            discountPercent: appliedDiscountPercent,
+            discountUsd: discountTicketCode ? discountUsd : 0
+          }
+        ];
         let nextId = state.nextSaleLineItemId;
         // El detalle de cada línea (descripción, cantidad, precio) NUNCA debe
         // quedar vacío en el pedido guardado: si el cliente no lo manda o lo
@@ -436,7 +650,8 @@ async function start() {
             inventoryRevision: createdAt,
             sales,
             saleLineItems: [...state.saleLineItems, ...newLineItems],
-            nextSaleLineItemId: nextId
+            nextSaleLineItemId: nextId,
+            discountTickets
           },
           result: null
         };
@@ -444,6 +659,9 @@ async function start() {
 
       realtime.broadcast("inventory", {});
       realtime.broadcast("sales", {});
+      if (discountTicketApplied) {
+        realtime.broadcast("discountTickets", {});
+      }
       res.json({ ok: true });
     })
   );
@@ -454,7 +672,11 @@ async function start() {
   // consulta (p. ej. el total de "hoy"), lo que ahorra datos móviles y
   // ancho de banda del plan free de Render a medida que crece el historial.
   app.get("/v1/sales", auth.requireAuth(), asyncRoute(async (req, res) => {
-    const state = await store.loadState();
+    // Solo lee la colección de ventas (no inventario/usuarios/cierres) para
+    // que la previsualización de pedidos del día responda más rápido.
+    const state = typeof store.loadSales === "function"
+      ? await store.loadSales()
+      : await store.loadState();
     const sales = filterByRange(state.sales, "createdAt", req.query);
     const saleSyncIds = new Set(sales.map((s) => s.syncId));
     const lineItems = state.saleLineItems.filter((l) => saleSyncIds.has(l.saleSyncId));
@@ -520,7 +742,7 @@ async function start() {
 
   app.delete(
     "/v1/sales",
-    auth.requireAuth("ADMIN"),
+    auth.requireAuth(SALES_RESET_ROLES),
     asyncRoute(async (req, res) => {
       const start = Number(req.query.start);
       const end = Number(req.query.end);
@@ -657,6 +879,162 @@ async function start() {
     })
   );
 
+  // ---------- Tickets de descuento ----------
+  // Búsqueda por code (validación puntual), por phone (historial del cliente)
+  // o listado completo con filtros (portal Admin/Supervisor). El estado
+  // persistido es ACTIVE | USED | VOIDED; EXPIRED se calcula con expiresAt.
+  app.get(
+    "/v1/discount-tickets",
+    auth.requireAuth(),
+    asyncRoute(async (req, res) => {
+      const code = String(req.query.code || "").trim().toUpperCase();
+      const phone = normalizePhone(req.query.phone);
+      const listAll = req.query.list === "1" || req.query.list === "true";
+      const state = await store.loadState();
+      const now = Date.now();
+
+      if (code) {
+        const ticket = state.discountTickets.find((t) => t.code === code) || null;
+        return res.json({ ticket: ticket ? enrichTicket(ticket, now) : null });
+      }
+      if (phone) {
+        const tickets = state.discountTickets
+          .filter((t) => normalizePhone(t.customerPhone) === phone)
+          .sort((a, b) => b.issuedAt - a.issuedAt)
+          .map((t) => enrichTicket(t, now));
+        return res.json({ tickets });
+      }
+      if (listAll) {
+        if (!DISCOUNT_MANAGE_ROLES.includes(req.user?.role)) {
+          return res.status(403).json({ error: "No tienes permisos para listar códigos de descuento." });
+        }
+        const tickets = filterDiscountTickets(state.discountTickets, req.query, now);
+        const stats = {
+          total: tickets.length,
+          active: tickets.filter((t) => t.displayStatus === "ACTIVE").length,
+          used: tickets.filter((t) => t.displayStatus === "USED").length,
+          expired: tickets.filter((t) => t.displayStatus === "EXPIRED").length,
+          voided: tickets.filter((t) => t.displayStatus === "VOIDED").length
+        };
+        return res.json({ tickets, stats });
+      }
+      throw publicError("Debes indicar code, phone o list=1");
+    })
+  );
+
+  app.get(
+    "/v1/discount-tickets/:code",
+    auth.requireAuth(DISCOUNT_MANAGE_ROLES),
+    asyncRoute(async (req, res) => {
+      const code = String(req.params.code || "").trim().toUpperCase();
+      const state = await store.loadState();
+      const ticket = state.discountTickets.find((t) => t.code === code);
+      if (!ticket) throw publicError("Código no encontrado", 404);
+      res.json({ ticket: enrichTicket(ticket) });
+    })
+  );
+
+  app.post(
+    "/v1/discount-tickets",
+    auth.requireAuth(DISCOUNT_MANAGE_ROLES),
+    asyncRoute(async (req, res) => {
+      const customerName = String(req.body?.customerName || "").trim();
+      const customerPhone = normalizePhone(req.body?.customerPhone);
+      const sourceSaleSyncId = req.body?.sourceSaleSyncId ? String(req.body.sourceSaleSyncId) : null;
+      const channel = String(req.body?.channel || "PORTAL").trim().toUpperCase();
+      if (!customerName) throw publicError("El nombre del cliente es requerido");
+      if (!customerPhone) throw publicError("El teléfono del cliente es requerido");
+
+      const requestedPercent = Number(req.body?.discountPercent);
+      const created = await store.runTransaction(async (state) => {
+        const now = Date.now();
+        const defaultPercent = Number(state.meta.discountPercent) > 0
+          ? Number(state.meta.discountPercent)
+          : DEFAULT_DISCOUNT_PERCENT;
+        const percent = Number.isFinite(requestedPercent) && requestedPercent > 0 && requestedPercent <= 100
+          ? requestedPercent
+          : defaultPercent;
+        const existingCodes = new Set(state.discountTickets.map((t) => t.code));
+        let code = generateTicketCode();
+        let attempts = 0;
+        while (existingCodes.has(code) && attempts < 10) {
+          code = generateTicketCode();
+          attempts += 1;
+        }
+        let ticket = {
+          id: state.nextDiscountTicketId,
+          code,
+          customerName,
+          customerPhone,
+          discountPercent: percent,
+          issuedAt: now,
+          expiresAt: now + DISCOUNT_TICKET_TTL_MS,
+          status: "ACTIVE",
+          usedAt: null,
+          usedBySaleSyncId: null,
+          usedByUsername: null,
+          issuedByUsername: req.user?.username || "",
+          issuedChannel: channel === "APP" ? "APP" : "PORTAL",
+          sourceSaleSyncId,
+          voidedAt: null,
+          voidedByUsername: null,
+          voidReason: null,
+          auditLog: []
+        };
+        ticket = appendTicketAudit(ticket, "CREATED", req.user?.username || "", {
+          discountPercent: percent,
+          channel: ticket.issuedChannel,
+          customerName,
+          customerPhone
+        });
+        return {
+          state: {
+            ...state,
+            discountTickets: [...state.discountTickets, ticket],
+            nextDiscountTicketId: state.nextDiscountTicketId + 1
+          },
+          result: ticket
+        };
+      });
+
+      realtime.broadcast("discountTickets", {});
+      res.json(enrichTicket(created));
+    })
+  );
+
+  app.patch(
+    "/v1/discount-tickets/:code/void",
+    auth.requireAuth(DISCOUNT_MANAGE_ROLES),
+    asyncRoute(async (req, res) => {
+      const code = String(req.params.code || "").trim().toUpperCase();
+      const reason = String(req.body?.reason || "").trim();
+      const updated = await store.runTransaction(async (state) => {
+        const index = state.discountTickets.findIndex((t) => t.code === code);
+        if (index === -1) throw publicError("Código no encontrado", 404);
+        const ticket = state.discountTickets[index];
+        if (ticket.status === "USED") {
+          throw publicError("No se puede anular un código ya utilizado");
+        }
+        if (ticket.status === "VOIDED") {
+          throw publicError("Este código ya está anulado");
+        }
+        const now = Date.now();
+        let voided = {
+          ...ticket,
+          status: "VOIDED",
+          voidedAt: now,
+          voidedByUsername: req.user?.username || "",
+          voidReason: reason
+        };
+        voided = appendTicketAudit(voided, "VOIDED", req.user?.username || "", { reason });
+        const discountTickets = state.discountTickets.map((t, i) => (i === index ? voided : t));
+        return { state: { ...state, discountTickets }, result: voided };
+      });
+      realtime.broadcast("discountTickets", {});
+      res.json({ ticket: enrichTicket(updated) });
+    })
+  );
+
   // ---------- Validar Batería ----------
   // Catálogo de compatibilidad marca/modelo/año -> batería, visible para
   // cualquier perfil (solo requiere la X-Api-Key global, sin auth.requireAuth
@@ -782,6 +1160,7 @@ async function start() {
     }
     console.log(`API key configured: ${API_KEY ? "yes" : "no"}`);
     console.log(`WebSocket endpoint: /v1/ws`);
+    console.log(`Discount portal: http://0.0.0.0:${PORT}/portal/`);
     startKeepAlive();
   });
 }

@@ -18,9 +18,11 @@ function defaultState() {
     cashClosings: [],
     users: [],
     batteryFinder: [],
+    discountTickets: [],
     nextCashClosingId: 1,
     nextSaleLineItemId: 1,
-    nextUserId: 1
+    nextUserId: 1,
+    nextDiscountTicketId: 1
   };
 }
 
@@ -45,6 +47,15 @@ function readRaw() {
 
 async function loadState() {
   return readRaw();
+}
+
+/** Misma forma que store-pg.loadSales: solo ventas para GET /v1/sales. */
+async function loadSales() {
+  const state = readRaw();
+  return {
+    sales: state.sales || [],
+    saleLineItems: state.saleLineItems || []
+  };
 }
 
 function writeRaw(state) {
@@ -73,6 +84,7 @@ async function runTransaction(mutator) {
 module.exports = {
   init,
   loadState,
+  loadSales,
   saveState,
   runTransaction,
   backend: "file",

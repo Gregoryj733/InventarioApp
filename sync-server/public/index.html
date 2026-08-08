@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Portal de Códigos de Descuento · InventarioApp</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Login -->
+    <section id="login-view" class="login-wrap">
+      <div class="login-card">
+        <h1>Códigos de descuento</h1>
+        <p>Portal administrativo. Acceso exclusivo para Admin y Supervisor.</p>
+        <div id="login-error" class="alert alert-error hidden"></div>
+        <form id="login-form">
+          <div class="field">
+            <label for="login-user">Usuario</label>
+            <input id="login-user" type="text" autocomplete="username" required />
+          </div>
+          <div class="field">
+            <label for="login-pass">Contraseña</label>
+            <input id="login-pass" type="password" autocomplete="current-password" required />
+          </div>
+          <button id="login-btn" type="submit" class="btn btn-primary" style="width:100%;margin-top:8px;">
+            Iniciar sesión
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- Main -->
+    <section id="main-view" class="shell hidden">
+      <header class="topbar">
+        <div>
+          <h1>Portal de códigos de descuento</h1>
+          <div class="topbar-meta">Vigencia máxima: 30 días · <span id="live-status" class="live-dot live-off">Reconectando…</span></div>
+        </div>
+        <div class="topbar-actions">
+          <span id="user-label" class="topbar-meta"></span>
+          <button id="refresh-btn" class="btn btn-ghost btn-sm">Actualizar</button>
+          <button id="logout-btn" class="btn btn-ghost btn-sm">Salir</button>
+        </div>
+      </header>
+
+      <div class="stats">
+        <div class="stat-card"><div class="label">Total</div><div id="stat-total" class="value">0</div></div>
+        <div class="stat-card"><div class="label">Activos</div><div id="stat-active" class="value">0</div></div>
+        <div class="stat-card"><div class="label">Usados</div><div id="stat-used" class="value">0</div></div>
+        <div class="stat-card"><div class="label">Expirados</div><div id="stat-expired" class="value">0</div></div>
+        <div class="stat-card"><div class="label">Anulados</div><div id="stat-voided" class="value">0</div></div>
+      </div>
+
+      <div class="panel">
+        <h2>Generar código</h2>
+        <div id="generate-error" class="alert alert-error hidden"></div>
+        <div id="generate-success" class="alert alert-success hidden"></div>
+        <form id="generate-form" class="grid-2">
+          <div class="field">
+            <label for="gen-name">Nombre del cliente</label>
+            <input id="gen-name" type="text" required placeholder="Ej. María Pérez" />
+          </div>
+          <div class="field">
+            <label for="gen-phone">Teléfono del cliente</label>
+            <input id="gen-phone" type="tel" required placeholder="Ej. 04141234567" />
+          </div>
+          <div class="field">
+            <label for="gen-percent">Porcentaje de descuento (%)</label>
+            <input id="gen-percent" type="number" min="1" max="100" step="0.5" value="10" required />
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;">
+            <button id="generate-btn" type="submit" class="btn btn-primary" style="width:100%;">Generar código</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h2>Gestión y seguimiento</h2>
+        <form id="filter-form" class="grid-2" style="margin-bottom:16px;">
+          <div class="field">
+            <label for="filter-customer">Buscar (cliente, teléfono o código)</label>
+            <input id="filter-customer" type="search" placeholder="Buscar…" />
+          </div>
+          <div class="field">
+            <label for="filter-status">Estado</label>
+            <select id="filter-status">
+              <option value="">Todos</option>
+              <option value="ACTIVE">Activo</option>
+              <option value="USED">Usado</option>
+              <option value="EXPIRED">Expirado</option>
+              <option value="VOIDED">Anulado</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="filter-percent">Porcentaje</label>
+            <input id="filter-percent" type="number" min="1" max="100" step="0.5" placeholder="Ej. 10" />
+          </div>
+          <div class="field">
+            <label for="filter-start">Emitido desde</label>
+            <input id="filter-start" type="date" />
+          </div>
+          <div class="field">
+            <label for="filter-end">Emitido hasta</label>
+            <input id="filter-end" type="date" />
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;gap:8px;">
+            <button type="submit" class="btn btn-primary">Filtrar</button>
+            <button type="button" id="clear-filters" class="btn btn-ghost">Limpiar</button>
+          </div>
+        </form>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Cliente</th>
+                <th>Teléfono</th>
+                <th>%</th>
+                <th>Emitido</th>
+                <th>Vence</th>
+                <th>Estado</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="table-body">
+              <tr><td colspan="8" class="empty">Cargando…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Modal detalle -->
+    <div id="modal" class="modal-backdrop hidden">
+      <div class="modal" id="modal-backdrop">
+        <h3 id="modal-title">Detalle</h3>
+        <div id="modal-body"></div>
+        <div class="actions-row">
+          <button id="modal-close" class="btn btn-ghost">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
