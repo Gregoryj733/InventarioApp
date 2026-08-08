@@ -3,10 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>Portal de Cupones · InventarioApp</title>
-  <link rel="stylesheet" href="styles.css" />
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js" defer></script>
-  <script src="app.js?v=6" defer></script>
+  <link rel="stylesheet" href="styles.css?v=7" />
+  <script src="app.js?v=7" defer></script>
 </head>
 <body>
   <div id="app">
@@ -68,7 +70,7 @@
           </div>
           <div class="field" style="display:flex;align-items:flex-end;gap:8px;">
             <button id="generate-btn" type="submit" class="btn btn-primary" style="flex:1;">Generar cupón</button>
-            <button id="generate-qr-btn" type="button" class="btn btn-ghost hidden" style="flex:1;">Imprimir código QR</button>
+            <button id="generate-qr-btn" type="button" class="btn btn-ghost hidden" style="flex:1;">Imprimir QR</button>
           </div>
         </form>
       </div>
@@ -135,7 +137,7 @@
         <h3 id="modal-title">Detalle</h3>
         <div id="modal-body"></div>
         <div class="actions-row">
-          <button id="modal-print-qr" class="btn btn-primary hidden">Imprimir código QR</button>
+          <button id="modal-print-qr" class="btn btn-primary hidden">Imprimir QR</button>
           <button id="modal-close" class="btn btn-ghost">Cerrar</button>
         </div>
       </div>

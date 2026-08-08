@@ -73,7 +73,17 @@ app.get("/", (_req, res) => {
 // Portal web: se sirve ANTES del chequeo de X-Api-Key para que el navegador
 // pueda cargar HTML/CSS/JS sin credenciales de dispositivo.
 const portalDir = path.join(__dirname, "public");
-app.use("/portal", express.static(portalDir, { index: "index.html", fallthrough: false }));
+app.use("/portal", express.static(portalDir, {
+  index: "index.html",
+  fallthrough: false,
+  setHeaders(res, filePath) {
+    if (/\.(html|js|css)$/i.test(filePath)) {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+    }
+  }
+}));
 
 function isPublicHttpPath(req) {
   const p = (req.path || "").toLowerCase();
@@ -94,7 +104,8 @@ app.use((req, res, next) => {
   if (key === API_KEY) return next();
   // Portal web administrativo: un JWT de sesión válido sustituye la X-Api-Key.
   const header = req.get("Authorization") || "";
-  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+  let token = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+  if (!token && req.query.t) token = String(req.query.t).trim();
   if (token) {
     try {
       auth.verifyToken(token);

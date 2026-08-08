@@ -32,14 +32,15 @@ function verifyToken(token) {
 
 /**
  * Middleware Express: exige un JWT válido (emitido por /v1/auth/login) y,
- * opcionalmente, un rol específico. Se aplica ENCIMA del chequeo global de
- * X-Api-Key ya existente en server.js.
+ * opcionalmente, un rol específico. Acepta el token en Authorization o en ?t=
+ * (útil para <img src> del portal al imprimir códigos QR).
  */
 function requireAuth(roles) {
   const allowedRoles = roles ? [].concat(roles) : null;
   return (req, res, next) => {
     const header = req.get("Authorization") || "";
-    const token = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+    let token = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
+    if (!token && req.query.t) token = String(req.query.t).trim();
     if (!token) {
       return res.status(401).json({ error: "Sesión requerida" });
     }

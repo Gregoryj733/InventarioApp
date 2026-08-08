@@ -306,7 +306,7 @@
         <td><span class="badge ${badgeClass(t.displayStatus)}">${statusLabel(t.displayStatus)}</span></td>
         <td>
           <button class="btn btn-ghost btn-sm" data-action="detail" data-code="${t.code}">Ver</button>
-          ${canManagePortal() && (t.displayStatus === "ISSUED" || t.displayStatus === "ACTIVE") ? `<button class="btn btn-ghost btn-sm" data-action="print-qr" data-code="${t.code}">Código QR</button>` : ""}
+          ${canManagePortal() && (t.displayStatus === "ISSUED" || t.displayStatus === "ACTIVE") ? `<button class="btn btn-ghost btn-sm" data-action="print-qr" data-code="${t.code}">QR</button>` : ""}
           ${canManagePortal() && (t.displayStatus === "ISSUED" || t.displayStatus === "ACTIVE") ? `<button class="btn btn-danger btn-sm" data-action="void" data-code="${t.code}">Anular</button>` : ""}
         </td>
       </tr>
@@ -350,56 +350,31 @@
     }
   }
 
-  function blobToDataUrl(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = () => reject(new Error("No se pudo leer el código QR."));
-      reader.readAsDataURL(blob);
-    });
+  function ticketQrImageUrl(code) {
+    if (!state.token) return "";
+    const params = new URLSearchParams({ t: state.token });
+    return `/v1/discount-tickets/${encodeURIComponent(code)}/qr?${params.toString()}`;
   }
 
-  async function renderQrDataUrl(code) {
-    const headers = {};
-    if (state.token) headers.Authorization = `Bearer ${state.token}`;
-    const res = await fetch(`/v1/discount-tickets/${encodeURIComponent(code)}/qr`, { headers });
-    if (res.ok) {
-      return blobToDataUrl(await res.blob());
-    }
-    const data = await res.json().catch(() => ({}));
-    if (window.QRCode) {
-      return new Promise((resolve, reject) => {
-        window.QRCode.toDataURL(
-          code,
-          { width: 300, margin: 1, errorCorrectionLevel: "M" },
-          (err, url) => (err ? reject(err) : resolve(url))
-        );
-      });
-    }
-    throw new Error(data.error || "No se pudo generar el código QR.");
-  }
-
-  async function printQrCode(ticket) {
-    let qrDataUrl;
-    try {
-      qrDataUrl = await renderQrDataUrl(ticket.code);
-    } catch (err) {
-      alert(err.message || "No se pudo generar el código QR.");
+  function printQrCode(ticket) {
+    if (!state.token) {
+      alert("Inicia sesión de nuevo para imprimir el QR.");
       return;
     }
+    const qrSrc = ticketQrImageUrl(ticket.code);
     const expiresText = ticket.expiresAt
       ? formatDate(ticket.expiresAt)
       : "Al activar (30 días)";
     const win = window.open("", "_blank", "width=420,height=720");
     if (!win) {
-      alert("Permite ventanas emergentes para imprimir el código QR.");
+      alert("Permite ventanas emergentes para imprimir el QR.");
       return;
     }
     win.document.write(`
       <!DOCTYPE html>
       <html lang="es"><head>
         <meta charset="UTF-8" />
-        <title>Código QR · ${escapeHtml(ticket.code)}</title>
+        <title>QR cupón</title>
         <style>
           * { box-sizing: border-box; }
           body { font-family: "Segoe UI", system-ui, sans-serif; margin: 0; padding: 16px; }
@@ -433,6 +408,7 @@
             margin-top: 10px;
             line-height: 1.45;
           }
+          .qr-error { color: #b91c1c; font-size: 12px; margin-top: 8px; }
           @media print {
             body { padding: 0; }
             .qr-card { border-width: 1.5px; page-break-inside: avoid; }
@@ -441,19 +417,25 @@
       </head><body>
         <div class="qr-card">
           <div class="brand">${QR_TICKET_TITLE}</div>
-          <img class="qr-img" src="${qrDataUrl}" alt="Código QR del cupón" />
+          <img class="qr-img" id="qr-img" src="${qrSrc}" alt="QR del cupón" />
           <div class="pct">-${ticket.discountPercent}%</div>
           <div class="meta">Creado: ${formatDate(ticket.issuedAt)}</div>
           <div class="meta">Vence: ${expiresText}</div>
           <div class="validity">${QR_TICKET_VALIDITY_TEXT}</div>
+          <div class="qr-error hidden" id="qr-error">No se pudo cargar el QR. Cierra e intenta de nuevo.</div>
         </div>
         <script>
-          window.addEventListener("load", function() {
-            var img = document.querySelector(".qr-img");
-            function printNow() { setTimeout(function() { window.print(); }, 250); }
-            if (img && !img.complete) img.addEventListener("load", printNow);
-            else printNow();
-          });
+          (function() {
+            var img = document.getElementById("qr-img");
+            var err = document.getElementById("qr-error");
+            function printNow() { setTimeout(function() { window.print(); }, 300); }
+            if (!img) return;
+            img.addEventListener("error", function() {
+              err.classList.remove("hidden");
+            });
+            if (img.complete && img.naturalWidth > 0) printNow();
+            else img.addEventListener("load", printNow);
+          })();
         <\/script>
       </body></html>
     `);
@@ -474,14 +456,11 @@
       }
     }
     state.selected = ticket;
-    $("#modal-title").textContent = `Cupón ${ticket.code}`;
-    let qrBlock = '<div class="qr-wrap"><p class="muted">Generando código QR…</p></div>';
-    try {
-      const qrUrl = await renderQrDataUrl(ticket.code);
-      qrBlock = `<div class="qr-wrap"><img class="qr-preview-img" src="${qrUrl}" alt="Código QR del cupón" width="200" height="200" /></div>`;
-    } catch (err) {
-      qrBlock = `<div class="qr-wrap"><p class="error">${escapeHtml(err.message || "No se pudo generar el QR.")}</p></div>`;
-    }
+    $("#modal-title").textContent = `Cupón · ${ticket.discountPercent}%`;
+    const qrSrc = ticketQrImageUrl(ticket.code);
+    const qrBlock = qrSrc
+      ? `<div class="qr-wrap"><img class="qr-preview-img" src="${qrSrc}" alt="QR del cupón" width="200" height="200" /></div>`
+      : '<div class="qr-wrap"><p class="error">Inicia sesión de nuevo para ver el QR.</p></div>';
     $("#modal-body").innerHTML = `
       ${qrBlock}
       <div class="detail-grid">
