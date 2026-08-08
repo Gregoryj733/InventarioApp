@@ -104,7 +104,7 @@ Todas las rutas `/v1/*` requieren el header `X-Api-Key`. Las marcadas con 🔒 a
 - `GET /v1/ws?apiKey=...` — WebSocket; emite `{ type: "inventory" | "sales" | "cashClosings" | "users" | "discountTickets" }` tras cada cambio
 - `GET /v1/ws?token=<JWT>` — WebSocket para el portal web (sin `X-Api-Key`)
 
-Usuarios por defecto (se crean automáticamente si la base está vacía): `admin/admin` (ADMIN) y `consulta/consulta` (CONSULTA).
+Usuarios por defecto (se crean automáticamente si la base está vacía): `admin/admin` (ADMIN), `consulta/consulta` (CONSULTA) y `venta/venta` (VENTAS).
 
 ## Portal de códigos de descuento
 

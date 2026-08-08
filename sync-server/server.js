@@ -294,8 +294,8 @@ async function seedDefaultUsers(store) {
       },
       {
         id: now + 1,
-        username: "ventas",
-        passwordHash: auth.hashPassword("ventas"),
+        username: "venta",
+        passwordHash: auth.hashPassword("venta"),
         role: "VENTAS",
         active: true,
         sucursal: ""
@@ -313,6 +313,47 @@ async function seedDefaultUsers(store) {
       state: { ...state, users: seeded, nextUserId: now + 3 },
       result: null
     };
+  });
+}
+
+/** Asegura el usuario portal de ventas (venta/venta) con rol VENTAS en bases ya existentes. */
+async function ensureVentasPortalUser(store) {
+  const VENTAS_USERNAME = "venta";
+  await store.runTransaction(async (state) => {
+    const users = state.users.map((u) => ({ ...u }));
+    let nextUserId = state.nextUserId;
+    let changed = false;
+    const index = users.findIndex((u) => String(u.username).toLowerCase() === VENTAS_USERNAME);
+    if (index >= 0) {
+      const current = users[index];
+      const updated = {
+        ...current,
+        username: VENTAS_USERNAME,
+        role: "VENTAS",
+        active: true
+      };
+      if (
+        current.role !== updated.role ||
+        current.username !== updated.username ||
+        !current.active
+      ) {
+        users[index] = updated;
+        changed = true;
+      }
+    } else {
+      users.push({
+        id: nextUserId,
+        username: VENTAS_USERNAME,
+        passwordHash: auth.hashPassword("venta"),
+        role: "VENTAS",
+        active: true,
+        sucursal: ""
+      });
+      nextUserId += 1;
+      changed = true;
+    }
+    if (!changed) return { state, result: null };
+    return { state: { ...state, users, nextUserId }, result: null };
   });
 }
 
@@ -377,6 +418,7 @@ async function start() {
   storeRef = store;
   push.init();
   await seedDefaultUsers(store);
+  await ensureVentasPortalUser(store);
   await seedBatteryFinderData(store);
 
   // ---------- Autenticación ----------

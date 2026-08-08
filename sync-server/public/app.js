@@ -167,15 +167,33 @@
     }[role] || role;
   }
 
+  const PORTAL_VIEW_ROLES = ["CONSULTA", "VENTAS", "SUPERVISOR", "ADMIN"];
+  const PORTAL_MANAGE_ROLES = ["SUPERVISOR", "ADMIN"];
+
+  function resolvePortalPermissions(data) {
+    const role = String(data.user?.role || "").toUpperCase();
+    if (typeof data.canViewDiscounts === "boolean") {
+      return {
+        canViewDiscounts: data.canViewDiscounts,
+        canManageDiscounts: data.canManageDiscounts === true,
+        portalMode: data.portalMode || (data.canManageDiscounts ? "manage" : "read")
+      };
+    }
+    const canViewDiscounts = PORTAL_VIEW_ROLES.includes(role);
+    const canManageDiscounts = PORTAL_MANAGE_ROLES.includes(role);
+    return {
+      canViewDiscounts,
+      canManageDiscounts,
+      portalMode: canManageDiscounts ? "manage" : canViewDiscounts ? "read" : "none"
+    };
+  }
+
   function applyAuthPayload(data) {
-    if (!data?.canViewDiscounts) {
+    const permissions = resolvePortalPermissions(data);
+    if (!permissions.canViewDiscounts) {
       throw new Error("Tu perfil no tiene acceso al portal de descuentos.");
     }
-    saveSession(state.token, data.user, {
-      canViewDiscounts: data.canViewDiscounts,
-      canManageDiscounts: data.canManageDiscounts,
-      portalMode: data.portalMode
-    });
+    saveSession(state.token, data.user, permissions);
   }
 
   async function verifySession() {
@@ -202,7 +220,7 @@
     try {
       const data = await api("/v1/auth/login", {
         method: "POST",
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username: username.toLowerCase(), password })
       });
       state.token = data.token;
       applyAuthPayload(data);
@@ -210,7 +228,10 @@
       connectRealtime();
       await loadTickets();
     } catch (err) {
-      $("#login-error").textContent = err.message;
+      const message = err.message || "No se pudo iniciar sesión.";
+      $("#login-error").textContent = message.includes("Credenciales")
+        ? `${message} (usuario Ventas: venta / venta)`
+        : message;
       $("#login-error").classList.remove("hidden");
     } finally {
       btn.disabled = false;
