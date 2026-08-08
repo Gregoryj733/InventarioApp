@@ -1,15 +1,23 @@
 async function createStore() {
   if (process.env.DATABASE_URL) {
-    try {
-      const pgStore = require("./store-pg");
-      await pgStore.init();
-      console.log("Storage backend: postgres");
-      return pgStore;
-    } catch (error) {
-      console.error(
-        "Postgres init failed, falling back to file store:",
-        error.message
-      );
+    const pgStore = require("./store-pg");
+    const maxAttempts = 5;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await pgStore.init();
+        console.log("Storage backend: postgres");
+        return pgStore;
+      } catch (error) {
+        const delayMs = attempt * 2000;
+        console.error(
+          `Postgres init failed (attempt ${attempt}/${maxAttempts}):`,
+          error.message
+        );
+        if (attempt >= maxAttempts) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
   }
 

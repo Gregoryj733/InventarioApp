@@ -310,7 +310,16 @@ async function seedBatteryFinderData(store) {
     if (state.batteryFinder.length > 0) {
       return { state, result: null };
     }
-    const seedData = require("./data/battery-finder.json");
+    let seedData;
+    try {
+      seedData = require("./data/battery-finder.json");
+    } catch (error) {
+      console.warn(
+        "No se pudo cargar data/battery-finder.json; se omite la siembra del catálogo:",
+        error.message
+      );
+      return { state, result: null };
+    }
     return {
       state: { ...state, batteryFinder: seedData },
       result: null

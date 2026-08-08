@@ -26,7 +26,26 @@ jobs:
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: |
-          curl -fsS -X POST "https://api.render.com/v1/services/srv-d9o2qejncjis73b4p700/deploys" \
+          response=$(curl -fsS -X POST "https://api.render.com/v1/services/srv-d9o2qejncjis73b4p700/deploys" \
             -H "Authorization: Bearer ${RENDER_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d '{"clearCache":"do_not_clear"}'
+            -d '{"clearCache":"do_not_clear"}')
+          echo "$response"
+          deploy_id=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "Deploy id: $deploy_id"
+          for i in $(seq 1 60); do
+            status=$(curl -fsS "https://api.render.com/v1/services/srv-d9o2qejncjis73b4p700/deploys/${deploy_id}" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))")
+            echo "Render deploy status: $status (check $i/60)"
+            if [ "$status" = "live" ]; then
+              echo "Deploy succeeded."
+              exit 0
+            fi
+            if [ "$status" = "build_failed" ] || [ "$status" = "update_failed" ] || [ "$status" = "canceled" ]; then
+              echo "Deploy failed with status: $status"
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for Render deploy."
+          exit 1
