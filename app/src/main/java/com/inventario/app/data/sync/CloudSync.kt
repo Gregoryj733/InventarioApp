@@ -45,6 +45,7 @@ sealed class CloudEvent {
     data object Sales : CloudEvent()
     data object CashClosings : CloudEvent()
     data object Users : CloudEvent()
+    data object DiscountTickets : CloudEvent()
 }
 
 class ApiException(val code: Int, message: String) : Exception(message)
@@ -254,6 +255,7 @@ class CloudSync(private val config: SyncConfig) {
                 "sales" -> CloudEvent.Sales
                 "cashClosings" -> CloudEvent.CashClosings
                 "users" -> CloudEvent.Users
+                "discountTickets" -> CloudEvent.DiscountTickets
                 else -> null
             }
             event?.let { _events.tryEmit(it) }

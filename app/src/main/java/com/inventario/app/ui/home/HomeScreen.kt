@@ -1,18 +1,20 @@
 package com.inventario.app.ui.home
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
@@ -60,7 +62,9 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -74,21 +78,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.UserRole
+import com.inventario.app.data.entity.canManageDiscountTickets
+import com.inventario.app.data.entity.canResetTodayOrders
 import com.inventario.app.data.entity.displayLabel
+import androidx.compose.material.icons.filled.Edit
 import com.inventario.app.data.order.OrderLine
 import com.inventario.app.ui.theme.AccentSectionCard
 import com.inventario.app.ui.theme.AppScreenBackground
 import com.inventario.app.ui.theme.BrandAppTopBar
 import com.inventario.app.ui.theme.BrandSuccess
 import com.inventario.app.ui.theme.BrandWarning
+import com.inventario.app.ui.theme.ConfirmCheckDialog
 import com.inventario.app.ui.theme.ReportDivider
 import com.inventario.app.ui.theme.ReportHeader
 import com.inventario.app.ui.theme.ReportKeyValueRow
-import com.inventario.app.ui.theme.ConfirmedOrdersBanner
 import com.inventario.app.ui.theme.ConfirmedOrdersPreviewDialog
 import com.inventario.app.ui.theme.ReportMetaChip
 import com.inventario.app.ui.theme.ReportTotalBanner
@@ -98,7 +106,7 @@ import com.inventario.app.ui.theme.WhatsAppGreen
 import com.inventario.app.ui.theme.WhatsAppGreenDark
 import com.inventario.app.util.WhatsAppNotifier
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
@@ -130,6 +138,18 @@ fun HomeScreen(
             )
         )
     }
+    val scanTicketLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        result.contents?.let { viewModel.onDiscountTicketScanned(it) }
+    }
+    val launchTicketScan: () -> Unit = {
+        scanTicketLauncher.launch(
+            ScanOptions()
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setPrompt("Escanea el código QR del ticket de descuento")
+                .setBeepEnabled(true)
+                .setOrientationLocked(true)
+        )
+    }
 
     if (state.showCloudConfigDialog) {
         CloudConfigDialog(
@@ -159,6 +179,29 @@ fun HomeScreen(
                 viewModel.confirmOrder { message ->
                     WhatsAppNotifier.shareToGroupChooser(context, message)
                 }
+            }
+        )
+    }
+
+    if (state.showGenerateTicketDialog) {
+        GenerateDiscountTicketDialog(
+            state = state,
+            viewModel = viewModel,
+            onDismiss = viewModel::dismissGenerateTicketDialog
+        )
+    }
+
+    state.generatedTicket?.let { ticket ->
+        GeneratedDiscountTicketDialog(
+            ticket = ticket,
+            viewModel = viewModel,
+            onDismiss = viewModel::dismissGeneratedTicket,
+            onShare = { text ->
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                }
+                context.startActivity(Intent.createChooser(intent, "Compartir ticket"))
             }
         )
     }
@@ -226,7 +269,8 @@ fun HomeScreen(
                 item(key = "info_header") {
                     InfoHeader(
                         state = state,
-                        onConfirmedOrdersClick = viewModel::openConfirmedOrdersPreview
+                        onConfirmedOrdersClick = viewModel::openConfirmedOrdersPreview,
+                        onResetOrders = viewModel::resetTodayOrders
                     )
                 }
 
@@ -240,20 +284,12 @@ fun HomeScreen(
                 }
 
                 item(key = "search") {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SearchField(
-                            query = state.query,
-                            onQueryChange = viewModel::onQueryChange,
-                            onSearch = viewModel::runSearch,
-                            onClear = viewModel::clearSearch
-                        )
-                        ConfirmedOrdersBanner(
-                            count = state.confirmedOrdersToday,
-                            onReset = viewModel::resetTodayOrders,
-                            onPreview = viewModel::openConfirmedOrdersPreview,
-                            resetting = state.resettingOrders
-                        )
-                    }
+                    SearchField(
+                        query = state.query,
+                        onQueryChange = viewModel::onQueryChange,
+                        onSearch = viewModel::runSearch,
+                        onClear = viewModel::clearSearch
+                    )
                 }
 
                 if (state.suggestions.isNotEmpty()) {
@@ -318,6 +354,15 @@ fun HomeScreen(
                     }
                 }
 
+                if (state.lastConfirmedSaleSyncId != null && state.role.canManageDiscountTickets()) {
+                    item(key = "generate_discount_ticket") {
+                        GenerateDiscountTicketOfferCard(
+                            onGenerate = viewModel::openGenerateTicketDialog,
+                            onDismiss = viewModel::dismissDiscountTicketOffer
+                        )
+                    }
+                }
+
                 if (state.error != null) {
                     item(key = "error") {
                         Text(state.error!!, color = MaterialTheme.colorScheme.error)
@@ -330,7 +375,8 @@ fun HomeScreen(
                             state = state,
                             viewModel = viewModel,
                             onConfirm = viewModel::showOrderReceipt,
-                            onClear = viewModel::clearOrder
+                            onClear = viewModel::clearOrder,
+                            onScanTicket = launchTicketScan
                         )
                     }
                 }
@@ -535,60 +581,92 @@ private fun ImportAlertDialog(
     )
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun InfoHeader(
     state: HomeUiState,
-    onConfirmedOrdersClick: () -> Unit
+    onConfirmedOrdersClick: () -> Unit,
+    onResetOrders: () -> Unit
 ) {
+    val canReset = state.role.canResetTodayOrders()
+    var showResetConfirm by remember { mutableStateOf(false) }
+
     AccentSectionCard(
         title = "Resumen del día",
         titleTrailing = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 ReportMetaChip(icon = "📅", text = state.currentDate)
                 if (state.bcvRefreshing) {
-                    Spacer(Modifier.width(8.dp))
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                }
+                if (canReset) {
+                    if (state.resettingOrders) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        TextButton(
+                            onClick = { showResetConfirm = true },
+                            enabled = state.confirmedOrdersToday > 0,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text("Reiniciar")
+                        }
+                    }
                 }
             }
         }
     ) {
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            ReportMetaChip(
-                icon = "💱",
-                text = state.bcvLabel
-            )
-            ReportMetaChip(
-                icon = "🧾",
-                text = confirmedOrdersLabel(state.confirmedOrdersToday),
-                highlight = true,
-                onClick = if (state.confirmedOrdersToday > 0) onConfirmedOrdersClick else null
-            )
-            StatusPill(
-                text = "${state.productCount} productos",
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            StatusPill(
-                text = state.role.displayLabel(),
-                color = MaterialTheme.colorScheme.secondary
-            )
-            StatusPill(
-                text = state.cloudSyncLabel,
-                color = when {
-                    state.cloudSyncLabel.contains("sincronizado") -> BrandSuccess
-                    state.cloudSyncLabel.contains("subida pendiente") ||
-                        state.cloudSyncLabel.contains("servidor iniciando") -> BrandWarning
-                    state.cloudSyncLabel.contains("error") ||
-                        state.cloudSyncLabel.contains("denegado") ||
-                        state.cloudSyncLabel.contains("no configurad") ||
-                        state.cloudSyncLabel.contains("no encontrado") -> MaterialTheme.colorScheme.error
-                    state.cloudSyncLabel.contains("sin conexión") -> MaterialTheme.colorScheme.tertiary
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                }
-            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                ReportMetaChip(
+                    icon = "💱",
+                    text = state.bcvLabel
+                )
+                ReportMetaChip(
+                    icon = "🧾",
+                    text = confirmedOrdersLabel(state.confirmedOrdersToday),
+                    highlight = true,
+                    onClick = if (state.confirmedOrdersToday > 0) onConfirmedOrdersClick else null
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                StatusPill(
+                    text = "${state.productCount} productos",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                StatusPill(
+                    text = state.role.displayLabel(),
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                StatusPill(
+                    text = state.cloudSyncLabel,
+                    color = when {
+                        state.cloudSyncLabel.contains("sincronizado") -> BrandSuccess
+                        state.cloudSyncLabel.contains("subida pendiente") ||
+                            state.cloudSyncLabel.contains("servidor iniciando") -> BrandWarning
+                        state.cloudSyncLabel.contains("error") ||
+                            state.cloudSyncLabel.contains("denegado") ||
+                            state.cloudSyncLabel.contains("no configurad") ||
+                            state.cloudSyncLabel.contains("no encontrado") -> MaterialTheme.colorScheme.error
+                        state.cloudSyncLabel.contains("sin conexión") -> MaterialTheme.colorScheme.tertiary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+            }
         }
         if (state.cloudSyncDetail != null) {
             Spacer(Modifier.height(6.dp))
@@ -605,6 +683,23 @@ private fun InfoHeader(
                 }
             )
         }
+    }
+
+    if (showResetConfirm && canReset) {
+        ConfirmCheckDialog(
+            title = "Reiniciar contador del día",
+            description = "Se borrará el registro de los ${state.confirmedOrdersToday} pedido" +
+                "${if (state.confirmedOrdersToday == 1) "" else "s"} confirmado" +
+                "${if (state.confirmedOrdersToday == 1) "" else "s"} hoy y el total de ventas precargado. " +
+                "El inventario descontado no se restaura.",
+            checkLabel = "Confirmo que deseo reiniciar el contador del día",
+            confirmLabel = "Reiniciar",
+            onDismiss = { showResetConfirm = false },
+            onConfirm = {
+                showResetConfirm = false
+                onResetOrders()
+            }
+        )
     }
 }
 
@@ -757,14 +852,57 @@ private fun SelectedProductPanel(
                 Spacer(Modifier.width(8.dp))
                 Text("Agregar al pedido")
             }
+    }
+}
 
-            viewModel.casheaSimulation()?.let { simulation ->
-                CasheaSimulationPanel(
-                    simulation = simulation,
-                    formatPrice = viewModel::formatPrice,
-                    formatMoney = viewModel::formatMoney
+@Composable
+private fun OrderLineSummaryRow(
+    line: OrderLine,
+    viewModel: HomeViewModel,
+    onEdit: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = line.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "${viewModel.formatQty(line.quantity)} ${line.unit} · ${viewModel.formatPrice(line.totalUsd)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            IconButton(onClick = onEdit) {
+                Icon(
+                    Icons.Default.Edit,
+                    contentDescription = "Editar",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            IconButton(onClick = onRemove) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Quitar",
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
     }
 }
 
@@ -773,7 +911,8 @@ private fun OrderSummaryCard(
     state: HomeUiState,
     viewModel: HomeViewModel,
     onConfirm: () -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    onScanTicket: () -> Unit
 ) {
     val onPrimary = MaterialTheme.colorScheme.onPrimary
 
@@ -812,36 +951,57 @@ private fun OrderSummaryCard(
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     state.orderLines.forEach { line ->
-                        ReportKeyValueRow(
-                            label = "${viewModel.formatQty(line.quantity)} ${line.unit} · ${line.description}",
-                            value = viewModel.formatPrice(line.totalUsd),
-                            valueColor = MaterialTheme.colorScheme.onSurface
+                        OrderLineSummaryRow(
+                            line = line,
+                            viewModel = viewModel,
+                            onEdit = { viewModel.editOrderLine(line.productId) },
+                            onRemove = { viewModel.removeOrderLine(line.productId) }
                         )
                     }
 
                     ReportDivider(label = "Total")
                     Spacer(Modifier.height(6.dp))
 
-                    val totalBs = viewModel.orderTotalBs()
+                    val subtotalUsd = viewModel.orderTotalUsd()
+                    val appliedTicket = state.appliedDiscountTicket
+                    if (appliedTicket != null) {
+                        ReportKeyValueRow(label = "Subtotal", value = viewModel.formatPrice(subtotalUsd))
+                        ReportKeyValueRow(
+                            label = "Descuento (-${viewModel.formatQty(appliedTicket.discountPercent)}%)",
+                            value = "-${viewModel.formatPrice(viewModel.discountAmountUsd())}",
+                            valueColor = BrandSuccess
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    val totalUsd = viewModel.orderTotalUsdAfterDiscount()
+                    val totalBs = viewModel.orderTotalBsAfterDiscount()
                     ReportTotalBanner(
                         label = "Total del pedido",
-                        usd = viewModel.formatPrice(viewModel.orderTotalUsd()),
+                        usd = viewModel.formatPrice(totalUsd),
                         bs = totalBs?.let { "Bs ${viewModel.formatMoney(it)}" }
                     )
 
-                    viewModel.orderCasheaSimulation()?.let { simulation ->
-                        CasheaSimulationPanel(
-                            simulation = simulation,
-                            formatPrice = viewModel::formatPrice,
-                            formatMoney = viewModel::formatMoney
-                        )
-                    }
+                    Spacer(Modifier.height(10.dp))
+                    DiscountTicketSection(state = state, viewModel = viewModel, onScanRequested = onScanTicket)
+
+                    OrderCasheaPaymentSection(
+                        orderTotalUsd = subtotalUsd,
+                        bcvRate = state.bcvRate,
+                        simulation = viewModel.orderCasheaSimulation(),
+                        paymentChoice = viewModel.paymentChoiceForOrder(),
+                        formatPrice = viewModel::formatPrice,
+                        formatMoney = viewModel::formatMoney,
+                        onPagoMovilSelected = viewModel::selectOrderPagoMovil,
+                        onCasheaLevelSelected = viewModel::selectOrderCasheaLevel,
+                        casheaDetail = viewModel.orderCasheaDetail()
+                    )
                 }
             }
 
             Spacer(Modifier.height(12.dp))
             Button(
                 onClick = onConfirm,
+                enabled = viewModel.canConfirmOrder(),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -862,8 +1022,10 @@ private fun OrderReceiptDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) {
-    val totalUsd = viewModel.orderTotalUsd()
-    val totalBs = viewModel.orderTotalBs()
+    val subtotalUsd = viewModel.orderTotalUsd()
+    val appliedTicket = state.appliedDiscountTicket
+    val totalUsd = viewModel.orderTotalUsdAfterDiscount()
+    val totalBs = viewModel.orderTotalBsAfterDiscount()
     val compact = isCompactWidth()
 
     AlertDialog(
@@ -915,11 +1077,36 @@ private fun OrderReceiptDialog(
                 Spacer(Modifier.height(12.dp))
                 ReportDivider(label = "Totales")
                 Spacer(Modifier.height(8.dp))
+                if (appliedTicket != null) {
+                    ReportKeyValueRow(label = "Subtotal", value = viewModel.formatPrice(subtotalUsd))
+                    ReportKeyValueRow(
+                        label = "Ticket ${appliedTicket.code} (-${viewModel.formatQty(appliedTicket.discountPercent)}%)",
+                        value = "-${viewModel.formatPrice(viewModel.discountAmountUsd())}",
+                        valueColor = BrandSuccess
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
                 ReportTotalBanner(
                     label = "Total del pedido",
                     usd = viewModel.formatPrice(totalUsd),
                     bs = totalBs?.let { "Bs ${viewModel.formatMoney(it)}" }
                 )
+
+                viewModel.orderCasheaDetail()?.let { detail ->
+                    Spacer(Modifier.height(10.dp))
+                    CasheaPaymentSummary(
+                        detail = detail,
+                        formatPrice = viewModel::formatPrice,
+                        formatMoney = viewModel::formatMoney
+                    )
+                }
+                if (viewModel.orderCasheaDetail() == null && viewModel.isOrderCasheaEligible()) {
+                    Spacer(Modifier.height(8.dp))
+                    PagoMovilSelectedSummary(
+                        totalUsd = viewModel.formatPrice(totalUsd),
+                        totalBs = totalBs?.let { "Bs ${viewModel.formatMoney(it)}" }
+                    )
+                }
 
                 Spacer(Modifier.height(12.dp))
                 Card(

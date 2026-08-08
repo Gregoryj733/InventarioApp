@@ -20,6 +20,9 @@ fun UserRole.canReviewClosings(): Boolean = this == UserRole.ADMIN || this == Us
 /** Roles con permiso para reiniciar el contador de pedidos confirmados del día. */
 fun UserRole.canResetTodayOrders(): Boolean = this == UserRole.ADMIN || this == UserRole.SUPERVISOR
 
+/** Roles con permiso para generar códigos de descuento (app o portal). */
+fun UserRole.canManageDiscountTickets(): Boolean = this == UserRole.ADMIN || this == UserRole.SUPERVISOR
+
 data class User(
     val id: Long = 0,
     val username: String,

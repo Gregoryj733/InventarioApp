@@ -6,7 +6,9 @@ import com.inventario.app.data.entity.AppMeta
 import com.inventario.app.data.entity.CashClosingAlertType
 import com.inventario.app.data.entity.CashClosingRecord
 import com.inventario.app.data.entity.CashClosingStatus
+import com.inventario.app.data.cashea.CasheaCalculator
 import com.inventario.app.data.entity.ConfirmedOrderPreview
+import com.inventario.app.data.entity.DiscountTicket
 import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.SaleLineItem
 import com.inventario.app.data.entity.SaleRecord
@@ -14,6 +16,7 @@ import com.inventario.app.data.entity.User
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.excel.ImportResult
 import com.inventario.app.data.order.OrderLine
+import com.inventario.app.data.order.toSaleLineItem
 import com.inventario.app.data.search.ProductSearch
 import com.inventario.app.data.session.SessionManager
 import com.inventario.app.data.sync.ApiException
@@ -160,7 +163,7 @@ class InventoryRepository(
 ) {
     private val productsFlow = MutableStateFlow<List<Product>>(emptyList())
     private val metaFlow = MutableStateFlow<AppMeta?>(null)
-    private val confirmedOrdersFlow = MutableStateFlow(0)
+    private val confirmedOrdersTodayFlow = MutableStateFlow<List<ConfirmedOrderPreview>>(emptyList())
     private val pendingOrders = ArrayDeque<PendingOrder>()
     private val todayOrderPreviewsPrefs =
         context.getSharedPreferences("today_order_previews", Context.MODE_PRIVATE)
@@ -206,13 +209,13 @@ class InventoryRepository(
     fun observeCloudSyncStatus(): StateFlow<CloudSyncInfo> = cloudSync.status
 
     /**
-     * Conteo de "Pedidos confirmados hoy" siempre consultado al servidor
-     * (nunca calculado ni cacheado localmente) y refrescado automáticamente
-     * ante cada evento "sales" del WebSocket, para que se actualice solo en
-     * todos los dispositivos en cuanto cualquiera de ellos confirma un
-     * pedido.
+     * Lista de "Pedidos confirmados hoy" siempre consultada al servidor
+     * (con detalle de líneas) y refrescada automáticamente ante cada evento
+     * "sales" del WebSocket, para que se actualice sola en todos los
+     * dispositivos en cuanto cualquiera confirma un pedido.
      */
-    fun observeConfirmedOrdersToday(): StateFlow<Int> = confirmedOrdersFlow.asStateFlow()
+    fun observeConfirmedOrdersToday(): StateFlow<List<ConfirmedOrderPreview>> =
+        confirmedOrdersTodayFlow.asStateFlow()
 
     /** Eventos push crudos del servidor, para pantallas que necesiten reaccionar a Sales/CashClosings/Users. */
     fun observeCloudEvents(): SharedFlow<CloudEvent> = cloudSync.events
@@ -280,13 +283,59 @@ class InventoryRepository(
 
     suspend fun currentBcvRate(): Double? = metaFlow.value?.bcvRate
 
+    suspend fun saveDiscountPercent(percent: Double) = withContext(Dispatchers.IO) {
+        runCatching {
+            val response = cloudSync.putJson(
+                "/v1/meta",
+                JSONObject().apply { put("discountPercent", percent) }
+            )
+            metaFlow.update { current ->
+                (current ?: AppMeta()).copy(
+                    discountPercent = response.optDoubleOrNull("discountPercent") ?: percent
+                )
+            }
+        }
+    }
+
+    /** Búsqueda de solo lectura por código, usada para validar antes de confirmar la venta. */
+    suspend fun findDiscountTicket(code: String): Result<DiscountTicket?> = withContext(Dispatchers.IO) {
+        runCatching {
+            cloudSync.get("/v1/discount-tickets", mapOf("code" to code.trim().uppercase()))
+                .optJSONObject("ticket")
+                ?.toDiscountTicket()
+        }
+    }
+
+    /** Emite un ticket de descuento en el servidor (Supervisor/Admin). */
+    suspend fun issueDiscountTicket(
+        customerName: String,
+        customerPhone: String,
+        sourceSaleSyncId: String? = null,
+        discountPercent: Double? = null
+    ): Result<DiscountTicket> = withContext(Dispatchers.IO) {
+        runCatching {
+            val body = JSONObject().apply {
+                put("customerName", customerName.trim())
+                put("customerPhone", customerPhone.trim())
+                put("channel", "APP")
+                sourceSaleSyncId?.let { put("sourceSaleSyncId", it) }
+                discountPercent?.let { put("discountPercent", it) }
+            }
+            cloudSync.postJson("/v1/discount-tickets", body).toDiscountTicket()
+        }
+    }
+
     /**
      * Descuenta stock y registra la venta directamente en el servidor. Si el
      * servidor no es alcanzable (sin internet, cold start, etc.) el pedido se
      * confirma localmente con descuento optimista y se reintenta en cuanto la
      * conexión en tiempo real vuelva a sincronizarse.
      */
-    suspend fun executeOrder(lines: List<OrderLine>): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun executeOrder(
+        lines: List<OrderLine>,
+        orderCasheaLevel: CasheaCalculator.CasheaLevel? = null,
+        discountTicket: DiscountTicket? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val now = System.currentTimeMillis()
             val currentProducts = productsFlow.value
@@ -301,7 +350,9 @@ class InventoryRepository(
                 }
                 line.productId to product.syncId
             }
-            val totalUsd = lines.sumOf { it.totalUsd }
+            val subtotalUsd = lines.sumOf { it.totalUsd }
+            val discountUsd = discountTicket?.let { subtotalUsd * it.discountPercent / 100.0 } ?: 0.0
+            val totalUsd = (subtotalUsd - discountUsd).coerceAtLeast(0.0)
             val rate = metaFlow.value?.bcvRate ?: 0.0
             val sale = SaleRecord(
                 syncId = CloudSync.newSyncId(),
@@ -309,22 +360,35 @@ class InventoryRepository(
                 totalUsd = totalUsd,
                 bcvRate = rate
             )
-            val pending = PendingOrder(lines, sale, syncIdsByProductId)
+            val pending = PendingOrder(
+                lines = lines,
+                sale = sale,
+                productSyncIds = syncIdsByProductId,
+                orderCasheaLevel = orderCasheaLevel,
+                discountTicketCode = discountTicket?.code,
+                discountUsd = discountUsd
+            )
+            val previewLines = lines.map { line ->
+                line.copy(casheaLevel = null).toSaleLineItem(sale.syncId, rate)
+            }.toMutableList()
+            if (orderCasheaLevel != null && rate > 0 && previewLines.isNotEmpty()) {
+                CasheaCalculator.lineDetail(subtotalUsd, rate, orderCasheaLevel)?.let { detail ->
+                    previewLines[0] = previewLines[0].copy(
+                        casheaLevelLabel = detail.level.label,
+                        casheaInitialUsd = detail.initialUsd,
+                        casheaInitialBs = detail.initialBs,
+                        casheaPendingUsd = detail.pendingUsd,
+                        casheaPendingBs = detail.pendingBs,
+                        casheaInstallments = detail.installmentCount
+                    )
+                }
+            }
             val preview = ConfirmedOrderPreview(
                 syncId = sale.syncId,
                 createdAt = sale.createdAt,
                 totalUsd = sale.totalUsd,
                 bcvRate = sale.bcvRate,
-                lines = lines.map { line ->
-                    SaleLineItem(
-                        saleSyncId = sale.syncId,
-                        description = line.description,
-                        quantity = line.quantity,
-                        unit = line.unit,
-                        unitPriceUsd = line.unitPriceUsd,
-                        totalUsd = line.totalUsd
-                    )
-                }
+                lines = previewLines
             )
 
             runCatching { pushOrder(pending) }
@@ -338,11 +402,11 @@ class InventoryRepository(
                     }
                 }
             saveLocalOrderPreview(preview)
-            Unit
+            sale.syncId
         }.onSuccess {
             // No depende solo del evento "sales" por WebSocket (que puede
             // tardar un instante en llegar): este mismo dispositivo refresca
-            // el contador de inmediato al confirmar su propio pedido.
+            // la lista de inmediato al confirmar su propio pedido.
             refreshConfirmedOrdersFlow()
         }
     }
@@ -354,10 +418,14 @@ class InventoryRepository(
 
     suspend fun confirmedOrdersToday(): Int = withContext(Dispatchers.IO) {
         mergedConfirmedOrdersToday().size
-    }.also { confirmedOrdersFlow.value = it }
+    }
 
     suspend fun confirmedOrdersTodayDetails(): List<ConfirmedOrderPreview> = withContext(Dispatchers.IO) {
         mergedConfirmedOrdersToday()
+    }
+
+    suspend fun refreshConfirmedOrdersToday() = withContext(Dispatchers.IO) {
+        refreshConfirmedOrdersFlow()
     }
 
     private suspend fun mergedConfirmedOrdersToday(): List<ConfirmedOrderPreview> {
@@ -367,7 +435,7 @@ class InventoryRepository(
     }
 
     private suspend fun refreshConfirmedOrdersFlow() {
-        confirmedOrdersFlow.value = confirmedOrdersToday()
+        confirmedOrdersTodayFlow.value = mergedConfirmedOrdersToday()
     }
 
     suspend fun resetTodayOrders() = withContext(Dispatchers.IO) {
@@ -375,7 +443,7 @@ class InventoryRepository(
         cloudSync.delete("/v1/sales", mapOf("start" to start.toString(), "end" to end.toString()))
         clearLocalOrderPreviews()
     }.also {
-        confirmedOrdersFlow.value = 0
+        confirmedOrdersTodayFlow.value = emptyList()
     }
 
     suspend fun saveCashClosing(record: CashClosingRecord): Result<Long> = withContext(Dispatchers.IO) {
@@ -397,6 +465,11 @@ class InventoryRepository(
     suspend fun hasPendingClosings(): Boolean = withContext(Dispatchers.IO) {
         val (dayStart, dayEnd) = todayBounds()
         fetchCashClosings(dayStart, dayEnd).any { it.status == CashClosingStatus.PENDING }
+    }
+
+    suspend fun todayCashClosings(): List<CashClosingRecord> = withContext(Dispatchers.IO) {
+        val (dayStart, dayEnd) = todayBounds()
+        fetchCashClosings(dayStart, dayEnd)
     }
 
     suspend fun latestClosingToday(username: String): CashClosingRecord? = withContext(Dispatchers.IO) {
@@ -424,7 +497,7 @@ class InventoryRepository(
      */
     private suspend fun pushOrder(pending: PendingOrder) {
         val orderLines = JSONArray()
-        pending.lines.forEach { line ->
+        pending.lines.forEachIndexed { index, line ->
             val syncId = pending.productSyncIds[line.productId]
                 ?: error("Producto sin identificador de nube: ${line.description}")
             orderLines.put(
@@ -435,6 +508,26 @@ class InventoryRepository(
                     put("unit", line.unit)
                     put("unitPriceUsd", line.unitPriceUsd)
                     put("totalUsd", line.totalUsd)
+                    val casheaDetail = when {
+                        pending.orderCasheaLevel != null && index == 0 -> {
+                            CasheaCalculator.lineDetail(
+                                pending.sale.totalUsd,
+                                pending.sale.bcvRate,
+                                pending.orderCasheaLevel
+                            )
+                        }
+                        else -> line.casheaLevel?.let { level ->
+                            CasheaCalculator.lineDetail(line.totalUsd, pending.sale.bcvRate, level)
+                        }
+                    }
+                    casheaDetail?.let { detail ->
+                        put("casheaLevelLabel", detail.level.label)
+                        put("casheaInitialUsd", detail.initialUsd)
+                        put("casheaInitialBs", detail.initialBs)
+                        put("casheaPendingUsd", detail.pendingUsd)
+                        put("casheaPendingBs", detail.pendingBs)
+                        put("casheaInstallments", detail.installmentCount)
+                    }
                 }
             )
         }
@@ -446,6 +539,10 @@ class InventoryRepository(
                 put("totalUsd", pending.sale.totalUsd)
                 put("bcvRate", pending.sale.bcvRate)
                 put("lines", orderLines)
+                pending.discountTicketCode?.let { code ->
+                    put("discountTicketCode", code)
+                    put("discountUsd", pending.discountUsd)
+                }
             }
         )
     }
@@ -483,7 +580,8 @@ class InventoryRepository(
             metaFlow.value = AppMeta(
                 bcvRate = metaJson?.optDoubleOrNull("bcvRate"),
                 bcvFetchedAt = metaJson?.optLongOrNull("bcvFetchedAt"),
-                lastInventoryUpdateAt = metaJson?.optLongOrNull("lastInventoryUpdateAt")
+                lastInventoryUpdateAt = metaJson?.optLongOrNull("lastInventoryUpdateAt"),
+                discountPercent = metaJson?.optDoubleOrNull("discountPercent")
             )
             productsFlow.value = (state.optJSONArray("products") ?: JSONArray()).toProductList()
         }
@@ -584,7 +682,10 @@ class InventoryRepository(
     private data class PendingOrder(
         val lines: List<OrderLine>,
         val sale: SaleRecord,
-        val productSyncIds: Map<Long, String>
+        val productSyncIds: Map<Long, String>,
+        val orderCasheaLevel: CasheaCalculator.CasheaLevel? = null,
+        val discountTicketCode: String? = null,
+        val discountUsd: Double = 0.0
     )
 
     companion object {

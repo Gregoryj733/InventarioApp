@@ -10,9 +10,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -24,8 +28,11 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.displayLabel
+import com.inventario.app.data.sync.CloudEvent
 import com.inventario.app.ui.batteryfinder.BatteryFinderScreen
 import com.inventario.app.ui.batteryfinder.BatteryFinderViewModel
+import com.inventario.app.ui.powermaxx.PowerMaxxBatteryScreen
+import com.inventario.app.ui.powermaxx.PowerMaxxBatteryViewModel
 import com.inventario.app.ui.cashclosing.CashClosingScreen
 import com.inventario.app.ui.cashclosing.CashClosingViewModel
 import com.inventario.app.ui.home.HomeScreen
@@ -37,6 +44,8 @@ import com.inventario.app.ui.login.LoginScreen
 import com.inventario.app.ui.login.LoginViewModel
 import com.inventario.app.ui.reports.ReportsScreen
 import com.inventario.app.ui.reports.ReportsViewModel
+import com.inventario.app.ui.theme.AppAlert
+import com.inventario.app.ui.theme.AppAlertController
 import com.inventario.app.ui.theme.AppSnackbarController
 import com.inventario.app.ui.theme.InventarioTheme
 import com.inventario.app.ui.users.UserManagementScreen
@@ -76,7 +85,8 @@ private enum class AppScreen {
     CASH_CLOSING,
     REPORTS,
     USERS,
-    BATTERY_FINDER
+    BATTERY_FINDER,
+    POWER_MAXX_BATTERY
 }
 
 @Composable
@@ -89,9 +99,15 @@ private fun InventarioRoot(app: InventarioApplication) {
     var currentScreen by remember { mutableStateOf(AppScreen.HUB) }
 
     val snackbarHostState = remember { SnackbarHostState() }
+    var currentAlert by remember { mutableStateOf<AppAlert?>(null) }
     LaunchedEffect(Unit) {
         AppSnackbarController.messages.collect { message ->
             snackbarHostState.showSnackbar(message)
+        }
+    }
+    LaunchedEffect(Unit) {
+        AppAlertController.alerts.collect { alert ->
+            currentAlert = alert
         }
     }
 
@@ -114,10 +130,46 @@ private fun InventarioRoot(app: InventarioApplication) {
         }
     }
 
+    LaunchedEffect(loggedIn, loginSessionKey) {
+        if (!loggedIn) return@LaunchedEffect
+        app.cashClosingSoundMonitor.reset()
+        app.cashClosingSoundMonitor.refresh(app.inventoryRepository)
+        app.confirmedOrderSoundMonitor.reset()
+        app.confirmedOrderSoundMonitor.refresh(app.inventoryRepository)
+        app.inventoryRepository.observeCloudEvents().collect { event ->
+            when (event) {
+                is CloudEvent.CashClosings -> {
+                    app.cashClosingSoundMonitor.refresh(app.inventoryRepository)
+                }
+                is CloudEvent.Sales -> {
+                    app.confirmedOrderSoundMonitor.refresh(app.inventoryRepository)
+                }
+                else -> Unit
+            }
+        }
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) {
+        currentAlert?.let { alert ->
+            AlertDialog(
+                onDismissRequest = { currentAlert = null },
+                title = {
+                    Text(text = alert.title, fontWeight = FontWeight.Bold)
+                },
+                text = {
+                    Text(text = alert.message)
+                },
+                confirmButton = {
+                    TextButton(onClick = { currentAlert = null }) {
+                        Text("Entendido")
+                    }
+                }
+            )
+        }
+
         if (!loggedIn) {
             val loginVm: LoginViewModel = viewModel(
                 key = "login_$loginSessionKey",
@@ -169,6 +221,7 @@ private fun InventarioRoot(app: InventarioApplication) {
                             HubDestination.REPORTS -> AppScreen.REPORTS
                             HubDestination.USERS -> AppScreen.USERS
                             HubDestination.BATTERY_FINDER -> AppScreen.BATTERY_FINDER
+                            HubDestination.POWER_MAXX_BATTERY -> AppScreen.POWER_MAXX_BATTERY
                         }
                     },
                     onRefreshBcv = hubVm::refreshBcv,
@@ -183,7 +236,10 @@ private fun InventarioRoot(app: InventarioApplication) {
                         inventoryRepository = app.inventoryRepository,
                         sessionManager = app.sessionManager,
                         bcvRateFetcher = app.bcvRateFetcher,
-                        restartCloudSync = app::restartCloudSync
+                        restartCloudSync = app::restartCloudSync,
+                        appNotifier = app.appNotifier,
+                        onOrderConfirmedSound = app.confirmedOrderSoundMonitor::notifyForSubmitter,
+                        onOrdersReset = app.confirmedOrderSoundMonitor::reset
                     )
                 )
                 HomeScreen(
@@ -199,7 +255,8 @@ private fun InventarioRoot(app: InventarioApplication) {
                     factory = CashClosingViewModel.factory(
                         inventoryRepository = app.inventoryRepository,
                         sessionManager = app.sessionManager,
-                        bcvRateFetcher = app.bcvRateFetcher
+                        bcvRateFetcher = app.bcvRateFetcher,
+                        onClosingSubmittedSound = app.cashClosingSoundMonitor::notifySubmittedForSubmitter
                     )
                 )
                 CashClosingScreen(
@@ -218,7 +275,10 @@ private fun InventarioRoot(app: InventarioApplication) {
                         bcvRateProvider = { app.inventoryRepository.currentBcvRate() },
                         sessionManager = app.sessionManager,
                         userRole = role,
-                        cloudEvents = app.inventoryRepository.observeCloudEvents()
+                        cloudEvents = app.inventoryRepository.observeCloudEvents(),
+                        onReviewCompleted = { dedupeKey, title, message ->
+                            app.appNotifier.notify(dedupeKey, title, message)
+                        }
                     )
                 )
                 ReportsScreen(
@@ -235,10 +295,28 @@ private fun InventarioRoot(app: InventarioApplication) {
             AppScreen.BATTERY_FINDER -> {
                 val batteryFinderVm: BatteryFinderViewModel = viewModel(
                     key = "battery_finder_$loginSessionKey",
-                    factory = BatteryFinderViewModel.factory(app.batteryFinderRepository)
+                    factory = BatteryFinderViewModel.factory(
+                        app.batteryFinderRepository,
+                        app.inventoryRepository
+                    )
                 )
                 BatteryFinderScreen(
                     viewModel = batteryFinderVm,
+                    subtitle = subtitle,
+                    onBack = { currentScreen = AppScreen.HUB },
+                    onLogout = logoutAndNotify
+                )
+            }
+            AppScreen.POWER_MAXX_BATTERY -> {
+                val powerMaxxVm: PowerMaxxBatteryViewModel = viewModel(
+                    key = "power_maxx_battery_$loginSessionKey",
+                    factory = PowerMaxxBatteryViewModel.factory(
+                        app.acPowerBatteryRepository,
+                        app.inventoryRepository
+                    )
+                )
+                PowerMaxxBatteryScreen(
+                    viewModel = powerMaxxVm,
                     subtitle = subtitle,
                     onBack = { currentScreen = AppScreen.HUB },
                     onLogout = logoutAndNotify
@@ -249,7 +327,8 @@ private fun InventarioRoot(app: InventarioApplication) {
                     key = "users_$loginSessionKey",
                     factory = UserManagementViewModel.factory(
                         app.authRepository,
-                        app.inventoryRepository.observeCloudEvents()
+                        app.inventoryRepository.observeCloudEvents(),
+                        app.inventoryRepository
                     )
                 )
                 UserManagementScreen(

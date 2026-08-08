@@ -3,6 +3,7 @@ package com.inventario.app.data.repository
 import com.inventario.app.data.entity.BatteryFinderEntry
 import com.inventario.app.data.entity.CashClosingRecord
 import com.inventario.app.data.entity.CashClosingStatus
+import com.inventario.app.data.entity.DiscountTicket
 import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.ConfirmedOrderPreview
 import com.inventario.app.data.entity.SaleLineItem
@@ -75,24 +76,44 @@ internal fun JSONArray.toSaleList(): List<SaleRecord> {
     return sales
 }
 
+internal fun JSONObject.putCasheaFields(line: SaleLineItem) {
+    line.casheaLevelLabel?.let { put("casheaLevelLabel", it) }
+    line.casheaInitialUsd?.let { put("casheaInitialUsd", it) }
+    line.casheaInitialBs?.let { put("casheaInitialBs", it) }
+    line.casheaPendingUsd?.let { put("casheaPendingUsd", it) }
+    line.casheaPendingBs?.let { put("casheaPendingBs", it) }
+    line.casheaInstallments?.let { put("casheaInstallments", it) }
+}
+
+internal fun JSONObject.toSaleLineItem(saleSyncId: String? = null): SaleLineItem? {
+    val resolvedSaleSyncId = saleSyncId
+        ?: optString("saleSyncId").takeIf { it.isNotBlank() }
+        ?: return null
+    val description = optString("description").takeIf { it.isNotBlank() } ?: return null
+    val quantity = optDouble("quantity", Double.NaN)
+    if (quantity.isNaN() || quantity <= 0) return null
+    return SaleLineItem(
+        saleSyncId = resolvedSaleSyncId,
+        description = description,
+        quantity = quantity,
+        unit = optString("unit", "UNIDAD"),
+        unitPriceUsd = optDouble("unitPriceUsd", 0.0),
+        totalUsd = optDouble("totalUsd", 0.0),
+        casheaLevelLabel = optString("casheaLevelLabel").takeIf { it.isNotBlank() },
+        casheaInitialUsd = optDoubleOrNull("casheaInitialUsd"),
+        casheaInitialBs = optDoubleOrNull("casheaInitialBs"),
+        casheaPendingUsd = optDoubleOrNull("casheaPendingUsd"),
+        casheaPendingBs = optDoubleOrNull("casheaPendingBs"),
+        casheaInstallments = optInt("casheaInstallments", -1).takeIf { it > 0 }
+    )
+}
+
 internal fun JSONArray.toSaleLineItemList(): List<SaleLineItem> {
     val items = mutableListOf<SaleLineItem>()
     for (i in 0 until length()) {
         val json = optJSONObject(i) ?: continue
-        val saleSyncId = json.optString("saleSyncId").takeIf { it.isNotBlank() } ?: continue
-        val description = json.optString("description").takeIf { it.isNotBlank() } ?: continue
-        val quantity = json.optDouble("quantity", Double.NaN)
-        if (quantity.isNaN() || quantity <= 0) continue
-        items.add(
-            SaleLineItem(
-                saleSyncId = saleSyncId,
-                description = description,
-                quantity = quantity,
-                unit = json.optString("unit", "UNIDAD"),
-                unitPriceUsd = json.optDouble("unitPriceUsd", 0.0),
-                totalUsd = json.optDouble("totalUsd", 0.0)
-            )
-        )
+        val item = json.toSaleLineItem() ?: continue
+        items.add(item)
     }
     return items
 }
@@ -132,6 +153,7 @@ internal fun ConfirmedOrderPreview.toJsonObject(): JSONObject = JSONObject().app
                         put("unit", line.unit)
                         put("unitPriceUsd", line.unitPriceUsd)
                         put("totalUsd", line.totalUsd)
+                        putCasheaFields(line)
                     }
                 )
             }
@@ -251,6 +273,29 @@ internal fun JSONArray.toUserList(): List<User> {
         users.add(json.toUser())
     }
     return users.sortedBy { it.username }
+}
+
+internal fun JSONObject.toDiscountTicket(): DiscountTicket = DiscountTicket(
+    code = optString("code"),
+    customerName = optString("customerName"),
+    customerPhone = optString("customerPhone"),
+    discountPercent = optDouble("discountPercent", 0.0),
+    issuedAt = optLong("issuedAt"),
+    expiresAt = optLong("expiresAt"),
+    status = optString("status", "ACTIVE"),
+    usedAt = optLongOrNull("usedAt"),
+    usedBySaleSyncId = optString("usedBySaleSyncId").takeIf { it.isNotBlank() },
+    issuedByUsername = optString("issuedByUsername"),
+    sourceSaleSyncId = optString("sourceSaleSyncId").takeIf { it.isNotBlank() }
+)
+
+internal fun JSONArray.toDiscountTicketList(): List<DiscountTicket> {
+    val tickets = mutableListOf<DiscountTicket>()
+    for (i in 0 until length()) {
+        val json = optJSONObject(i) ?: continue
+        tickets.add(json.toDiscountTicket())
+    }
+    return tickets
 }
 
 internal fun JSONArray.toBatteryFinderList(): List<BatteryFinderEntry> {

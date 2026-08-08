@@ -122,4 +122,9 @@ dependencies {
 
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-messaging-ktx")
+
+    // Generación (core) y escaneo (embedded, con su propia Activity de cámara
+    // lista para usar) de códigos QR para los tickets de descuento.
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }

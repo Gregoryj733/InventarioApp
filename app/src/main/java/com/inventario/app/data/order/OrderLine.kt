@@ -1,11 +1,35 @@
 package com.inventario.app.data.order
 
+import com.inventario.app.data.cashea.CasheaCalculator
+import com.inventario.app.data.entity.SaleLineItem
+
 data class OrderLine(
     val productId: Long,
     val description: String,
     val unit: String,
     val unitPriceUsd: Double,
-    val quantity: Double
+    val quantity: Double,
+    val casheaLevel: CasheaCalculator.CasheaLevel? = null
 ) {
     val totalUsd: Double = unitPriceUsd * quantity
+}
+
+fun OrderLine.toSaleLineItem(saleSyncId: String, bcvRate: Double): SaleLineItem {
+    val casheaDetail = casheaLevel?.let { level ->
+        if (bcvRate > 0) CasheaCalculator.lineDetail(totalUsd, bcvRate, level) else null
+    }
+    return SaleLineItem(
+        saleSyncId = saleSyncId,
+        description = description,
+        quantity = quantity,
+        unit = unit,
+        unitPriceUsd = unitPriceUsd,
+        totalUsd = totalUsd,
+        casheaLevelLabel = casheaDetail?.level?.label,
+        casheaInitialUsd = casheaDetail?.initialUsd,
+        casheaInitialBs = casheaDetail?.initialBs,
+        casheaPendingUsd = casheaDetail?.pendingUsd,
+        casheaPendingBs = casheaDetail?.pendingBs,
+        casheaInstallments = casheaDetail?.installmentCount
+    )
 }

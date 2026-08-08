@@ -51,6 +51,35 @@ object CasheaCalculator {
         val fiscalConIva: FiscalBreakdown
     )
 
+    data class CasheaLineDetail(
+        val level: CasheaLevel,
+        val totalWithIvaUsd: Double,
+        val totalWithIvaBs: Double,
+        val initialUsd: Double,
+        val initialBs: Double,
+        val pendingUsd: Double,
+        val pendingBs: Double,
+        val installmentCount: Int = 2
+    ) {
+        val pendingPercent: Int
+            get() = ((1.0 - level.percent) * 100).toInt()
+    }
+
+    fun lineDetail(baseUsd: Double, rate: Double, level: CasheaLevel): CasheaLineDetail? {
+        if (!isCasheaEligible(baseUsd) || rate <= 0) return null
+        val simulation = simulate(baseUsd, rate) ?: return null
+        val levelAmount = simulation.casheaLevels.find { it.level == level } ?: return null
+        return CasheaLineDetail(
+            level = level,
+            totalWithIvaUsd = simulation.pagoCasheaConIvaUsd,
+            totalWithIvaBs = simulation.pagoCasheaConIvaBs,
+            initialUsd = levelAmount.usd,
+            initialBs = levelAmount.bs,
+            pendingUsd = roundMoney(simulation.pagoCasheaConIvaUsd - levelAmount.usd),
+            pendingBs = roundMoney(simulation.pagoCasheaConIvaBs - levelAmount.bs)
+        )
+    }
+
     fun simulate(baseUsd: Double, rate: Double, quantity: Double = 1.0): CasheaSimulation? {
         if (baseUsd <= 0 || rate <= 0 || quantity <= 0) return null
 

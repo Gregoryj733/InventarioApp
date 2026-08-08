@@ -5,6 +5,7 @@ import android.util.Log
 import com.google.firebase.messaging.FirebaseMessaging
 import com.inventario.app.data.bcv.BcvRateFetcher
 import com.inventario.app.data.repository.AuthRepository
+import com.inventario.app.data.acpower.AcPowerBatteryRepository
 import com.inventario.app.data.repository.BatteryFinderRepository
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.repository.ReportsRepository
@@ -15,6 +16,9 @@ import com.inventario.app.data.sync.NetworkMonitor
 import com.inventario.app.data.sync.SyncConfig
 import com.inventario.app.push.INVENTORY_UPDATED_TOPIC
 import com.inventario.app.push.NotificationHelper
+import com.inventario.app.util.AppNotifier
+import com.inventario.app.util.CashClosingSoundMonitor
+import com.inventario.app.util.ConfirmedOrderSoundMonitor
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +48,15 @@ class InventarioApplication : Application() {
         private set
     lateinit var batteryFinderRepository: BatteryFinderRepository
         private set
+    lateinit var acPowerBatteryRepository: AcPowerBatteryRepository
+        private set
     val bcvRateFetcher = BcvRateFetcher()
+    lateinit var cashClosingSoundMonitor: CashClosingSoundMonitor
+        private set
+    lateinit var confirmedOrderSoundMonitor: ConfirmedOrderSoundMonitor
+        private set
+    lateinit var appNotifier: AppNotifier
+        private set
 
     private lateinit var cloudSync: CloudSync
     private var networkMonitor: NetworkMonitor? = null
@@ -63,6 +75,9 @@ class InventarioApplication : Application() {
         NotificationHelper.createChannel(this)
 
         sessionManager = SessionManager(this)
+        cashClosingSoundMonitor = CashClosingSoundMonitor(this, sessionManager)
+        confirmedOrderSoundMonitor = ConfirmedOrderSoundMonitor(this, sessionManager)
+        appNotifier = AppNotifier(this, sessionManager)
         cloudSync = buildCloudSync()
         cloudSync.setAuthToken(sessionManager.token())
 
@@ -70,6 +85,7 @@ class InventarioApplication : Application() {
         inventoryRepository = InventoryRepository(context = this, cloudSync = cloudSync, appScope = appScope)
         reportsRepository = ReportsRepository(cloudSync)
         batteryFinderRepository = BatteryFinderRepository(this, cloudSync)
+        acPowerBatteryRepository = AcPowerBatteryRepository(this)
 
         cloudSync.start(appScope)
         startNetworkMonitor(cloudSync)

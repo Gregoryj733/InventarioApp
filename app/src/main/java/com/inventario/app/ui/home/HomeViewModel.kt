@@ -8,9 +8,16 @@ import androidx.lifecycle.viewModelScope
 import com.inventario.app.data.bcv.BcvRateFetcher
 import com.inventario.app.data.cashea.CasheaCalculator
 import com.inventario.app.data.entity.ConfirmedOrderPreview
+import com.inventario.app.data.entity.DiscountTicket
 import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.UserRole
+import com.inventario.app.data.entity.canManageDiscountTickets
+import com.inventario.app.data.entity.canResetTodayOrders
+import com.inventario.app.data.entity.isExpired
+import com.inventario.app.data.entity.isUsed
+import com.inventario.app.data.entity.isVoided
 import com.inventario.app.data.order.OrderLine
+import com.inventario.app.data.order.ProductPaymentChoice
 import com.inventario.app.data.excel.ImportResult
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.session.SessionManager
@@ -19,7 +26,10 @@ import com.inventario.app.data.sync.CloudSyncInfo
 import com.inventario.app.data.sync.CloudSyncStatus
 import com.inventario.app.data.sync.SyncConfig
 import com.inventario.app.data.sync.toUserMessage
+import com.inventario.app.ui.theme.AppAlertController
 import com.inventario.app.ui.theme.AppSnackbarController
+import com.inventario.app.util.AppNotificationMessages
+import com.inventario.app.util.AppNotifier
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,7 +67,9 @@ data class HomeUiState(
     val selectedProduct: Product? = null,
     val selectedQtyText: String = "1",
     val qtyWarning: String? = null,
+    val selectedPaymentChoice: ProductPaymentChoice? = null,
     val orderLines: List<OrderLine> = emptyList(),
+    val orderPaymentChoice: ProductPaymentChoice? = null,
     val showReceipt: Boolean = false,
     val orderProcessing: Boolean = false,
     val orderSuccessMessage: String? = null,
@@ -73,7 +85,20 @@ data class HomeUiState(
     val showConfirmedOrdersPreview: Boolean = false,
     val confirmedOrdersPreviewLoading: Boolean = false,
     val confirmedOrdersPreview: List<ConfirmedOrderPreview> = emptyList(),
-    val confirmedOrdersPreviewError: String? = null
+    val confirmedOrdersPreviewError: String? = null,
+    // ---- Ticket de descuento: canje en el carrito ----
+    val discountTicketCodeInput: String = "",
+    val validatingDiscountTicket: Boolean = false,
+    val discountTicketError: String? = null,
+    val appliedDiscountTicket: DiscountTicket? = null,
+    // ---- Ticket de descuento: generación tras confirmar una venta ----
+    val lastConfirmedSaleSyncId: String? = null,
+    val showGenerateTicketDialog: Boolean = false,
+    val generateTicketCustomerName: String = "",
+    val generateTicketCustomerPhone: String = "",
+    val generatingTicket: Boolean = false,
+    val generateTicketError: String? = null,
+    val generatedTicket: DiscountTicket? = null
 )
 
 class HomeViewModel(
@@ -81,7 +106,10 @@ class HomeViewModel(
     private val inventoryRepository: InventoryRepository,
     private val sessionManager: SessionManager,
     private val bcvRateFetcher: BcvRateFetcher,
-    private val restartCloudSync: () -> StateFlow<CloudSyncInfo>
+    private val restartCloudSync: () -> StateFlow<CloudSyncInfo>,
+    private val appNotifier: AppNotifier,
+    private val onOrderConfirmedSound: (String) -> Unit = {},
+    private val onOrdersReset: () -> Unit = {}
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(HomeUiState())
@@ -121,6 +149,9 @@ class HomeViewModel(
                         }
                     )
                 }
+                if (BcvRateFetcher.isStale(meta?.bcvFetchedAt)) {
+                    refreshBcv()
+                }
             }
         }
         viewModelScope.launch {
@@ -134,11 +165,17 @@ class HomeViewModel(
             }
         }
         viewModelScope.launch {
-            // StateFlow respaldado por el servidor: se actualiza solo con
-            // cada evento "sales" del WebSocket (pedido propio o de otro
-            // dispositivo), sin cálculos ni caché local.
-            inventoryRepository.observeConfirmedOrdersToday().collect { count ->
-                _state.update { it.copy(confirmedOrdersToday = count) }
+            // Lista completa en vivo: se actualiza sola con cada evento
+            // "sales" del WebSocket (pedido propio o de otro dispositivo).
+            inventoryRepository.observeConfirmedOrdersToday().collect { orders ->
+                _state.update {
+                    it.copy(
+                        confirmedOrdersToday = orders.size,
+                        confirmedOrdersPreview = orders,
+                        confirmedOrdersPreviewLoading = false,
+                        confirmedOrdersPreviewError = null
+                    )
+                }
             }
         }
         subscribeCloudSync()
@@ -146,6 +183,10 @@ class HomeViewModel(
     }
 
     fun resetTodayOrders() {
+        if (!_state.value.role.canResetTodayOrders()) {
+            AppSnackbarController.show("No tienes permisos para reiniciar el contador.")
+            return
+        }
         viewModelScope.launch {
             _state.update { it.copy(resettingOrders = true, error = null) }
             runCatching { inventoryRepository.resetTodayOrders() }
@@ -160,6 +201,7 @@ class HomeViewModel(
                         )
                     }
                     AppSnackbarController.show("Contador de pedidos del día reiniciado.")
+                    onOrdersReset()
                 }
                 .onFailure { err ->
                     val message = err.toUserMessage("No se pudo reiniciar el contador.")
@@ -176,29 +218,33 @@ class HomeViewModel(
 
     fun openConfirmedOrdersPreview() {
         if (_state.value.confirmedOrdersToday <= 0) return
+        val cached = _state.value.confirmedOrdersPreview
+        // Muestra de inmediato la caché en memoria (alimentada por el flow /
+        // WebSocket) y solo pone loading si aún no hay detalle local.
         _state.update {
             it.copy(
                 showConfirmedOrdersPreview = true,
-                confirmedOrdersPreviewLoading = true,
+                confirmedOrdersPreviewLoading = cached.isEmpty(),
                 confirmedOrdersPreviewError = null
             )
         }
         viewModelScope.launch {
-            runCatching { inventoryRepository.confirmedOrdersTodayDetails() }
-                .onSuccess { orders ->
-                    _state.update {
-                        it.copy(
-                            confirmedOrdersPreviewLoading = false,
-                            confirmedOrdersPreview = orders
-                        )
-                    }
+            runCatching { inventoryRepository.refreshConfirmedOrdersToday() }
+                .onSuccess {
+                    // El collect de observeConfirmedOrdersToday actualiza
+                    // preview + loading=false; aquí cubrimos el caso en que
+                    // el refresh no cambie el valor del flow (misma lista).
+                    _state.update { it.copy(confirmedOrdersPreviewLoading = false) }
                 }
                 .onFailure { err ->
                     _state.update {
                         it.copy(
                             confirmedOrdersPreviewLoading = false,
-                            confirmedOrdersPreviewError =
+                            confirmedOrdersPreviewError = if (cached.isEmpty()) {
                                 err.toUserMessage("No se pudieron cargar los pedidos confirmados.")
+                            } else {
+                                null
+                            }
                         )
                     }
                 }
@@ -209,7 +255,6 @@ class HomeViewModel(
         _state.update {
             it.copy(
                 showConfirmedOrdersPreview = false,
-                confirmedOrdersPreview = emptyList(),
                 confirmedOrdersPreviewError = null
             )
         }
@@ -349,13 +394,59 @@ class HomeViewModel(
                 selectedProduct = product,
                 selectedQtyText = "1",
                 qtyWarning = null,
+                selectedPaymentChoice = null,
                 suggestions = emptyList()
             )
         }
     }
 
     fun clearSelection() {
-        _state.update { it.copy(selectedProduct = null, selectedQtyText = "1", qtyWarning = null) }
+        _state.update {
+            it.copy(
+                selectedProduct = null,
+                selectedQtyText = "1",
+                qtyWarning = null,
+                selectedPaymentChoice = null
+            )
+        }
+    }
+
+    fun selectPagoMovil() {
+        _state.update { it.copy(selectedPaymentChoice = ProductPaymentChoice.PagoMovil) }
+    }
+
+    fun selectCasheaLevel(level: CasheaCalculator.CasheaLevel) {
+        _state.update { it.copy(selectedPaymentChoice = ProductPaymentChoice.Cashea(level)) }
+    }
+
+    fun casheaSelectionWarning(): String? {
+        if (!CasheaCalculator.isCasheaEligible(lineTotalUsd())) return null
+        if (_state.value.selectedPaymentChoice != null) return null
+        return "Seleccione forma de pago: Cashea o Pago móvil / Punto."
+    }
+
+    fun canConfirmOrder(): Boolean = _state.value.orderLines.isNotEmpty()
+
+    fun selectedLineCasheaDetail(): CasheaCalculator.CasheaLineDetail? {
+        val choice = _state.value.selectedPaymentChoice as? ProductPaymentChoice.Cashea ?: return null
+        val rate = _state.value.bcvRate ?: return null
+        return CasheaCalculator.lineDetail(lineTotalUsd(), rate, choice.level)
+    }
+
+    fun lineCasheaSimulation(line: OrderLine): CasheaCalculator.CasheaSimulation? {
+        val rate = _state.value.bcvRate ?: return null
+        if (line.totalUsd <= 0) return null
+        return CasheaCalculator.simulate(
+            baseUsd = line.totalUsd,
+            rate = rate,
+            quantity = line.quantity
+        )
+    }
+
+    fun lineCasheaDetail(line: OrderLine): CasheaCalculator.CasheaLineDetail? {
+        val level = line.casheaLevel ?: return null
+        val rate = _state.value.bcvRate ?: return null
+        return CasheaCalculator.lineDetail(line.totalUsd, rate, level)
     }
 
     fun onSelectedQtyChange(raw: String) {
@@ -381,7 +472,22 @@ class HomeViewModel(
             else -> null
         }
 
-        _state.update { it.copy(selectedQtyText = cleaned, qtyWarning = warning) }
+        _state.update {
+            it.copy(
+                selectedQtyText = cleaned,
+                qtyWarning = warning,
+                selectedPaymentChoice = if (
+                    product != null &&
+                    qty != null &&
+                    qty > 0 &&
+                    CasheaCalculator.isCasheaEligible(product.price * qty)
+                ) {
+                    it.selectedPaymentChoice
+                } else {
+                    null
+                }
+            )
+        }
     }
 
     private fun orderQtyForProduct(productId: Long?): Double {
@@ -413,6 +519,14 @@ class HomeViewModel(
             qty <= product.quantity - orderQtyForProduct(product.id)
     }
 
+    private fun notifyPopup(title: String, message: String) {
+        AppAlertController.show(title, message)
+    }
+
+    private fun notifyPopupWithSound(dedupeKey: String, title: String, message: String) {
+        appNotifier.notify(dedupeKey, title, message)
+    }
+
     fun addToOrder() {
         if (!canAddToOrder()) return
         val product = _state.value.selectedProduct ?: return
@@ -422,7 +536,8 @@ class HomeViewModel(
             description = product.description,
             unit = product.unit,
             unitPriceUsd = product.price,
-            quantity = qty
+            quantity = qty,
+            casheaLevel = null
         )
         val existing = _state.value.orderLines.filter { it.productId != product.id }
         _state.update {
@@ -431,11 +546,60 @@ class HomeViewModel(
                 selectedProduct = null,
                 selectedQtyText = "1",
                 qtyWarning = null,
+                selectedPaymentChoice = null,
                 orderSuccessMessage = null,
                 error = null
             )
         }
+        revalidateOrderCasheaEligibility()
         AppSnackbarController.show("\"${product.description}\" agregado al pedido.")
+    }
+
+    fun isOrderCasheaEligible(): Boolean =
+        CasheaCalculator.isCasheaEligible(orderTotalUsd())
+
+    fun paymentChoiceForOrder(): ProductPaymentChoice? {
+        if (!isOrderCasheaEligible()) return null
+        return _state.value.orderPaymentChoice ?: ProductPaymentChoice.PagoMovil
+    }
+
+    fun selectOrderPagoMovil() {
+        if (!isOrderCasheaEligible()) return
+        _state.update { it.copy(orderPaymentChoice = ProductPaymentChoice.PagoMovil) }
+        notifyOrderPaymentUpdated("Pago móvil / Punto")
+    }
+
+    fun selectOrderCasheaLevel(level: CasheaCalculator.CasheaLevel) {
+        if (!isOrderCasheaEligible()) return
+        _state.update { it.copy(orderPaymentChoice = ProductPaymentChoice.Cashea(level)) }
+        notifyOrderPaymentUpdated("Cashea ${level.label}")
+    }
+
+    fun orderCasheaDetail(): CasheaCalculator.CasheaLineDetail? {
+        val choice = _state.value.orderPaymentChoice as? ProductPaymentChoice.Cashea ?: return null
+        val rate = _state.value.bcvRate ?: return null
+        return CasheaCalculator.lineDetail(orderTotalUsd(), rate, choice.level)
+    }
+
+    fun orderCasheaLevelForSync(): CasheaCalculator.CasheaLevel? {
+        if (!isOrderCasheaEligible()) return null
+        return (_state.value.orderPaymentChoice as? ProductPaymentChoice.Cashea)?.level
+    }
+
+    private fun notifyOrderPaymentUpdated(label: String) {
+        val dedupeKey = "order_payment_${label.hashCode()}"
+        val (title, message) = AppNotificationMessages.paymentChoiceUpdated(label)
+        notifyPopupWithSound(dedupeKey, title, message)
+    }
+
+    private fun revalidateOrderCasheaEligibility() {
+        _state.update { state ->
+            if (CasheaCalculator.isCasheaEligible(state.orderLines.sumOf { it.totalUsd })) {
+                state
+            } else {
+                state.copy(orderPaymentChoice = null)
+            }
+        }
     }
 
     fun removeOrderLine(productId: Long) {
@@ -443,13 +607,43 @@ class HomeViewModel(
         _state.update {
             it.copy(orderLines = it.orderLines.filter { line -> line.productId != productId })
         }
+        revalidateOrderCasheaEligibility()
         if (removed != null) {
             AppSnackbarController.show("\"${removed.description}\" quitado del pedido.")
         }
     }
 
+    fun editOrderLine(productId: Long) {
+        val line = _state.value.orderLines.find { it.productId == productId } ?: return
+        val product = _state.value.allProducts.find { it.id == productId }
+            ?: _state.value.results.find { it.id == productId }
+            ?: return
+        _state.update {
+            it.copy(
+                orderLines = it.orderLines.filter { orderLine -> orderLine.productId != productId },
+                selectedProduct = product,
+                selectedQtyText = formatQty(line.quantity),
+                qtyWarning = null,
+                selectedPaymentChoice = null,
+                error = null
+            )
+        }
+        revalidateOrderCasheaEligibility()
+        AppSnackbarController.show("Editando \"${line.description}\". Ajuste cantidad o forma de pago.")
+    }
+
     fun clearOrder() {
-        _state.update { it.copy(orderLines = emptyList(), showReceipt = false) }
+        _state.update {
+            it.copy(
+                orderLines = emptyList(),
+                showReceipt = false,
+                selectedPaymentChoice = null,
+                orderPaymentChoice = null,
+                appliedDiscountTicket = null,
+                discountTicketCodeInput = "",
+                discountTicketError = null
+            )
+        }
         AppSnackbarController.show("Pedido vaciado.")
     }
 
@@ -460,8 +654,173 @@ class HomeViewModel(
         return orderTotalUsd() * rate
     }
 
+    /** Monto del descuento (USD) del ticket aplicado al carrito, si hay uno. */
+    fun discountAmountUsd(): Double {
+        val ticket = _state.value.appliedDiscountTicket ?: return 0.0
+        return orderTotalUsd() * ticket.discountPercent / 100.0
+    }
+
+    fun orderTotalUsdAfterDiscount(): Double = (orderTotalUsd() - discountAmountUsd()).coerceAtLeast(0.0)
+
+    fun orderTotalBsAfterDiscount(): Double? {
+        val rate = _state.value.bcvRate ?: return null
+        return orderTotalUsdAfterDiscount() * rate
+    }
+
+    fun formatTicketDate(millis: Long): String = dateFormat.format(Date(millis))
+
+    fun onDiscountTicketCodeChange(value: String) {
+        _state.update { it.copy(discountTicketCodeInput = value.uppercase(), discountTicketError = null) }
+    }
+
+    /** Valida un código (escrito o escaneado) contra el servidor antes de aplicarlo al carrito. */
+    fun applyDiscountTicket(code: String = _state.value.discountTicketCodeInput) {
+        val trimmed = code.trim()
+        if (trimmed.isEmpty()) {
+            _state.update { it.copy(discountTicketError = "Ingresa o escanea un código.") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(validatingDiscountTicket = true, discountTicketError = null) }
+            inventoryRepository.findDiscountTicket(trimmed)
+                .onSuccess { ticket ->
+                    val errorMessage = when {
+                        ticket == null -> "Ticket no encontrado. Verifica el código."
+                        ticket.isVoided() -> "Este ticket fue anulado."
+                        ticket.isUsed() -> "Este ticket ya fue utilizado."
+                        ticket.isExpired() -> "Este ticket expiró el ${formatTicketDate(ticket.expiresAt)}."
+                        else -> null
+                    }
+                    if (errorMessage != null) {
+                        _state.update {
+                            it.copy(validatingDiscountTicket = false, discountTicketError = errorMessage)
+                        }
+                    } else {
+                        _state.update {
+                            it.copy(
+                                validatingDiscountTicket = false,
+                                discountTicketError = null,
+                                appliedDiscountTicket = ticket,
+                                discountTicketCodeInput = ""
+                            )
+                        }
+                        AppSnackbarController.show(
+                            "Descuento de ${formatQty(ticket!!.discountPercent)}% aplicado (${ticket.customerName})."
+                        )
+                    }
+                }
+                .onFailure { err ->
+                    _state.update {
+                        it.copy(
+                            validatingDiscountTicket = false,
+                            discountTicketError = err.toUserMessage("No se pudo validar el ticket.")
+                        )
+                    }
+                }
+        }
+    }
+
+    /** Código leído desde el escáner de QR (ScanContract de ZXing): igual flujo que escribirlo a mano. */
+    fun onDiscountTicketScanned(rawText: String) {
+        val code = rawText.trim()
+        if (code.isEmpty()) return
+        _state.update { it.copy(discountTicketCodeInput = code.uppercase()) }
+        applyDiscountTicket(code)
+    }
+
+    fun removeDiscountTicket() {
+        _state.update { it.copy(appliedDiscountTicket = null, discountTicketError = null) }
+    }
+
+    fun openGenerateTicketDialog() {
+        _state.update {
+            it.copy(
+                showGenerateTicketDialog = true,
+                generateTicketCustomerName = "",
+                generateTicketCustomerPhone = "",
+                generateTicketError = null
+            )
+        }
+    }
+
+    fun dismissGenerateTicketDialog() {
+        _state.update { it.copy(showGenerateTicketDialog = false, generateTicketError = null) }
+    }
+
+    fun dismissDiscountTicketOffer() {
+        _state.update { it.copy(lastConfirmedSaleSyncId = null) }
+    }
+
+    fun onGenerateTicketNameChange(value: String) {
+        _state.update { it.copy(generateTicketCustomerName = value, generateTicketError = null) }
+    }
+
+    fun onGenerateTicketPhoneChange(value: String) {
+        _state.update { it.copy(generateTicketCustomerPhone = value, generateTicketError = null) }
+    }
+
+    fun submitGenerateTicket() {
+        if (!_state.value.role.canManageDiscountTickets()) {
+            _state.update { it.copy(generateTicketError = "No tienes permisos para generar tickets.") }
+            return
+        }
+        val name = _state.value.generateTicketCustomerName.trim()
+        val phone = _state.value.generateTicketCustomerPhone.trim()
+        if (name.isEmpty()) {
+            _state.update { it.copy(generateTicketError = "Ingresa el nombre del cliente.") }
+            return
+        }
+        if (phone.isEmpty()) {
+            _state.update { it.copy(generateTicketError = "Ingresa el teléfono del cliente.") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(generatingTicket = true, generateTicketError = null) }
+            inventoryRepository.issueDiscountTicket(
+                customerName = name,
+                customerPhone = phone,
+                sourceSaleSyncId = _state.value.lastConfirmedSaleSyncId
+            ).onSuccess { ticket ->
+                _state.update {
+                    it.copy(
+                        generatingTicket = false,
+                        showGenerateTicketDialog = false,
+                        generatedTicket = ticket,
+                        lastConfirmedSaleSyncId = null
+                    )
+                }
+                AppSnackbarController.show("Ticket ${ticket.code} generado para ${ticket.customerName}.")
+            }.onFailure { err ->
+                _state.update {
+                    it.copy(
+                        generatingTicket = false,
+                        generateTicketError = err.toUserMessage("No se pudo generar el ticket.")
+                    )
+                }
+            }
+        }
+    }
+
+    fun dismissGeneratedTicket() {
+        _state.update { it.copy(generatedTicket = null) }
+    }
+
+    fun generatedTicketShareText(): String? {
+        val ticket = _state.value.generatedTicket ?: return null
+        return buildString {
+            appendLine("Código de descuento Total Care")
+            appendLine("Cliente: ${ticket.customerName}")
+            appendLine("Teléfono: ${ticket.customerPhone}")
+            appendLine("Código: ${ticket.code}")
+            appendLine("Descuento: ${formatQty(ticket.discountPercent)}%")
+            appendLine("Válido hasta: ${formatTicketDate(ticket.expiresAt)}")
+            appendLine()
+            append(com.inventario.app.data.entity.DISCOUNT_TICKET_CONDITIONS)
+        }
+    }
+
     fun showOrderReceipt() {
-        if (_state.value.orderLines.isEmpty()) return
+        if (_state.value.orderLines.isEmpty() || !canConfirmOrder()) return
         _state.update { it.copy(showReceipt = true, error = null) }
     }
 
@@ -473,8 +832,11 @@ class HomeViewModel(
         val state = _state.value
         val now = Date()
         val lines = state.orderLines
-        val totalUsd = orderTotalUsd()
-        val totalBs = orderTotalBs()
+        val subtotalUsd = orderTotalUsd()
+        val ticket = state.appliedDiscountTicket
+        val discountUsd = discountAmountUsd()
+        val totalUsd = orderTotalUsdAfterDiscount()
+        val totalBs = orderTotalBsAfterDiscount()
         val bcv = state.bcvRate
 
         return buildString {
@@ -501,9 +863,32 @@ class HomeViewModel(
             }
             appendLine()
             appendLine("--- TOTALES ---")
+            if (ticket != null) {
+                appendLine("Subtotal USD: ${formatPrice(subtotalUsd)}")
+                appendLine(
+                    "Descuento (${ticket.customerName} · -${formatQty(ticket.discountPercent)}%): " +
+                        "-${formatPrice(discountUsd)}"
+                )
+            }
             appendLine("*Total USD: ${formatPrice(totalUsd)}*")
             if (totalBs != null) {
                 appendLine("*Total Bs: Bs ${moneyFormat.format(totalBs)}*")
+            }
+            orderCasheaDetail()?.let { casheaDetail ->
+                appendLine()
+                appendLine("*Forma de pago: Cashea ${casheaDetail.level.label}*")
+                appendLine(
+                    "Pago inicial: ${formatPrice(casheaDetail.initialUsd)} | " +
+                        "Bs ${moneyFormat.format(casheaDetail.initialBs)}"
+                )
+                appendLine(
+                    "Pendiente en ${casheaDetail.installmentCount} cuotas (${casheaDetail.pendingPercent}%): " +
+                        "${formatPrice(casheaDetail.pendingUsd)} | Bs ${moneyFormat.format(casheaDetail.pendingBs)}"
+                )
+            }
+            if (orderCasheaDetail() == null && isOrderCasheaEligible()) {
+                appendLine()
+                appendLine("*Forma de pago: Pago móvil / Punto*")
             }
             appendLine()
             appendLine("Stock actualizado en inventario.")
@@ -516,8 +901,13 @@ class HomeViewModel(
 
         viewModelScope.launch {
             _state.update { it.copy(orderProcessing = true, error = null) }
-            val result = inventoryRepository.executeOrder(lines)
-            result.onSuccess {
+            val discountTicket = _state.value.appliedDiscountTicket
+            val result = inventoryRepository.executeOrder(
+                lines = lines,
+                orderCasheaLevel = orderCasheaLevelForSync(),
+                discountTicket = discountTicket
+            )
+            result.onSuccess { syncId ->
                 val message = buildWhatsAppMessage()
                 val count = inventoryRepository.productCount()
                 val q = _state.value.query
@@ -528,17 +918,21 @@ class HomeViewModel(
                         showReceipt = false,
                         orderLines = emptyList(),
                         orderSuccessMessage = "Pedido registrado. Stock actualizado.",
+                        lastConfirmedSaleSyncId = syncId,
                         lastWhatsAppMessage = message,
                         productCount = count,
-                        // confirmedOrdersToday llega vía observeConfirmedOrdersToday()
-                        // (ya refrescado por el propio repositorio al confirmar).
                         results = results,
                         selectedProduct = null,
-                        selectedQtyText = "1"
+                        selectedQtyText = "1",
+                        selectedPaymentChoice = null,
+                        orderPaymentChoice = null,
+                        appliedDiscountTicket = null,
+                        discountTicketCodeInput = "",
+                        discountTicketError = null
                     )
                 }
+                onOrderConfirmedSound(syncId)
                 onWhatsApp(message)
-                AppSnackbarController.show("Pedido confirmado. Stock actualizado.")
             }.onFailure { err ->
                 val message = err.toUserMessage("No se pudo completar el pedido.")
                 _state.update {
@@ -547,7 +941,7 @@ class HomeViewModel(
                         error = message
                     )
                 }
-                AppSnackbarController.show(message)
+                notifyPopup("Error al confirmar pedido", message)
             }
         }
     }
@@ -768,7 +1162,10 @@ class HomeViewModel(
             inventoryRepository: InventoryRepository,
             sessionManager: SessionManager,
             bcvRateFetcher: BcvRateFetcher,
-            restartCloudSync: () -> StateFlow<CloudSyncInfo>
+            restartCloudSync: () -> StateFlow<CloudSyncInfo>,
+            appNotifier: AppNotifier,
+            onOrderConfirmedSound: (String) -> Unit = {},
+            onOrdersReset: () -> Unit = {}
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -777,7 +1174,10 @@ class HomeViewModel(
                     inventoryRepository,
                     sessionManager,
                     bcvRateFetcher,
-                    restartCloudSync
+                    restartCloudSync,
+                    appNotifier,
+                    onOrderConfirmedSound,
+                    onOrdersReset
                 ) as T
             }
         }

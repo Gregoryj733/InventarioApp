@@ -4,5 +4,6 @@ data class AppMeta(
     val id: Int = 1,
     val bcvRate: Double? = null,
     val bcvFetchedAt: Long? = null,
-    val lastInventoryUpdateAt: Long? = null
+    val lastInventoryUpdateAt: Long? = null,
+    val discountPercent: Double? = null
 )
