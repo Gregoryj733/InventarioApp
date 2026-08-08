@@ -72,7 +72,7 @@ fun CouponActivateScreen(
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    "Escanea el QR del carnet. El cupón comenzará su vigencia de 30 días " +
+                    "Escanea el código QR del cupón. El cupón comenzará su vigencia de 30 días " +
                         "y luego podrá usarse una sola vez en el carrito de compras.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant

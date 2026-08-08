@@ -1,7 +1,8 @@
 (function () {
   const TOKEN_KEY = "inventario_portal_token";
   const USER_KEY = "inventario_portal_user";
-  const CARNET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
+  const QR_TICKET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
+  const QR_TICKET_TITLE = "Total Care · Cupón de descuento";
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -305,7 +306,7 @@
         <td><span class="badge ${badgeClass(t.displayStatus)}">${statusLabel(t.displayStatus)}</span></td>
         <td>
           <button class="btn btn-ghost btn-sm" data-action="detail" data-code="${t.code}">Ver</button>
-          ${canManagePortal() && (t.displayStatus === "ISSUED" || t.displayStatus === "ACTIVE") ? `<button class="btn btn-ghost btn-sm" data-action="carnet" data-code="${t.code}">Carnet</button>` : ""}
+          ${canManagePortal() && (t.displayStatus === "ISSUED" || t.displayStatus === "ACTIVE") ? `<button class="btn btn-ghost btn-sm" data-action="print-qr" data-code="${t.code}">Código QR</button>` : ""}
           ${canManagePortal() && (t.displayStatus === "ISSUED" || t.displayStatus === "ACTIVE") ? `<button class="btn btn-danger btn-sm" data-action="void" data-code="${t.code}">Anular</button>` : ""}
         </td>
       </tr>
@@ -338,7 +339,7 @@
       $("#generate-success").textContent =
         `Cupón ${ticket.code} generado (${ticket.discountPercent}%). Actívalo escaneando el QR desde la app.`;
       $("#generate-success").classList.remove("hidden");
-      $("#generate-carnet-btn").classList.remove("hidden");
+      $("#generate-qr-btn").classList.remove("hidden");
       openDetail(ticket);
       await loadTickets();
     } catch (err) {
@@ -349,53 +350,109 @@
     }
   }
 
-  function printCarnet(ticket) {
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("No se pudo leer el código QR."));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function renderQrDataUrl(code) {
+    const headers = {};
+    if (state.token) headers.Authorization = `Bearer ${state.token}`;
+    const res = await fetch(`/v1/discount-tickets/${encodeURIComponent(code)}/qr`, { headers });
+    if (res.ok) {
+      return blobToDataUrl(await res.blob());
+    }
+    const data = await res.json().catch(() => ({}));
+    if (window.QRCode) {
+      return new Promise((resolve, reject) => {
+        window.QRCode.toDataURL(
+          code,
+          { width: 300, margin: 1, errorCorrectionLevel: "M" },
+          (err, url) => (err ? reject(err) : resolve(url))
+        );
+      });
+    }
+    throw new Error(data.error || "No se pudo generar el código QR.");
+  }
+
+  async function printQrCode(ticket) {
+    let qrDataUrl;
+    try {
+      qrDataUrl = await renderQrDataUrl(ticket.code);
+    } catch (err) {
+      alert(err.message || "No se pudo generar el código QR.");
+      return;
+    }
     const expiresText = ticket.expiresAt
       ? formatDate(ticket.expiresAt)
       : "Al activar (30 días)";
-    const win = window.open("", "_blank", "width=420,height=640");
+    const win = window.open("", "_blank", "width=420,height=720");
     if (!win) {
-      alert("Permite ventanas emergentes para imprimir el carnet.");
+      alert("Permite ventanas emergentes para imprimir el código QR.");
       return;
     }
     win.document.write(`
       <!DOCTYPE html>
       <html lang="es"><head>
         <meta charset="UTF-8" />
-        <title>Carnet ${escapeHtml(ticket.code)}</title>
+        <title>Código QR · ${escapeHtml(ticket.code)}</title>
         <style>
           * { box-sizing: border-box; }
-          body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; }
-          .carnet {
+          body { font-family: "Segoe UI", system-ui, sans-serif; margin: 0; padding: 16px; }
+          .qr-card {
             border: 2px dashed #2563eb;
-            border-radius: 12px;
-            padding: 16px;
-            max-width: 320px;
+            border-radius: 14px;
+            padding: 18px 14px;
+            width: 300px;
             margin: 0 auto;
             text-align: center;
           }
-          .brand { font-size: 11px; color: #64748b; letter-spacing: .08em; text-transform: uppercase; }
-          h1 { font-size: 22px; margin: 8px 0; letter-spacing: .12em; }
-          .pct { font-size: 28px; font-weight: 800; color: #059669; margin: 8px 0; }
-          .meta { font-size: 12px; color: #334155; margin: 6px 0; }
-          .validity { font-size: 11px; color: #64748b; margin-top: 12px; line-height: 1.4; }
-          #qr { margin: 12px auto; width: 160px; height: 160px; }
-          @media print { body { padding: 0; } .carnet { border-width: 1px; } }
+          .brand {
+            font-size: 12px;
+            color: #64748b;
+            font-weight: 600;
+            margin-bottom: 10px;
+            line-height: 1.35;
+          }
+          .pct { font-size: 30px; font-weight: 800; color: #059669; margin: 8px 0 12px; }
+          .qr-img {
+            display: block;
+            width: 200px;
+            height: 200px;
+            margin: 4px auto 10px;
+            image-rendering: pixelated;
+          }
+          .meta { font-size: 12px; color: #334155; margin: 5px 0; }
+          .validity {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: 10px;
+            line-height: 1.45;
+          }
+          @media print {
+            body { padding: 0; }
+            .qr-card { border-width: 1.5px; page-break-inside: avoid; }
+          }
         </style>
-        <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"><\/script>
       </head><body>
-        <div class="carnet">
-          <div class="brand">Total Care · Cupón de descuento</div>
-          <h1>${escapeHtml(ticket.code)}</h1>
+        <div class="qr-card">
+          <div class="brand">${QR_TICKET_TITLE}</div>
+          <img class="qr-img" src="${qrDataUrl}" alt="Código QR del cupón" />
           <div class="pct">-${ticket.discountPercent}%</div>
-          <canvas id="qr"></canvas>
           <div class="meta">Creado: ${formatDate(ticket.issuedAt)}</div>
           <div class="meta">Vence: ${expiresText}</div>
-          <div class="validity">${CARNET_VALIDITY_TEXT}</div>
+          <div class="validity">${QR_TICKET_VALIDITY_TEXT}</div>
         </div>
         <script>
-          QRCode.toCanvas(document.getElementById("qr"), ${JSON.stringify(ticket.code)}, { width: 160, margin: 1 }, function() {
-            setTimeout(function() { window.print(); }, 300);
+          window.addEventListener("load", function() {
+            var img = document.querySelector(".qr-img");
+            function printNow() { setTimeout(function() { window.print(); }, 250); }
+            if (img && !img.complete) img.addEventListener("load", printNow);
+            else printNow();
           });
         <\/script>
       </body></html>
@@ -418,8 +475,15 @@
     }
     state.selected = ticket;
     $("#modal-title").textContent = `Cupón ${ticket.code}`;
+    let qrBlock = '<div class="qr-wrap"><p class="muted">Generando código QR…</p></div>';
+    try {
+      const qrUrl = await renderQrDataUrl(ticket.code);
+      qrBlock = `<div class="qr-wrap"><img class="qr-preview-img" src="${qrUrl}" alt="Código QR del cupón" width="200" height="200" /></div>`;
+    } catch (err) {
+      qrBlock = `<div class="qr-wrap"><p class="error">${escapeHtml(err.message || "No se pudo generar el QR.")}</p></div>`;
+    }
     $("#modal-body").innerHTML = `
-      <div class="qr-wrap"><canvas id="qr-canvas"></canvas></div>
+      ${qrBlock}
       <div class="detail-grid">
         <div class="detail-row"><span>Descuento</span><span>${ticket.discountPercent}%</span></div>
         <div class="detail-row"><span>Estado</span><span><span class="badge ${badgeClass(ticket.displayStatus)}">${statusLabel(ticket.displayStatus)}</span></span></div>
@@ -430,7 +494,7 @@
         <div class="detail-row"><span>Canal</span><span>${ticket.issuedChannel === "APP" ? "App móvil" : "Portal web"}</span></div>
         ${ticket.usedAt ? `<div class="detail-row"><span>Usado</span><span>${formatDate(ticket.usedAt)}</span></div>` : ""}
       </div>
-      <p class="validity-note">${CARNET_VALIDITY_TEXT}</p>
+      <p class="validity-note">${QR_TICKET_VALIDITY_TEXT}</p>
       <h4>Historial</h4>
       <ul class="audit-list">
         ${(ticket.auditLog || []).map((e) => `
@@ -441,15 +505,12 @@
         `).join("")}
       </ul>
     `;
-    const printBtn = $("#modal-print-carnet");
+    const printBtn = $("#modal-print-qr");
     if (printBtn) {
       printBtn.classList.toggle("hidden", !canManagePortal());
-      printBtn.onclick = () => printCarnet(ticket);
+      printBtn.onclick = () => printQrCode(ticket);
     }
     $("#modal").classList.remove("hidden");
-    if (window.QRCode && $("#qr-canvas")) {
-      window.QRCode.toCanvas($("#qr-canvas"), ticket.code, { width: 200, margin: 2 });
-    }
   }
 
   function auditActionLabel(action) {
@@ -494,8 +555,8 @@
     if ($("#generate-form")) {
       $("#generate-form").addEventListener("submit", generateCode);
     }
-    $("#generate-carnet-btn")?.addEventListener("click", () => {
-      if (state.lastGenerated) printCarnet(state.lastGenerated);
+    $("#generate-qr-btn")?.addEventListener("click", () => {
+      if (state.lastGenerated) printQrCode(state.lastGenerated);
     });
     $("#filter-form").addEventListener("submit", (ev) => { ev.preventDefault(); loadTickets(); });
     $("#clear-filters").addEventListener("click", () => {
@@ -516,9 +577,9 @@
       if (!btn) return;
       const code = btn.dataset.code;
       if (btn.dataset.action === "detail") openDetail(code);
-      if (btn.dataset.action === "carnet") {
+      if (btn.dataset.action === "print-qr") {
         const ticket = state.tickets.find((t) => t.code === code);
-        if (ticket) printCarnet(ticket);
+        if (ticket) printQrCode(ticket);
       }
       if (btn.dataset.action === "void") voidCode(code);
     });

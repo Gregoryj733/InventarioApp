@@ -302,6 +302,13 @@ tr:hover td { background: #f8fafc; }
   margin: 16px 0;
 }
 
+.qr-preview-img {
+  display: block;
+  width: 200px;
+  height: 200px;
+  image-rendering: pixelated;
+}
+
 .audit-list {
   list-style: none;
   padding: 0;

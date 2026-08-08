@@ -3,6 +3,7 @@ const http = require("http");
 const path = require("path");
 const crypto = require("crypto");
 const multer = require("multer");
+const QRCode = require("qrcode");
 const { createStore } = require("./store");
 const auth = require("./auth");
 const { parseInventoryExcel } = require("./excelParser");
@@ -1028,6 +1029,28 @@ async function start() {
       const ticket = state.discountTickets.find((t) => t.code === code);
       if (!ticket) throw publicError("Código no encontrado", 404);
       res.json({ ticket: ticketPublicView(ticket) });
+    })
+  );
+
+  app.get(
+    "/v1/discount-tickets/:code/qr",
+    auth.requireAuth(DISCOUNT_VIEW_ROLES),
+    asyncRoute(async (req, res) => {
+      const code = String(req.params.code || "").trim().toUpperCase();
+      const state = await store.loadState();
+      const ticket = state.discountTickets.find((t) => t.code === code);
+      if (!ticket) throw publicError("Código no encontrado", 404);
+      const png = await QRCode.toBuffer(ticket.code, {
+        type: "png",
+        width: 300,
+        margin: 1,
+        errorCorrectionLevel: "M"
+      });
+      res.set({
+        "Content-Type": "image/png",
+        "Cache-Control": "private, max-age=3600"
+      });
+      res.send(png);
     })
   );
 

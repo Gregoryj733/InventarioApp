@@ -95,7 +95,7 @@ fun MainHubScreen(
             HubMenuItem(
                 destination = HubDestination.COUPON_ACTIVATE,
                 title = "Activar cupón",
-                subtitle = "Escanea el QR del carnet",
+                subtitle = "Escanea el código QR del cupón",
                 icon = Icons.Default.QrCodeScanner
             )
         )

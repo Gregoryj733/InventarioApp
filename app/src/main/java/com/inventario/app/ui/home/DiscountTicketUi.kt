@@ -203,7 +203,7 @@ fun GenerateDiscountTicketDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "Se creará un código único sin datos personales. " +
-                        "Imprímelo en carnet o comparte el QR para activarlo en tienda.",
+                        "Imprímelo como código QR o compártelo para activarlo en tienda.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 if (state.generateTicketError != null) {
@@ -243,24 +243,18 @@ fun GeneratedDiscountTicketDialog(
     val qrBitmap = remember(ticket.code) { buildTicketQrBitmap(ticket.code) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Cupón generado") },
+        title = { Text("Código QR generado") },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    ticket.code,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = BrandSuccess
-                )
                 if (qrBitmap != null) {
                     Image(
                         bitmap = qrBitmap.asImageBitmap(),
-                        contentDescription = "Código QR del ticket",
-                        modifier = Modifier.size(160.dp)
+                        contentDescription = "Código QR del cupón",
+                        modifier = Modifier.size(200.dp)
                     )
                 }
                 Text(
