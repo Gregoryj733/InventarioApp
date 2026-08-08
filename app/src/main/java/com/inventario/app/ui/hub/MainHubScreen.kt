@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PointOfSale
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -52,10 +53,12 @@ private val HubCardHeight = 176.dp
 
 enum class HubDestination {
     INVENTORY,
+    COUPON_ACTIVATE,
     CASH_CLOSING,
     REPORTS,
     USERS,
-    BATTERY_FINDER
+    BATTERY_FINDER,
+    POWER_MAXX_BATTERY
 }
 
 data class HubMenuItem(
@@ -90,6 +93,14 @@ fun MainHubScreen(
         )
         add(
             HubMenuItem(
+                destination = HubDestination.COUPON_ACTIVATE,
+                title = "Activar cupón",
+                subtitle = "Escanea el QR del carnet",
+                icon = Icons.Default.QrCodeScanner
+            )
+        )
+        add(
+            HubMenuItem(
                 destination = HubDestination.CASH_CLOSING,
                 title = "Cierre de caja",
                 subtitle = if (cashClosingAlert == CashClosingAlertType.REJECTED_RESUBMIT) {
@@ -111,6 +122,14 @@ fun MainHubScreen(
                 destination = HubDestination.BATTERY_FINDER,
                 title = "Validador\nBatería Duncan",
                 subtitle = "Encuentra la batería de tu vehículo",
+                icon = Icons.Default.BatteryChargingFull
+            )
+        )
+        add(
+            HubMenuItem(
+                destination = HubDestination.POWER_MAXX_BATTERY,
+                title = "Validador Batería\nPower Maxx",
+                subtitle = "Catálogo oficial AC Power",
                 icon = Icons.Default.BatteryChargingFull
             )
         )

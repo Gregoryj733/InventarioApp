@@ -43,6 +43,7 @@ import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import com.inventario.app.data.entity.displayStatusLabel
 import com.inventario.app.data.entity.DISCOUNT_TICKET_CONDITIONS
 import com.inventario.app.data.entity.DiscountTicket
 import com.inventario.app.ui.theme.BrandSuccess
@@ -75,12 +76,12 @@ fun DiscountTicketSection(
                 Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "Ticket ${ticket.code} · -${viewModel.formatQty(ticket.discountPercent)}%",
+                        "Cupón ${ticket.code} · -${viewModel.formatQty(ticket.discountPercent)}%",
                         fontWeight = FontWeight.SemiBold,
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        "Cliente: ${ticket.customerName}",
+                        "Estado: ${ticket.displayStatusLabel()}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -162,7 +163,7 @@ fun GenerateDiscountTicketOfferCard(
                 Icon(Icons.Default.LocalOffer, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "¿Generar ticket de descuento para el cliente?",
+                    "¿Generar cupón de descuento?",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
@@ -173,7 +174,7 @@ fun GenerateDiscountTicketOfferCard(
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                "Disponible tras confirmar el pedido. El código tendrá vigencia de 30 días.",
+                "El cupón debe activarse escaneando el QR desde «Activar cupón» en la app.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -197,23 +198,13 @@ fun GenerateDiscountTicketDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Generar ticket de descuento") },
+        title = { Text("Generar cupón") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = state.generateTicketCustomerName,
-                    onValueChange = viewModel::onGenerateTicketNameChange,
-                    label = { Text("Nombre del cliente") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = state.generateTicketCustomerPhone,
-                    onValueChange = viewModel::onGenerateTicketPhoneChange,
-                    label = { Text("Teléfono del cliente") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                    modifier = Modifier.fillMaxWidth()
+                Text(
+                    "Se creará un código único sin datos personales. " +
+                        "Imprímelo en carnet o comparte el QR para activarlo en tienda.",
+                    style = MaterialTheme.typography.bodyMedium
                 )
                 if (state.generateTicketError != null) {
                     Text(
@@ -252,7 +243,7 @@ fun GeneratedDiscountTicketDialog(
     val qrBitmap = remember(ticket.code) { buildTicketQrBitmap(ticket.code) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Ticket generado") },
+        title = { Text("Cupón generado") },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -272,17 +263,21 @@ fun GeneratedDiscountTicketDialog(
                         modifier = Modifier.size(160.dp)
                     )
                 }
-                Text("Cliente: ${ticket.customerName}", style = MaterialTheme.typography.bodyMedium)
-                Text("Teléfono: ${ticket.customerPhone}", style = MaterialTheme.typography.bodySmall)
                 Text(
                     "Descuento: ${viewModel.formatQty(ticket.discountPercent)}%",
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    "Vence: ${viewModel.formatTicketDate(ticket.expiresAt)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    "Estado: ${ticket.displayStatusLabel()}",
+                    style = MaterialTheme.typography.bodySmall
                 )
+                ticket.expiresAt?.let { expires ->
+                    Text(
+                        "Vence: ${viewModel.formatTicketDate(expires)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Text(
                     DISCOUNT_TICKET_CONDITIONS,
                     style = MaterialTheme.typography.bodySmall,

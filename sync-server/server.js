@@ -1,6 +1,7 @@
 const express = require("express");
 const http = require("http");
 const path = require("path");
+const crypto = require("crypto");
 const multer = require("multer");
 const { createStore } = require("./store");
 const auth = require("./auth");
@@ -33,15 +34,9 @@ const SALES_RESET_ROLES = ["ADMIN", "SUPERVISOR"];
 const DISCOUNT_VIEW_ROLES = ["CONSULTA", "VENTAS", "SUPERVISOR", "ADMIN"];
 // Portal web: generar, anular y administrar códigos (acceso completo).
 const DISCOUNT_MANAGE_ROLES = ["ADMIN", "SUPERVISOR"];
-// Vigencia fija de 30 días desde la emisión del ticket de descuento (ligada
-// a la compra que lo origina). El estado "expirado" no se persiste: se
-// calcula comparando expiresAt contra la hora actual, así no hace falta un
-// job en segundo plano para vencer tickets.
+// Vigencia fija de 30 días desde la activación del cupón en la app móvil.
 const DISCOUNT_TICKET_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_DISCOUNT_PERCENT = 10;
-// Sin 0/O/1/I para evitar ambigüedad al leer el código a viva voz o copiarlo a mano.
-const TICKET_CODE_CHARSET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const TICKET_CODE_LENGTH = 8;
 
 const app = express();
 app.use(express.json({ limit: "12mb" }));
@@ -152,23 +147,53 @@ function todayBoundsFrom(dateMillis) {
 }
 
 function generateTicketCode() {
-  let code = "";
-  for (let i = 0; i < TICKET_CODE_LENGTH; i += 1) {
-    code += TICKET_CODE_CHARSET[Math.floor(Math.random() * TICKET_CODE_CHARSET.length)];
+  return crypto.randomBytes(12).toString("hex").toUpperCase();
+}
+
+function normalizeTicketRecord(ticket) {
+  if (!ticket) return ticket;
+  const normalized = { ...ticket };
+  // Cupones legacy: se creaban ACTIVE con vencimiento al emitir.
+  if (normalized.status === "ACTIVE" && !normalized.activatedAt && normalized.expiresAt) {
+    normalized.activatedAt = normalized.issuedAt;
   }
-  return code;
+  if (normalized.status === "PENDING") {
+    normalized.status = "ISSUED";
+  }
+  return normalized;
 }
 
-function normalizePhone(phone) {
-  return String(phone || "").replace(/\D/g, "");
-}
-
-/** Estado legible: ACTIVE | USED | EXPIRED | VOIDED (los dos últimos derivados). */
+/** Estado persistido: ISSUED | ACTIVE | USED | VOIDED. EXPIRED es derivado. */
 function resolveTicketDisplayStatus(ticket, now = Date.now()) {
-  if (ticket.status === "VOIDED") return "VOIDED";
-  if (ticket.status === "USED") return "USED";
-  if (ticket.expiresAt <= now) return "EXPIRED";
+  const t = normalizeTicketRecord(ticket);
+  if (t.status === "VOIDED") return "VOIDED";
+  if (t.status === "USED") return "USED";
+  if (t.status === "ISSUED") return "ISSUED";
+  if (t.status === "ACTIVE") {
+    if (t.expiresAt && t.expiresAt <= now) return "EXPIRED";
+    return "ACTIVE";
+  }
+  if (t.expiresAt && t.expiresAt <= now) return "EXPIRED";
   return "ACTIVE";
+}
+
+function ticketPublicView(ticket, now = Date.now()) {
+  const normalized = normalizeTicketRecord(ticket);
+  const enriched = enrichTicket(normalized, now);
+  return {
+    code: enriched.code,
+    discountPercent: enriched.discountPercent,
+    issuedAt: enriched.issuedAt,
+    activatedAt: enriched.activatedAt || null,
+    expiresAt: enriched.expiresAt || null,
+    status: enriched.status,
+    displayStatus: enriched.displayStatus,
+    usedAt: enriched.usedAt || null,
+    usedBySaleSyncId: enriched.usedBySaleSyncId || null,
+    issuedByUsername: enriched.issuedByUsername || "",
+    issuedChannel: enriched.issuedChannel || "PORTAL",
+    auditLog: enriched.auditLog || []
+  };
 }
 
 function buildLegacyAuditLog(ticket) {
@@ -190,6 +215,14 @@ function buildLegacyAuditLog(ticket) {
       details: { saleSyncId: ticket.usedBySaleSyncId || null }
     });
   }
+  if (ticket.activatedAt) {
+    events.push({
+      action: "ACTIVATED",
+      at: ticket.activatedAt,
+      by: ticket.activatedByUsername || "",
+      details: {}
+    });
+  }
   if (ticket.status === "VOIDED" && ticket.voidedAt) {
     events.push({
       action: "VOIDED",
@@ -202,12 +235,13 @@ function buildLegacyAuditLog(ticket) {
 }
 
 function enrichTicket(ticket, now = Date.now()) {
-  const auditLog = Array.isArray(ticket.auditLog) && ticket.auditLog.length > 0
-    ? ticket.auditLog
-    : buildLegacyAuditLog(ticket);
+  const normalized = normalizeTicketRecord(ticket);
+  const auditLog = Array.isArray(normalized.auditLog) && normalized.auditLog.length > 0
+    ? normalized.auditLog
+    : buildLegacyAuditLog(normalized);
   return {
-    ...ticket,
-    displayStatus: resolveTicketDisplayStatus(ticket, now),
+    ...normalized,
+    displayStatus: resolveTicketDisplayStatus(normalized, now),
     auditLog
   };
 }
@@ -224,14 +258,9 @@ function filterDiscountTickets(tickets, query, now = Date.now()) {
   if (status) {
     result = result.filter((t) => t.displayStatus === status);
   }
-  const customer = String(query.customer || "").trim().toLowerCase();
-  if (customer) {
-    result = result.filter(
-      (t) =>
-        t.customerName.toLowerCase().includes(customer) ||
-        normalizePhone(t.customerPhone).includes(normalizePhone(customer)) ||
-        t.code.toLowerCase().includes(customer)
-    );
+  const codeQuery = String(query.code || query.customer || "").trim().toUpperCase();
+  if (codeQuery) {
+    result = result.filter((t) => t.code.includes(codeQuery));
   }
   const percent = Number(query.percent);
   if (Number.isFinite(percent) && percent > 0) {
@@ -629,15 +658,18 @@ async function start() {
           if (ticketIndex === -1) {
             throw publicError("Ticket de descuento no encontrado");
           }
-          const ticket = state.discountTickets[ticketIndex];
+          const ticket = normalizeTicketRecord(state.discountTickets[ticketIndex]);
           if (ticket.status === "VOIDED") {
-            throw publicError("Este ticket de descuento fue anulado");
+            throw publicError("Este cupón fue anulado");
+          }
+          if (ticket.status === "ISSUED") {
+            throw publicError("Este cupón aún no está activado. Escanéalo primero en «Activar cupón».");
           }
           if (ticket.status !== "ACTIVE") {
-            throw publicError("Este ticket de descuento ya fue utilizado");
+            throw publicError("Este cupón ya fue utilizado");
           }
-          if (ticket.expiresAt <= createdAt) {
-            throw publicError("Este ticket de descuento está expirado");
+          if (!ticket.expiresAt || ticket.expiresAt <= createdAt) {
+            throw publicError("Este cupón está expirado");
           }
           appliedDiscountPercent = Number(ticket.discountPercent) || 0;
           const usedTicket = appendTicketAudit(
@@ -953,38 +985,29 @@ async function start() {
     })
   );
 
-  // ---------- Tickets de descuento ----------
-  // Búsqueda por code (validación puntual), por phone (historial del cliente)
-  // o listado completo con filtros (portal Admin/Supervisor). El estado
-  // persistido es ACTIVE | USED | VOIDED; EXPIRED se calcula con expiresAt.
+  // ---------- Cupones de descuento (sin datos personales) ----------
   app.get(
     "/v1/discount-tickets",
     auth.requireAuth(),
     asyncRoute(async (req, res) => {
       const code = String(req.query.code || "").trim().toUpperCase();
-      const phone = normalizePhone(req.query.phone);
       const listAll = req.query.list === "1" || req.query.list === "true";
       const state = await store.loadState();
       const now = Date.now();
 
       if (code) {
         const ticket = state.discountTickets.find((t) => t.code === code) || null;
-        return res.json({ ticket: ticket ? enrichTicket(ticket, now) : null });
-      }
-      if (phone) {
-        const tickets = state.discountTickets
-          .filter((t) => normalizePhone(t.customerPhone) === phone)
-          .sort((a, b) => b.issuedAt - a.issuedAt)
-          .map((t) => enrichTicket(t, now));
-        return res.json({ tickets });
+        return res.json({ ticket: ticket ? ticketPublicView(ticket, now) : null });
       }
       if (listAll) {
         if (!DISCOUNT_VIEW_ROLES.includes(req.user?.role)) {
-          return res.status(403).json({ error: "No tienes permisos para listar códigos de descuento." });
+          return res.status(403).json({ error: "No tienes permisos para listar cupones de descuento." });
         }
-        const tickets = filterDiscountTickets(state.discountTickets, req.query, now);
+        const tickets = filterDiscountTickets(state.discountTickets, req.query, now)
+          .map((t) => ticketPublicView(t, now));
         const stats = {
           total: tickets.length,
+          issued: tickets.filter((t) => t.displayStatus === "ISSUED").length,
           active: tickets.filter((t) => t.displayStatus === "ACTIVE").length,
           used: tickets.filter((t) => t.displayStatus === "USED").length,
           expired: tickets.filter((t) => t.displayStatus === "EXPIRED").length,
@@ -992,7 +1015,7 @@ async function start() {
         };
         return res.json({ tickets, stats });
       }
-      throw publicError("Debes indicar code, phone o list=1");
+      throw publicError("Debes indicar code o list=1");
     })
   );
 
@@ -1004,7 +1027,7 @@ async function start() {
       const state = await store.loadState();
       const ticket = state.discountTickets.find((t) => t.code === code);
       if (!ticket) throw publicError("Código no encontrado", 404);
-      res.json({ ticket: enrichTicket(ticket) });
+      res.json({ ticket: ticketPublicView(ticket) });
     })
   );
 
@@ -1012,13 +1035,8 @@ async function start() {
     "/v1/discount-tickets",
     auth.requireAuth(DISCOUNT_MANAGE_ROLES),
     asyncRoute(async (req, res) => {
-      const customerName = String(req.body?.customerName || "").trim();
-      const customerPhone = normalizePhone(req.body?.customerPhone);
       const sourceSaleSyncId = req.body?.sourceSaleSyncId ? String(req.body.sourceSaleSyncId) : null;
       const channel = String(req.body?.channel || "PORTAL").trim().toUpperCase();
-      if (!customerName) throw publicError("El nombre del cliente es requerido");
-      if (!customerPhone) throw publicError("El teléfono del cliente es requerido");
-
       const requestedPercent = Number(req.body?.discountPercent);
       const created = await store.runTransaction(async (state) => {
         const now = Date.now();
@@ -1031,19 +1049,21 @@ async function start() {
         const existingCodes = new Set(state.discountTickets.map((t) => t.code));
         let code = generateTicketCode();
         let attempts = 0;
-        while (existingCodes.has(code) && attempts < 10) {
+        while (existingCodes.has(code) && attempts < 12) {
           code = generateTicketCode();
           attempts += 1;
+        }
+        if (existingCodes.has(code)) {
+          throw publicError("No se pudo generar un código único. Intenta de nuevo.");
         }
         let ticket = {
           id: state.nextDiscountTicketId,
           code,
-          customerName,
-          customerPhone,
           discountPercent: percent,
           issuedAt: now,
-          expiresAt: now + DISCOUNT_TICKET_TTL_MS,
-          status: "ACTIVE",
+          activatedAt: null,
+          expiresAt: null,
+          status: "ISSUED",
           usedAt: null,
           usedBySaleSyncId: null,
           usedByUsername: null,
@@ -1057,9 +1077,7 @@ async function start() {
         };
         ticket = appendTicketAudit(ticket, "CREATED", req.user?.username || "", {
           discountPercent: percent,
-          channel: ticket.issuedChannel,
-          customerName,
-          customerPhone
+          channel: ticket.issuedChannel
         });
         return {
           state: {
@@ -1072,7 +1090,50 @@ async function start() {
       });
 
       realtime.broadcast("discountTickets", {});
-      res.json(enrichTicket(created));
+      res.json(ticketPublicView(created));
+    })
+  );
+
+  app.patch(
+    "/v1/discount-tickets/:code/activate",
+    auth.requireAuth(),
+    asyncRoute(async (req, res) => {
+      const code = String(req.params.code || "").trim().toUpperCase();
+      const updated = await store.runTransaction(async (state) => {
+        const index = state.discountTickets.findIndex((t) => t.code === code);
+        if (index === -1) throw publicError("Cupón no encontrado", 404);
+        const ticket = normalizeTicketRecord(state.discountTickets[index]);
+        if (ticket.status === "VOIDED") {
+          throw publicError("Este cupón fue anulado");
+        }
+        if (ticket.status === "USED") {
+          throw publicError("Este cupón ya fue utilizado");
+        }
+        if (ticket.status === "ACTIVE") {
+          throw publicError("Este cupón ya está activo");
+        }
+        if (ticket.status !== "ISSUED") {
+          throw publicError("Este cupón no puede activarse");
+        }
+        const now = Date.now();
+        let activated = {
+          ...ticket,
+          status: "ACTIVE",
+          activatedAt: now,
+          activatedByUsername: req.user?.username || "",
+          expiresAt: now + DISCOUNT_TICKET_TTL_MS
+        };
+        activated = appendTicketAudit(
+          activated,
+          "ACTIVATED",
+          req.user?.username || "",
+          { expiresAt: activated.expiresAt }
+        );
+        const discountTickets = state.discountTickets.map((t, i) => (i === index ? activated : t));
+        return { state: { ...state, discountTickets }, result: activated };
+      });
+      realtime.broadcast("discountTickets", {});
+      res.json(ticketPublicView(updated));
     })
   );
 
@@ -1087,10 +1148,10 @@ async function start() {
         if (index === -1) throw publicError("Código no encontrado", 404);
         const ticket = state.discountTickets[index];
         if (ticket.status === "USED") {
-          throw publicError("No se puede anular un código ya utilizado");
+          throw publicError("No se puede anular un cupón ya utilizado");
         }
         if (ticket.status === "VOIDED") {
-          throw publicError("Este código ya está anulado");
+          throw publicError("Este cupón ya está anulado");
         }
         const now = Date.now();
         let voided = {
@@ -1105,7 +1166,7 @@ async function start() {
         return { state: { ...state, discountTickets }, result: voided };
       });
       realtime.broadcast("discountTickets", {});
-      res.json({ ticket: enrichTicket(updated) });
+      res.json({ ticket: ticketPublicView(updated) });
     })
   );
 

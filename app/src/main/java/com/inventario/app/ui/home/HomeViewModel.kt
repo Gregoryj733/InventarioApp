@@ -13,6 +13,8 @@ import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.canManageDiscountTickets
 import com.inventario.app.data.entity.canResetTodayOrders
+import com.inventario.app.data.entity.isRedeemable
+import com.inventario.app.data.entity.isIssued
 import com.inventario.app.data.entity.isExpired
 import com.inventario.app.data.entity.isUsed
 import com.inventario.app.data.entity.isVoided
@@ -94,8 +96,6 @@ data class HomeUiState(
     // ---- Ticket de descuento: generación tras confirmar una venta ----
     val lastConfirmedSaleSyncId: String? = null,
     val showGenerateTicketDialog: Boolean = false,
-    val generateTicketCustomerName: String = "",
-    val generateTicketCustomerPhone: String = "",
     val generatingTicket: Boolean = false,
     val generateTicketError: String? = null,
     val generatedTicket: DiscountTicket? = null
@@ -685,10 +685,14 @@ class HomeViewModel(
             inventoryRepository.findDiscountTicket(trimmed)
                 .onSuccess { ticket ->
                     val errorMessage = when {
-                        ticket == null -> "Ticket no encontrado. Verifica el código."
-                        ticket.isVoided() -> "Este ticket fue anulado."
-                        ticket.isUsed() -> "Este ticket ya fue utilizado."
-                        ticket.isExpired() -> "Este ticket expiró el ${formatTicketDate(ticket.expiresAt)}."
+                        ticket == null -> "Cupón no encontrado. Verifica el código."
+                        ticket.isVoided() -> "Este cupón fue anulado."
+                        ticket.isUsed() -> "Este cupón ya fue utilizado."
+                        ticket.isIssued() -> "Este cupón no está activado. Usa «Activar cupón» en el menú principal."
+                        ticket.isExpired() -> ticket.expiresAt?.let {
+                            "Este cupón expiró el ${formatTicketDate(it)}."
+                        } ?: "Este cupón no está activo."
+                        !ticket.isRedeemable() -> "Este cupón no puede aplicarse."
                         else -> null
                     }
                     if (errorMessage != null) {
@@ -705,7 +709,7 @@ class HomeViewModel(
                             )
                         }
                         AppSnackbarController.show(
-                            "Descuento de ${formatQty(ticket!!.discountPercent)}% aplicado (${ticket.customerName})."
+                            "Descuento de ${formatQty(ticket!!.discountPercent)}% aplicado (cupón ${ticket.code})."
                         )
                     }
                 }
@@ -734,12 +738,7 @@ class HomeViewModel(
 
     fun openGenerateTicketDialog() {
         _state.update {
-            it.copy(
-                showGenerateTicketDialog = true,
-                generateTicketCustomerName = "",
-                generateTicketCustomerPhone = "",
-                generateTicketError = null
-            )
+            it.copy(showGenerateTicketDialog = true, generateTicketError = null)
         }
     }
 
@@ -751,34 +750,14 @@ class HomeViewModel(
         _state.update { it.copy(lastConfirmedSaleSyncId = null) }
     }
 
-    fun onGenerateTicketNameChange(value: String) {
-        _state.update { it.copy(generateTicketCustomerName = value, generateTicketError = null) }
-    }
-
-    fun onGenerateTicketPhoneChange(value: String) {
-        _state.update { it.copy(generateTicketCustomerPhone = value, generateTicketError = null) }
-    }
-
     fun submitGenerateTicket() {
         if (!_state.value.role.canManageDiscountTickets()) {
-            _state.update { it.copy(generateTicketError = "No tienes permisos para generar tickets.") }
-            return
-        }
-        val name = _state.value.generateTicketCustomerName.trim()
-        val phone = _state.value.generateTicketCustomerPhone.trim()
-        if (name.isEmpty()) {
-            _state.update { it.copy(generateTicketError = "Ingresa el nombre del cliente.") }
-            return
-        }
-        if (phone.isEmpty()) {
-            _state.update { it.copy(generateTicketError = "Ingresa el teléfono del cliente.") }
+            _state.update { it.copy(generateTicketError = "No tienes permisos para generar cupones.") }
             return
         }
         viewModelScope.launch {
             _state.update { it.copy(generatingTicket = true, generateTicketError = null) }
             inventoryRepository.issueDiscountTicket(
-                customerName = name,
-                customerPhone = phone,
                 sourceSaleSyncId = _state.value.lastConfirmedSaleSyncId
             ).onSuccess { ticket ->
                 _state.update {
@@ -789,12 +768,12 @@ class HomeViewModel(
                         lastConfirmedSaleSyncId = null
                     )
                 }
-                AppSnackbarController.show("Ticket ${ticket.code} generado para ${ticket.customerName}.")
+                AppSnackbarController.show("Cupón ${ticket.code} generado. Actívalo escaneando el QR.")
             }.onFailure { err ->
                 _state.update {
                     it.copy(
                         generatingTicket = false,
-                        generateTicketError = err.toUserMessage("No se pudo generar el ticket.")
+                        generateTicketError = err.toUserMessage("No se pudo generar el cupón.")
                     )
                 }
             }
@@ -808,12 +787,10 @@ class HomeViewModel(
     fun generatedTicketShareText(): String? {
         val ticket = _state.value.generatedTicket ?: return null
         return buildString {
-            appendLine("Código de descuento Total Care")
-            appendLine("Cliente: ${ticket.customerName}")
-            appendLine("Teléfono: ${ticket.customerPhone}")
+            appendLine("Cupón de descuento Total Care")
             appendLine("Código: ${ticket.code}")
             appendLine("Descuento: ${formatQty(ticket.discountPercent)}%")
-            appendLine("Válido hasta: ${formatTicketDate(ticket.expiresAt)}")
+            ticket.expiresAt?.let { appendLine("Válido hasta: ${formatTicketDate(it)}") }
             appendLine()
             append(com.inventario.app.data.entity.DISCOUNT_TICKET_CONDITIONS)
         }
@@ -866,7 +843,7 @@ class HomeViewModel(
             if (ticket != null) {
                 appendLine("Subtotal USD: ${formatPrice(subtotalUsd)}")
                 appendLine(
-                    "Descuento (${ticket.customerName} · -${formatQty(ticket.discountPercent)}%): " +
+                    "Descuento (cupón ${ticket.code} · -${formatQty(ticket.discountPercent)}%): " +
                         "-${formatPrice(discountUsd)}"
                 )
             }

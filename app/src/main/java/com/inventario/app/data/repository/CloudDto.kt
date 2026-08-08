@@ -277,12 +277,12 @@ internal fun JSONArray.toUserList(): List<User> {
 
 internal fun JSONObject.toDiscountTicket(): DiscountTicket = DiscountTicket(
     code = optString("code"),
-    customerName = optString("customerName"),
-    customerPhone = optString("customerPhone"),
     discountPercent = optDouble("discountPercent", 0.0),
     issuedAt = optLong("issuedAt"),
-    expiresAt = optLong("expiresAt"),
-    status = optString("status", "ACTIVE"),
+    activatedAt = optLongOrNull("activatedAt"),
+    expiresAt = optLongOrNull("expiresAt"),
+    status = optString("status", "ISSUED"),
+    displayStatus = optString("displayStatus", optString("status", "ISSUED")),
     usedAt = optLongOrNull("usedAt"),
     usedBySaleSyncId = optString("usedBySaleSyncId").takeIf { it.isNotBlank() },
     issuedByUsername = optString("issuedByUsername"),

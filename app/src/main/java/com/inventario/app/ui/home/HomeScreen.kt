@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -290,6 +291,20 @@ fun HomeScreen(
                         onSearch = viewModel::runSearch,
                         onClear = viewModel::clearSearch
                     )
+                }
+
+                if (state.role.canManageDiscountTickets()) {
+                    item(key = "discount_generate_entry") {
+                        OutlinedButton(
+                            onClick = viewModel::openGenerateTicketDialog,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.LocalOffer, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Generar cupón de descuento")
+                        }
+                    }
                 }
 
                 if (state.suggestions.isNotEmpty()) {

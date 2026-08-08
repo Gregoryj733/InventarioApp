@@ -33,6 +33,8 @@ import com.inventario.app.ui.batteryfinder.BatteryFinderScreen
 import com.inventario.app.ui.batteryfinder.BatteryFinderViewModel
 import com.inventario.app.ui.powermaxx.PowerMaxxBatteryScreen
 import com.inventario.app.ui.powermaxx.PowerMaxxBatteryViewModel
+import com.inventario.app.ui.coupon.CouponActivateScreen
+import com.inventario.app.ui.coupon.CouponActivateViewModel
 import com.inventario.app.ui.cashclosing.CashClosingScreen
 import com.inventario.app.ui.cashclosing.CashClosingViewModel
 import com.inventario.app.ui.home.HomeScreen
@@ -82,6 +84,7 @@ class MainActivity : ComponentActivity() {
 private enum class AppScreen {
     HUB,
     INVENTORY,
+    COUPON_ACTIVATE,
     CASH_CLOSING,
     REPORTS,
     USERS,
@@ -217,6 +220,7 @@ private fun InventarioRoot(app: InventarioApplication) {
                     onNavigate = { destination ->
                         currentScreen = when (destination) {
                             HubDestination.INVENTORY -> AppScreen.INVENTORY
+                            HubDestination.COUPON_ACTIVATE -> AppScreen.COUPON_ACTIVATE
                             HubDestination.CASH_CLOSING -> AppScreen.CASH_CLOSING
                             HubDestination.REPORTS -> AppScreen.REPORTS
                             HubDestination.USERS -> AppScreen.USERS
@@ -244,6 +248,18 @@ private fun InventarioRoot(app: InventarioApplication) {
                 )
                 HomeScreen(
                     viewModel = homeVm,
+                    subtitle = subtitle,
+                    onBack = { currentScreen = AppScreen.HUB },
+                    onLogout = logoutAndNotify
+                )
+            }
+            AppScreen.COUPON_ACTIVATE -> {
+                val couponVm: CouponActivateViewModel = viewModel(
+                    key = "coupon_activate_$loginSessionKey",
+                    factory = CouponActivateViewModel.factory(app.inventoryRepository)
+                )
+                CouponActivateScreen(
+                    viewModel = couponVm,
                     subtitle = subtitle,
                     onBack = { currentScreen = AppScreen.HUB },
                     onLogout = logoutAndNotify

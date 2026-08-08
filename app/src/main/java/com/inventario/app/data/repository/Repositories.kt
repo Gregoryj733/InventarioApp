@@ -306,22 +306,28 @@ class InventoryRepository(
         }
     }
 
-    /** Emite un ticket de descuento en el servidor (Supervisor/Admin). */
+    /** Emite un cupón en el servidor (Supervisor/Admin). Sin datos personales. */
     suspend fun issueDiscountTicket(
-        customerName: String,
-        customerPhone: String,
         sourceSaleSyncId: String? = null,
         discountPercent: Double? = null
     ): Result<DiscountTicket> = withContext(Dispatchers.IO) {
         runCatching {
             val body = JSONObject().apply {
-                put("customerName", customerName.trim())
-                put("customerPhone", customerPhone.trim())
                 put("channel", "APP")
                 sourceSaleSyncId?.let { put("sourceSaleSyncId", it) }
                 discountPercent?.let { put("discountPercent", it) }
             }
             cloudSync.postJson("/v1/discount-tickets", body).toDiscountTicket()
+        }
+    }
+
+    /** Activa un cupón escaneado (primer uso desde la app). */
+    suspend fun activateDiscountTicket(code: String): Result<DiscountTicket> = withContext(Dispatchers.IO) {
+        runCatching {
+            cloudSync.patchJson(
+                "/v1/discount-tickets/${code.trim().uppercase()}/activate",
+                JSONObject()
+            ).toDiscountTicket()
         }
     }
 

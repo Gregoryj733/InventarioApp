@@ -1,6 +1,7 @@
 (function () {
   const TOKEN_KEY = "inventario_portal_token";
   const USER_KEY = "inventario_portal_user";
+  const CARNET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -14,6 +15,7 @@
     tickets: [],
     stats: null,
     selected: null,
+    lastGenerated: null,
     loading: false,
     ws: null
   };
@@ -40,6 +42,7 @@
 
   function statusLabel(s) {
     return {
+      ISSUED: "Sin activar",
       ACTIVE: "Activo",
       USED: "Usado",
       EXPIRED: "Expirado",
@@ -49,6 +52,7 @@
 
   function badgeClass(s) {
     return {
+      ISSUED: "badge-issued",
       ACTIVE: "badge-active",
       USED: "badge-used",
       EXPIRED: "badge-expired",
@@ -131,9 +135,7 @@
       try {
         const msg = JSON.parse(ev.data);
         if (msg.type === "discountTickets") scheduleRefresh();
-      } catch (_) {
-        // Ignorar mensajes no JSON.
-      }
+      } catch (_) {}
     };
     ws.onclose = () => {
       setLiveStatus(false);
@@ -191,7 +193,7 @@
   function applyAuthPayload(data) {
     const permissions = resolvePortalPermissions(data);
     if (!permissions.canViewDiscounts) {
-      throw new Error("Tu perfil no tiene acceso al portal de descuentos.");
+      throw new Error("Tu perfil no tiene acceso al portal de cupones.");
     }
     saveSession(state.token, data.user, permissions);
   }
@@ -228,10 +230,7 @@
       connectRealtime();
       await loadTickets();
     } catch (err) {
-      const message = err.message || "No se pudo iniciar sesión.";
-      $("#login-error").textContent = message.includes("Credenciales")
-        ? `${message} (usuario Ventas: venta / venta)`
-        : message;
+      $("#login-error").textContent = err.message || "No se pudo iniciar sesión.";
       $("#login-error").classList.remove("hidden");
     } finally {
       btn.disabled = false;
@@ -241,12 +240,12 @@
   function buildQuery() {
     const params = new URLSearchParams({ list: "1" });
     const status = $("#filter-status").value;
-    const customer = $("#filter-customer").value.trim();
+    const code = $("#filter-code").value.trim();
     const percent = $("#filter-percent").value;
     const issuedStart = $("#filter-start").value;
     const issuedEnd = $("#filter-end").value;
     if (status) params.set("status", status);
-    if (customer) params.set("customer", customer);
+    if (code) params.set("code", code);
     if (percent) params.set("percent", percent);
     if (issuedStart) params.set("issuedStart", String(new Date(issuedStart).getTime()));
     if (issuedEnd) {
@@ -268,11 +267,10 @@
       renderStats();
       renderTable();
     } catch (err) {
-      $("#table-body").innerHTML = `<tr><td colspan="8" class="empty">${err.message}</td></tr>`;
+      $("#table-body").innerHTML = `<tr><td colspan="7" class="empty">${err.message}</td></tr>`;
     } finally {
       if (!silent) state.loading = false;
       if (!silent) $("#refresh-btn").disabled = false;
-      // Si hay un detalle abierto, refrescarlo tras un evento en vivo.
       if (state.selected?.code) {
         const updated = state.tickets.find((t) => t.code === state.selected.code);
         if (updated) openDetail(updated);
@@ -284,6 +282,7 @@
     const s = state.stats;
     if (!s) return;
     $("#stat-total").textContent = s.total;
+    $("#stat-issued").textContent = s.issued ?? 0;
     $("#stat-active").textContent = s.active;
     $("#stat-used").textContent = s.used;
     $("#stat-expired").textContent = s.expired;
@@ -293,21 +292,21 @@
   function renderTable() {
     const tbody = $("#table-body");
     if (!state.tickets.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty">No hay códigos que coincidan con los filtros.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">No hay cupones que coincidan con los filtros.</td></tr>';
       return;
     }
     tbody.innerHTML = state.tickets.map((t) => `
       <tr>
         <td class="code-cell">${t.code}</td>
-        <td>${escapeHtml(t.customerName)}</td>
-        <td>${escapeHtml(t.customerPhone)}</td>
         <td>${t.discountPercent}%</td>
         <td>${formatDate(t.issuedAt)}</td>
+        <td>${formatDate(t.activatedAt)}</td>
         <td>${formatDate(t.expiresAt)}</td>
         <td><span class="badge ${badgeClass(t.displayStatus)}">${statusLabel(t.displayStatus)}</span></td>
         <td>
           <button class="btn btn-ghost btn-sm" data-action="detail" data-code="${t.code}">Ver</button>
-          ${canManagePortal() && t.displayStatus === "ACTIVE" ? `<button class="btn btn-danger btn-sm" data-action="void" data-code="${t.code}">Anular</button>` : ""}
+          ${canManagePortal() && (t.displayStatus === "ISSUED" || t.displayStatus === "ACTIVE") ? `<button class="btn btn-ghost btn-sm" data-action="carnet" data-code="${t.code}">Carnet</button>` : ""}
+          ${canManagePortal() && (t.displayStatus === "ISSUED" || t.displayStatus === "ACTIVE") ? `<button class="btn btn-danger btn-sm" data-action="void" data-code="${t.code}">Anular</button>` : ""}
         </td>
       </tr>
     `).join("");
@@ -331,16 +330,15 @@
       const ticket = await api("/v1/discount-tickets", {
         method: "POST",
         body: JSON.stringify({
-          customerName: $("#gen-name").value.trim(),
-          customerPhone: $("#gen-phone").value.trim(),
           discountPercent: Number($("#gen-percent").value),
           channel: "PORTAL"
         })
       });
-      $("#generate-success").textContent = `Código ${ticket.code} generado (${ticket.discountPercent}% · válido hasta ${formatDate(ticket.expiresAt)}).`;
+      state.lastGenerated = ticket;
+      $("#generate-success").textContent =
+        `Cupón ${ticket.code} generado (${ticket.discountPercent}%). Actívalo escaneando el QR desde la app.`;
       $("#generate-success").classList.remove("hidden");
-      $("#gen-name").value = "";
-      $("#gen-phone").value = "";
+      $("#generate-carnet-btn").classList.remove("hidden");
       openDetail(ticket);
       await loadTickets();
     } catch (err) {
@@ -349,6 +347,60 @@
     } finally {
       btn.disabled = false;
     }
+  }
+
+  function printCarnet(ticket) {
+    const expiresText = ticket.expiresAt
+      ? formatDate(ticket.expiresAt)
+      : "Al activar (30 días)";
+    const win = window.open("", "_blank", "width=420,height=640");
+    if (!win) {
+      alert("Permite ventanas emergentes para imprimir el carnet.");
+      return;
+    }
+    win.document.write(`
+      <!DOCTYPE html>
+      <html lang="es"><head>
+        <meta charset="UTF-8" />
+        <title>Carnet ${escapeHtml(ticket.code)}</title>
+        <style>
+          * { box-sizing: border-box; }
+          body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; }
+          .carnet {
+            border: 2px dashed #2563eb;
+            border-radius: 12px;
+            padding: 16px;
+            max-width: 320px;
+            margin: 0 auto;
+            text-align: center;
+          }
+          .brand { font-size: 11px; color: #64748b; letter-spacing: .08em; text-transform: uppercase; }
+          h1 { font-size: 22px; margin: 8px 0; letter-spacing: .12em; }
+          .pct { font-size: 28px; font-weight: 800; color: #059669; margin: 8px 0; }
+          .meta { font-size: 12px; color: #334155; margin: 6px 0; }
+          .validity { font-size: 11px; color: #64748b; margin-top: 12px; line-height: 1.4; }
+          #qr { margin: 12px auto; width: 160px; height: 160px; }
+          @media print { body { padding: 0; } .carnet { border-width: 1px; } }
+        </style>
+        <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"><\/script>
+      </head><body>
+        <div class="carnet">
+          <div class="brand">Total Care · Cupón de descuento</div>
+          <h1>${escapeHtml(ticket.code)}</h1>
+          <div class="pct">-${ticket.discountPercent}%</div>
+          <canvas id="qr"></canvas>
+          <div class="meta">Creado: ${formatDate(ticket.issuedAt)}</div>
+          <div class="meta">Vence: ${expiresText}</div>
+          <div class="validity">${CARNET_VALIDITY_TEXT}</div>
+        </div>
+        <script>
+          QRCode.toCanvas(document.getElementById("qr"), ${JSON.stringify(ticket.code)}, { width: 160, margin: 1 }, function() {
+            setTimeout(function() { window.print(); }, 300);
+          });
+        <\/script>
+      </body></html>
+    `);
+    win.document.close();
   }
 
   async function openDetail(ticketOrCode) {
@@ -365,33 +417,35 @@
       }
     }
     state.selected = ticket;
-    $("#modal-title").textContent = `Código ${ticket.code}`;
+    $("#modal-title").textContent = `Cupón ${ticket.code}`;
     $("#modal-body").innerHTML = `
       <div class="qr-wrap"><canvas id="qr-canvas"></canvas></div>
       <div class="detail-grid">
-        <div class="detail-row"><span>Cliente</span><span>${escapeHtml(ticket.customerName)}</span></div>
-        <div class="detail-row"><span>Teléfono</span><span>${escapeHtml(ticket.customerPhone)}</span></div>
         <div class="detail-row"><span>Descuento</span><span>${ticket.discountPercent}%</span></div>
         <div class="detail-row"><span>Estado</span><span><span class="badge ${badgeClass(ticket.displayStatus)}">${statusLabel(ticket.displayStatus)}</span></span></div>
-        <div class="detail-row"><span>Emitido</span><span>${formatDate(ticket.issuedAt)}</span></div>
+        <div class="detail-row"><span>Creado</span><span>${formatDate(ticket.issuedAt)}</span></div>
+        <div class="detail-row"><span>Activado</span><span>${formatDate(ticket.activatedAt)}</span></div>
         <div class="detail-row"><span>Vence</span><span>${formatDate(ticket.expiresAt)}</span></div>
         <div class="detail-row"><span>Emitido por</span><span>${escapeHtml(ticket.issuedByUsername || "—")}</span></div>
         <div class="detail-row"><span>Canal</span><span>${ticket.issuedChannel === "APP" ? "App móvil" : "Portal web"}</span></div>
         ${ticket.usedAt ? `<div class="detail-row"><span>Usado</span><span>${formatDate(ticket.usedAt)}</span></div>` : ""}
-        ${ticket.usedBySaleSyncId ? `<div class="detail-row"><span>Venta</span><span>${escapeHtml(ticket.usedBySaleSyncId)}</span></div>` : ""}
       </div>
+      <p class="validity-note">${CARNET_VALIDITY_TEXT}</p>
       <h4>Historial</h4>
       <ul class="audit-list">
         ${(ticket.auditLog || []).map((e) => `
           <li>
             <strong>${auditActionLabel(e.action)}</strong> · ${formatDate(e.at)}
             ${e.by ? ` · ${escapeHtml(e.by)}` : ""}
-            ${e.details?.reason ? `<br><em>${escapeHtml(e.details.reason)}</em>` : ""}
-            ${e.details?.saleSyncId ? `<br>Venta: ${escapeHtml(e.details.saleSyncId)}` : ""}
           </li>
         `).join("")}
       </ul>
     `;
+    const printBtn = $("#modal-print-carnet");
+    if (printBtn) {
+      printBtn.classList.toggle("hidden", !canManagePortal());
+      printBtn.onclick = () => printCarnet(ticket);
+    }
     $("#modal").classList.remove("hidden");
     if (window.QRCode && $("#qr-canvas")) {
       window.QRCode.toCanvas($("#qr-canvas"), ticket.code, { width: 200, margin: 2 });
@@ -399,7 +453,12 @@
   }
 
   function auditActionLabel(action) {
-    return { CREATED: "Creado", USED: "Canjeado", VOIDED: "Anulado" }[action] || action;
+    return {
+      CREATED: "Creado",
+      ACTIVATED: "Activado",
+      USED: "Canjeado",
+      VOIDED: "Anulado"
+    }[action] || action;
   }
 
   function closeModal() {
@@ -435,10 +494,13 @@
     if ($("#generate-form")) {
       $("#generate-form").addEventListener("submit", generateCode);
     }
+    $("#generate-carnet-btn")?.addEventListener("click", () => {
+      if (state.lastGenerated) printCarnet(state.lastGenerated);
+    });
     $("#filter-form").addEventListener("submit", (ev) => { ev.preventDefault(); loadTickets(); });
     $("#clear-filters").addEventListener("click", () => {
       $("#filter-status").value = "";
-      $("#filter-customer").value = "";
+      $("#filter-code").value = "";
       $("#filter-percent").value = "";
       $("#filter-start").value = "";
       $("#filter-end").value = "";
@@ -454,6 +516,10 @@
       if (!btn) return;
       const code = btn.dataset.code;
       if (btn.dataset.action === "detail") openDetail(code);
+      if (btn.dataset.action === "carnet") {
+        const ticket = state.tickets.find((t) => t.code === code);
+        if (ticket) printCarnet(ticket);
+      }
       if (btn.dataset.action === "void") voidCode(code);
     });
   }

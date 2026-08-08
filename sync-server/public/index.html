@@ -3,18 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Portal de Códigos de Descuento · InventarioApp</title>
+  <title>Portal de Cupones · InventarioApp</title>
   <link rel="stylesheet" href="styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js" defer></script>
-  <script src="app.js?v=2" defer></script>
+  <script src="app.js?v=3" defer></script>
 </head>
 <body>
   <div id="app">
-    <!-- Login -->
     <section id="login-view" class="login-wrap">
       <div class="login-card">
-        <h1>Códigos de descuento</h1>
-        <p>Portal de códigos de descuento. Perfiles Ventas y Consulta: solo lectura. Supervisor y Admin: gestión completa.</p>
+        <h1>Cupones de descuento</h1>
+        <p>Sin datos personales. Los cupones se activan escaneando el QR desde la app móvil.</p>
         <div id="login-error" class="alert alert-error hidden"></div>
         <form id="login-form">
           <div class="field">
@@ -32,13 +31,13 @@
       </div>
     </section>
 
-    <!-- Main -->
     <section id="main-view" class="shell hidden">
       <header class="topbar">
         <div>
-          <h1>Portal de códigos de descuento</h1>
+          <h1>Portal de cupones</h1>
           <div class="topbar-meta">
-            Vigencia máxima: 30 días · <span id="access-mode" class="access-mode hidden"></span>
+            Vigencia: 30 días desde activación en app ·
+            <span id="access-mode" class="access-mode hidden"></span>
             <span id="live-status" class="live-dot live-off">Reconectando…</span>
           </div>
         </div>
@@ -51,6 +50,7 @@
 
       <div class="stats">
         <div class="stat-card"><div class="label">Total</div><div id="stat-total" class="value">0</div></div>
+        <div class="stat-card"><div class="label">Sin activar</div><div id="stat-issued" class="value">0</div></div>
         <div class="stat-card"><div class="label">Activos</div><div id="stat-active" class="value">0</div></div>
         <div class="stat-card"><div class="label">Usados</div><div id="stat-used" class="value">0</div></div>
         <div class="stat-card"><div class="label">Expirados</div><div id="stat-expired" class="value">0</div></div>
@@ -58,24 +58,17 @@
       </div>
 
       <div id="generate-panel" class="panel">
-        <h2>Generar código</h2>
+        <h2>Generar cupón</h2>
         <div id="generate-error" class="alert alert-error hidden"></div>
         <div id="generate-success" class="alert alert-success hidden"></div>
         <form id="generate-form" class="grid-2">
           <div class="field">
-            <label for="gen-name">Nombre del cliente</label>
-            <input id="gen-name" type="text" required placeholder="Ej. María Pérez" />
-          </div>
-          <div class="field">
-            <label for="gen-phone">Teléfono del cliente</label>
-            <input id="gen-phone" type="tel" required placeholder="Ej. 04141234567" />
-          </div>
-          <div class="field">
             <label for="gen-percent">Porcentaje de descuento (%)</label>
             <input id="gen-percent" type="number" min="1" max="100" step="0.5" value="10" required />
           </div>
-          <div class="field" style="display:flex;align-items:flex-end;">
-            <button id="generate-btn" type="submit" class="btn btn-primary" style="width:100%;">Generar código</button>
+          <div class="field" style="display:flex;align-items:flex-end;gap:8px;">
+            <button id="generate-btn" type="submit" class="btn btn-primary" style="flex:1;">Generar cupón</button>
+            <button id="generate-carnet-btn" type="button" class="btn btn-ghost hidden" style="flex:1;">Imprimir carnet</button>
           </div>
         </form>
       </div>
@@ -84,13 +77,14 @@
         <h2 id="list-panel-title">Gestión y seguimiento</h2>
         <form id="filter-form" class="grid-2" style="margin-bottom:16px;">
           <div class="field">
-            <label for="filter-customer">Buscar (cliente, teléfono o código)</label>
-            <input id="filter-customer" type="search" placeholder="Buscar…" />
+            <label for="filter-code">Buscar por código</label>
+            <input id="filter-code" type="search" placeholder="Código del cupón…" />
           </div>
           <div class="field">
             <label for="filter-status">Estado</label>
             <select id="filter-status">
               <option value="">Todos</option>
+              <option value="ISSUED">Sin activar</option>
               <option value="ACTIVE">Activo</option>
               <option value="USED">Usado</option>
               <option value="EXPIRED">Expirado</option>
@@ -102,11 +96,11 @@
             <input id="filter-percent" type="number" min="1" max="100" step="0.5" placeholder="Ej. 10" />
           </div>
           <div class="field">
-            <label for="filter-start">Emitido desde</label>
+            <label for="filter-start">Creado desde</label>
             <input id="filter-start" type="date" />
           </div>
           <div class="field">
-            <label for="filter-end">Emitido hasta</label>
+            <label for="filter-end">Creado hasta</label>
             <input id="filter-end" type="date" />
           </div>
           <div class="field" style="display:flex;align-items:flex-end;gap:8px;">
@@ -120,29 +114,28 @@
             <thead>
               <tr>
                 <th>Código</th>
-                <th>Cliente</th>
-                <th>Teléfono</th>
                 <th>%</th>
-                <th>Emitido</th>
+                <th>Creado</th>
+                <th>Activado</th>
                 <th>Vence</th>
                 <th>Estado</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="table-body">
-              <tr><td colspan="8" class="empty">Cargando…</td></tr>
+              <tr><td colspan="7" class="empty">Cargando…</td></tr>
             </tbody>
           </table>
         </div>
       </div>
     </section>
 
-    <!-- Modal detalle -->
     <div id="modal" class="modal-backdrop hidden">
       <div class="modal" id="modal-backdrop">
         <h3 id="modal-title">Detalle</h3>
         <div id="modal-body"></div>
         <div class="actions-row">
+          <button id="modal-print-carnet" class="btn btn-primary hidden">Imprimir carnet</button>
           <button id="modal-close" class="btn btn-ghost">Cerrar</button>
         </div>
       </div>

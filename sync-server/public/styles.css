@@ -226,6 +226,7 @@ tr:hover td { background: #f8fafc; }
   text-transform: uppercase;
 }
 
+.badge-issued { background: #e0e7ff; color: #4338ca; }
 .badge-active { background: #d1fae5; color: var(--success); }
 .badge-used { background: #e2e8f0; color: #475569; }
 .badge-expired { background: #ffedd5; color: var(--warning); }
@@ -314,6 +315,13 @@ tr:hover td { background: #f8fafc; }
 }
 
 .audit-list li:last-child { border-bottom: none; }
+
+.validity-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 12px 0;
+  line-height: 1.4;
+}
 
 .empty {
   text-align: center;
