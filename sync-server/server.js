@@ -75,7 +75,6 @@ app.get("/", (_req, res) => {
 // Portal web: se sirve ANTES del chequeo de X-Api-Key para que el navegador
 // pueda cargar HTML/CSS/JS sin credenciales de dispositivo.
 const portalDir = path.join(__dirname, "public");
-app.get("/portal", (_req, res) => res.redirect(301, "/portal/"));
 app.use("/portal", express.static(portalDir, { index: "index.html", fallthrough: false }));
 
 function isPublicHttpPath(req) {
