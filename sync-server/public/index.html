@@ -7,8 +7,8 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Portal de Cupones · InventarioApp</title>
-  <link rel="stylesheet" href="styles.css?v=15" />
-  <script src="app.js?v=15" defer></script>
+  <link rel="stylesheet" href="styles.css?v=16" />
+  <script src="app.js?v=16" defer></script>
 </head>
 <body>
   <div id="app">
@@ -173,6 +173,43 @@
           <button id="modal-print-qr" class="btn btn-primary hidden">Imprimir QR</button>
           <button id="modal-delete" class="btn btn-danger hidden">Eliminar</button>
           <button id="modal-close" class="btn btn-ghost">Cerrar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="print-qty-modal" class="modal-backdrop hidden">
+      <div class="modal" id="print-qty-modal-backdrop">
+        <h3>¿Cuántos cupones desea generar?</h3>
+        <p class="print-qty-hint">
+          Se imprimirán en una hoja <strong>Carta (Letter)</strong> con tamaño carnet fijo.
+          Cada cupón tendrá un código QR único.
+        </p>
+        <div class="print-qty-options" role="radiogroup" aria-label="Cantidad de cupones">
+          <label class="print-qty-option">
+            <input type="radio" name="print-qty" value="1" checked />
+            <span>1 cupón</span>
+          </label>
+          <label class="print-qty-option">
+            <input type="radio" name="print-qty" value="2" />
+            <span>2 cupones</span>
+          </label>
+          <label class="print-qty-option">
+            <input type="radio" name="print-qty" value="4" />
+            <span>4 cupones</span>
+          </label>
+          <label class="print-qty-option">
+            <input type="radio" name="print-qty" value="6" />
+            <span>6 cupones</span>
+          </label>
+          <label class="print-qty-option">
+            <input type="radio" name="print-qty" value="8" />
+            <span>8 cupones</span>
+          </label>
+        </div>
+        <div id="print-qty-error" class="alert alert-error hidden"></div>
+        <div class="actions-row">
+          <button id="print-qty-confirm" type="button" class="btn btn-primary">Generar e imprimir</button>
+          <button id="print-qty-cancel" type="button" class="btn btn-ghost">Cancelar</button>
         </div>
       </div>
     </div>

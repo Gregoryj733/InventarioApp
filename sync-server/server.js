@@ -74,7 +74,7 @@ app.get("/", (_req, res) => {
 // Portal web: se sirve ANTES del chequeo de X-Api-Key para que el navegador
 // pueda cargar HTML/CSS/JS sin credenciales de dispositivo.
 const portalDir = path.join(__dirname, "public");
-const PORTAL_BUILD_VERSION = "15";
+const PORTAL_BUILD_VERSION = "16";
 
 app.get("/portal/build.json", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");

@@ -446,6 +446,49 @@ tr:hover td { background: #f8fafc; }
   color: var(--muted);
 }
 
+.print-qty-hint {
+  margin: 0 0 16px;
+  font-size: 0.9rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.print-qty-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.print-qty-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: border-color .15s, background .15s;
+}
+
+.print-qty-option:hover {
+  border-color: var(--primary);
+  background: rgba(37, 99, 235, 0.04);
+}
+
+.print-qty-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.print-qty-option:has(input:checked) {
+  border-color: var(--primary);
+  background: rgba(37, 99, 235, 0.08);
+}
+
 @media (max-width: 640px) {
   .topbar { flex-direction: column; align-items: flex-start; }
 }

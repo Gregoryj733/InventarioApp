@@ -4,8 +4,19 @@
   const QR_TICKET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
   const QR_TICKET_TITLE = "Total Care · Cupón de descuento";
   const DEFAULT_CUSTOMER_PHONE = "00000000000";
-  const PORTAL_UI_VERSION = "15";
+  const PORTAL_UI_VERSION = "16";
   const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
+  const PRINT_QUANTITY_OPTIONS = [1, 2, 4, 6, 8];
+  const CARNET_WIDTH_IN = 2.125;
+  const CARNET_HEIGHT_IN = 3.375;
+  const SHEET_GAP_IN = 0.12;
+  const PRINT_LAYOUTS = {
+    1: { cols: 1, rows: 1, orientation: "portrait" },
+    2: { cols: 2, rows: 1, orientation: "portrait" },
+    4: { cols: 2, rows: 2, orientation: "portrait" },
+    6: { cols: 3, rows: 2, orientation: "portrait" },
+    8: { cols: 4, rows: 2, orientation: "landscape" }
+  };
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -23,6 +34,7 @@
     selected: null,
     lastGenerated: null,
     pendingDeleteCode: null,
+    printContext: null,
     loading: false,
     ws: null
   };
@@ -447,186 +459,204 @@
     return `/v1/discount-tickets/${encodeURIComponent(code)}/qr?${params.toString()}`;
   }
 
-  function buildQrPrintHtml(ticket, qrSrc) {
+  function getCouponPrintStyles() {
+    return `
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        font-family: "Segoe UI", "Arial Black", Impact, sans-serif;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      body {
+        background: #e8e8e8;
+      }
+      .print-sheet {
+        width: 100%;
+        min-height: 100vh;
+        display: grid;
+        justify-content: center;
+        align-content: center;
+        justify-items: center;
+        align-items: center;
+        padding: 0;
+        margin: 0 auto;
+      }
+      .coupon-slot {
+        width: ${CARNET_WIDTH_IN}in;
+        height: ${CARNET_HEIGHT_IN}in;
+        overflow: hidden;
+        flex-shrink: 0;
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+      .coupon {
+        position: relative;
+        width: ${CARNET_WIDTH_IN}in;
+        height: ${CARNET_HEIGHT_IN}in;
+        overflow: hidden;
+        border-radius: 8pt;
+        color: #fff;
+        text-align: center;
+        background:
+          linear-gradient(145deg, rgba(0,0,0,.72), rgba(120,0,0,.55)),
+          repeating-linear-gradient(45deg, #1a1a1a 0 8pt, #2b2b2b 8pt 16pt);
+        box-shadow: 0 4pt 12pt rgba(0,0,0,.35);
+      }
+      .coupon::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(115deg, transparent 40%, rgba(255,30,30,.35) 50%, transparent 60%),
+          radial-gradient(circle at 20% 10%, rgba(255,60,60,.25), transparent 45%),
+          radial-gradient(circle at 85% 20%, rgba(255,40,40,.2), transparent 40%);
+        pointer-events: none;
+      }
+      .inner { position: relative; z-index: 1; padding: 10pt 7pt 8pt; }
+      .gear {
+        position: absolute;
+        width: 30pt;
+        height: 30pt;
+        opacity: .22;
+        border: 3pt solid #c0c0c0;
+        border-radius: 50%;
+        top: 4pt;
+        left: -10pt;
+      }
+      .gear::before {
+        content: "";
+        position: absolute;
+        inset: 7pt;
+        border: 2pt solid #a8a8a8;
+        border-radius: 50%;
+      }
+      .discount {
+        font-size: 22pt;
+        font-weight: 900;
+        font-style: italic;
+        line-height: .95;
+        letter-spacing: -0.5pt;
+        color: #fff;
+        text-shadow:
+          0 0 6pt rgba(255,40,40,.95),
+          0 0 14pt rgba(255,0,0,.65),
+          0 2pt 0 #8b0000;
+      }
+      .discount small { font-size: 13pt; font-weight: 900; }
+      .subtitle {
+        margin-top: 3pt;
+        font-size: 6pt;
+        font-weight: 800;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+      }
+      .qr-stage {
+        margin: 7pt auto 6pt;
+        width: 1.42in;
+        padding: 5pt;
+        border-radius: 6pt;
+        background: linear-gradient(180deg, #ececec 0%, #b8b8b8 100%);
+        box-shadow:
+          inset 0 1pt 0 rgba(255,255,255,.8),
+          0 4pt 10pt rgba(0,0,0,.35);
+      }
+      .qr-frame {
+        background: #fff;
+        border-radius: 5pt;
+        padding: 4pt;
+        border: 1pt solid #d4d4d4;
+      }
+      .qr-img {
+        display: block;
+        width: 1.12in;
+        height: 1.12in;
+        margin: 0 auto;
+        image-rendering: pixelated;
+      }
+      .banner {
+        display: inline-block;
+        margin: 2pt auto 6pt;
+        padding: 3pt 11pt;
+        transform: skewX(-12deg);
+        background: linear-gradient(90deg, #b30000, #ff1a1a);
+        box-shadow: 0 2pt 8pt rgba(255,0,0,.35);
+      }
+      .banner span {
+        display: inline-block;
+        transform: skewX(12deg);
+        font-size: 10pt;
+        font-weight: 900;
+        letter-spacing: .06em;
+        color: #fff;
+      }
+      .meta {
+        font-size: 5.5pt;
+        line-height: 1.45;
+        color: rgba(255,255,255,.92);
+        font-weight: 600;
+      }
+      .validity {
+        margin-top: 4pt;
+        font-size: 5pt;
+        line-height: 1.35;
+        color: rgba(255,255,255,.78);
+        font-weight: 500;
+      }
+      .brand {
+        margin-top: 6pt;
+        padding-top: 5pt;
+        border-top: 1pt solid rgba(255,255,255,.15);
+      }
+      .brand-main {
+        font-size: 8pt;
+        font-weight: 900;
+        letter-spacing: .04em;
+        color: #fff;
+      }
+      .brand-address {
+        margin-top: 3pt;
+        font-size: 5pt;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+        color: rgba(255,255,255,.85);
+        font-weight: 600;
+      }
+      .qr-error {
+        color: #ffb4b4;
+        font-size: 7pt;
+        margin-top: 4pt;
+        font-weight: 700;
+      }
+      .hidden { display: none; }
+      @media print {
+        body { background: #fff; }
+        .coupon { box-shadow: none; }
+        .print-sheet { min-height: auto; }
+      }
+    `;
+  }
+
+  function renderCouponMarkup(ticket, qrSrc, index) {
     const expiresText = ticket.expiresAt
       ? formatDate(ticket.expiresAt)
       : "Al activar (30 días)";
     const pct = Number(ticket.discountPercent);
     const pctLabel = Number.isInteger(pct) ? String(pct) : String(pct);
-    return `<!DOCTYPE html>
-      <html lang="es"><head>
-        <meta charset="UTF-8" />
-        <title>QR cupón · ${escapeHtml(ticket.code)}</title>
-        <style>
-          * { box-sizing: border-box; margin: 0; padding: 0; }
-          body {
-            font-family: "Segoe UI", "Arial Black", Impact, sans-serif;
-            margin: 0;
-            padding: 12px;
-            background: #111;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
-          .coupon {
-            position: relative;
-            width: 340px;
-            margin: 0 auto;
-            overflow: hidden;
-            border-radius: 12px;
-            color: #fff;
-            text-align: center;
-            background:
-              linear-gradient(145deg, rgba(0,0,0,.72), rgba(120,0,0,.55)),
-              repeating-linear-gradient(
-                45deg,
-                #1a1a1a 0 14px,
-                #2b2b2b 14px 28px
-              );
-            box-shadow: 0 12px 40px rgba(0,0,0,.45);
-          }
-          .coupon::before {
-            content: "";
-            position: absolute;
-            inset: 0;
-            background:
-              linear-gradient(115deg, transparent 40%, rgba(255,30,30,.35) 50%, transparent 60%),
-              radial-gradient(circle at 20% 10%, rgba(255,60,60,.25), transparent 45%),
-              radial-gradient(circle at 85% 20%, rgba(255,40,40,.2), transparent 40%);
-            pointer-events: none;
-          }
-          .inner { position: relative; z-index: 1; padding: 22px 16px 18px; }
-          .gear {
-            position: absolute;
-            width: 64px;
-            height: 64px;
-            opacity: .22;
-            border: 6px solid #c0c0c0;
-            border-radius: 50%;
-            top: 8px;
-            left: -18px;
-          }
-          .gear::before {
-            content: "";
-            position: absolute;
-            inset: 14px;
-            border: 4px solid #a8a8a8;
-            border-radius: 50%;
-          }
-          .discount {
-            font-size: 58px;
-            font-weight: 900;
-            font-style: italic;
-            line-height: .95;
-            letter-spacing: -1px;
-            color: #fff;
-            text-shadow:
-              0 0 12px rgba(255,40,40,.95),
-              0 0 28px rgba(255,0,0,.65),
-              0 3px 0 #8b0000;
-          }
-          .discount small {
-            font-size: 34px;
-            font-weight: 900;
-          }
-          .subtitle {
-            margin-top: 6px;
-            font-size: 13px;
-            font-weight: 800;
-            letter-spacing: .12em;
-            text-transform: uppercase;
-          }
-          .qr-stage {
-            margin: 16px auto 14px;
-            width: 220px;
-            padding: 12px;
-            border-radius: 10px;
-            background: linear-gradient(180deg, #ececec 0%, #b8b8b8 100%);
-            box-shadow:
-              inset 0 1px 0 rgba(255,255,255,.8),
-              0 8px 18px rgba(0,0,0,.35);
-          }
-          .qr-frame {
-            background: #fff;
-            border-radius: 8px;
-            padding: 10px;
-            border: 2px solid #d4d4d4;
-          }
-          .qr-img {
-            display: block;
-            width: 176px;
-            height: 176px;
-            margin: 0 auto;
-            image-rendering: pixelated;
-          }
-          .banner {
-            display: inline-block;
-            margin: 4px auto 12px;
-            padding: 8px 22px;
-            transform: skewX(-12deg);
-            background: linear-gradient(90deg, #b30000, #ff1a1a);
-            box-shadow: 0 4px 14px rgba(255,0,0,.35);
-          }
-          .banner span {
-            display: inline-block;
-            transform: skewX(12deg);
-            font-size: 28px;
-            font-weight: 900;
-            letter-spacing: .06em;
-            color: #fff;
-          }
-          .meta {
-            font-size: 11px;
-            line-height: 1.55;
-            color: rgba(255,255,255,.92);
-            font-weight: 600;
-          }
-          .validity {
-            margin-top: 8px;
-            font-size: 10px;
-            line-height: 1.45;
-            color: rgba(255,255,255,.78);
-            font-weight: 500;
-          }
-          .brand {
-            margin-top: 14px;
-            padding-top: 12px;
-            border-top: 1px solid rgba(255,255,255,.15);
-          }
-          .brand-main {
-            font-size: 18px;
-            font-weight: 900;
-            letter-spacing: .04em;
-            color: #fff;
-          }
-          .brand-address {
-            margin-top: 6px;
-            font-size: 10px;
-            letter-spacing: .1em;
-            text-transform: uppercase;
-            color: rgba(255,255,255,.85);
-            font-weight: 600;
-          }
-          .qr-error {
-            color: #ffb4b4;
-            font-size: 12px;
-            margin-top: 8px;
-            font-weight: 700;
-          }
-          .hidden { display: none; }
-          @media print {
-            body { padding: 0; background: #fff; }
-            .coupon { box-shadow: none; page-break-inside: avoid; }
-          }
-        </style>
-      </head><body>
-        <div class="coupon">
+    const imgId = `qr-img-${index}`;
+    return `
+      <div class="coupon-slot">
+        <article class="coupon">
           <div class="gear" aria-hidden="true"></div>
           <div class="inner">
             <div class="discount">${pctLabel}% <small>OFF</small></div>
             <div class="subtitle">Cupón de descuento</div>
             <div class="qr-stage">
               <div class="qr-frame">
-                <img class="qr-img" id="qr-img" src="${qrSrc}" alt="QR del cupón" />
+                <img class="qr-img" id="${imgId}" src="${qrSrc}" alt="QR del cupón ${escapeHtml(ticket.code)}" />
               </div>
             </div>
             <div class="banner"><span>SUPRA PART</span></div>
@@ -637,38 +667,166 @@
               <div class="brand-main">TOTAL CARE</div>
               <div class="brand-address">dirección AV. RIVAS</div>
             </div>
-            <div class="qr-error hidden" id="qr-error">No se pudo cargar el QR. Cierra e intenta de nuevo.</div>
           </div>
+        </article>
+      </div>
+    `;
+  }
+
+  function buildMultiQrPrintHtml(tickets, count) {
+    const layout = PRINT_LAYOUTS[count] || PRINT_LAYOUTS[1];
+    const pageSize = layout.orientation === "landscape" ? "letter landscape" : "letter";
+    const couponsHtml = tickets
+      .map((ticket, index) => renderCouponMarkup(ticket, ticketQrImageUrl(ticket.code), index))
+      .join("");
+    const title = tickets.length === 1
+      ? `QR cupón · ${escapeHtml(tickets[0].code)}`
+      : `${tickets.length} cupones QR`;
+    return `<!DOCTYPE html>
+      <html lang="es"><head>
+        <meta charset="UTF-8" />
+        <title>${title}</title>
+        <style>
+          @page {
+            size: ${pageSize};
+            margin: 0.5in;
+          }
+          ${getCouponPrintStyles()}
+          .print-sheet {
+            grid-template-columns: repeat(${layout.cols}, ${CARNET_WIDTH_IN}in);
+            grid-template-rows: repeat(${layout.rows}, ${CARNET_HEIGHT_IN}in);
+            gap: ${SHEET_GAP_IN}in;
+          }
+        </style>
+      </head><body>
+        <div class="print-sheet">
+          ${couponsHtml}
         </div>
         <script>
           (function() {
-            var img = document.getElementById("qr-img");
-            var err = document.getElementById("qr-error");
+            var imgs = document.querySelectorAll(".qr-img");
+            var pending = imgs.length;
             function printNow() { setTimeout(function() { window.print(); }, 350); }
-            if (!img) return;
-            img.addEventListener("error", function() {
-              if (err) err.classList.remove("hidden");
+            if (!pending) { printNow(); return; }
+            function done() {
+              pending -= 1;
+              if (pending <= 0) printNow();
+            }
+            imgs.forEach(function(img) {
+              if (img.complete && img.naturalWidth > 0) done();
+              else {
+                img.addEventListener("load", done);
+                img.addEventListener("error", done);
+              }
             });
-            if (img.complete && img.naturalWidth > 0) printNow();
-            else img.addEventListener("load", printNow);
           })();
         <\/script>
       </body></html>`;
   }
 
-  function printQrCode(ticket) {
+  function buildPrintContextFromTicket(ticket, options = {}) {
+    return {
+      seedTicket: ticket,
+      includeSeedInBatch: Boolean(options.includeSeedInBatch),
+      discountPercent: Number(ticket.discountPercent),
+      customerPhone: ticket.customerPhone || DEFAULT_CUSTOMER_PHONE
+    };
+  }
+
+  async function createDiscountTicket(template) {
+    return api("/v1/discount-tickets", {
+      method: "POST",
+      body: JSON.stringify({
+        discountPercent: template.discountPercent,
+        channel: "PORTAL",
+        customerPhone: template.customerPhone || DEFAULT_CUSTOMER_PHONE
+      })
+    });
+  }
+
+  async function prepareTicketsForPrint(count, context) {
+    const template = {
+      discountPercent: Number(context.discountPercent),
+      customerPhone: context.customerPhone || DEFAULT_CUSTOMER_PHONE
+    };
+    const tickets = [];
+
+    if (count === 1 && context.seedTicket) {
+      return [context.seedTicket];
+    }
+
+    if (context.includeSeedInBatch && context.seedTicket) {
+      tickets.push(context.seedTicket);
+    }
+
+    while (tickets.length < count) {
+      tickets.push(await createDiscountTicket(template));
+    }
+    return tickets;
+  }
+
+  function openPrintQuantityModal(context) {
     if (!state.token) {
       alert("Inicia sesión de nuevo para imprimir el QR.");
       return;
     }
-    const qrSrc = ticketQrImageUrl(ticket.code);
-    const win = window.open("", "_blank", "width=420,height=780");
+    state.printContext = context;
+    const firstOption = document.querySelector('input[name="print-qty"][value="1"]');
+    if (firstOption) firstOption.checked = true;
+    $("#print-qty-error").classList.add("hidden");
+    $("#print-qty-modal").classList.remove("hidden");
+  }
+
+  function closePrintQuantityModal() {
+    $("#print-qty-modal").classList.add("hidden");
+    state.printContext = null;
+  }
+
+  function getSelectedPrintQuantity() {
+    const selected = document.querySelector('input[name="print-qty"]:checked');
+    if (!selected) return null;
+    const count = Number(selected.value);
+    return PRINT_QUANTITY_OPTIONS.includes(count) ? count : null;
+  }
+
+  async function confirmPrintQuantity() {
+    const count = getSelectedPrintQuantity();
+    if (!count || !state.printContext) {
+      $("#print-qty-error").textContent = "Selecciona cuántos cupones deseas imprimir.";
+      $("#print-qty-error").classList.remove("hidden");
+      return;
+    }
+    const btn = $("#print-qty-confirm");
+    btn.disabled = true;
+    $("#print-qty-error").classList.add("hidden");
+    try {
+      const tickets = await prepareTicketsForPrint(count, state.printContext);
+      closePrintQuantityModal();
+      openPrintWindow(tickets, count);
+      await loadTickets();
+      if (tickets.length === 1) {
+        state.lastGenerated = tickets[0];
+      }
+    } catch (err) {
+      $("#print-qty-error").textContent = err.message || "No se pudieron generar los cupones.";
+      $("#print-qty-error").classList.remove("hidden");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function openPrintWindow(tickets, count) {
+    const win = window.open("", "_blank", "width=920,height=760");
     if (!win) {
       alert("Permite ventanas emergentes para imprimir el QR.");
       return;
     }
-    win.document.write(buildQrPrintHtml(ticket, qrSrc));
+    win.document.write(buildMultiQrPrintHtml(tickets, count));
     win.document.close();
+  }
+
+  function printQrCode(ticket, options = {}) {
+    openPrintQuantityModal(buildPrintContextFromTicket(ticket, options));
   }
 
   async function openDetail(ticketOrCode) {
@@ -718,7 +876,7 @@
     const deleteBtn = $("#modal-delete");
     if (printBtn) {
       printBtn.classList.toggle("hidden", !canManagePortal() || ticket.displayStatus === "VOIDED");
-      printBtn.onclick = () => printQrCode(ticket);
+      printBtn.onclick = () => printQrCode(ticket, { includeSeedInBatch: true });
     }
     if (deleteBtn) {
       const canDelete = canManagePortal() && ticket.displayStatus === "VOIDED";
@@ -827,7 +985,8 @@
       updateGenerateButtonState();
     }
     $("#generate-qr-btn")?.addEventListener("click", () => {
-      if (state.lastGenerated) printQrCode(state.lastGenerated);
+      if (!state.lastGenerated) return;
+      printQrCode(state.lastGenerated, { includeSeedInBatch: true });
     });
     $("#filter-form").addEventListener("submit", (ev) => {
       ev.preventDefault();
@@ -884,6 +1043,11 @@
     $("#delete-cancel")?.addEventListener("click", closeDeleteModal);
     $("#delete-modal-backdrop")?.addEventListener("click", (ev) => {
       if (ev.target.id === "delete-modal-backdrop") closeDeleteModal();
+    });
+    $("#print-qty-confirm")?.addEventListener("click", confirmPrintQuantity);
+    $("#print-qty-cancel")?.addEventListener("click", closePrintQuantityModal);
+    $("#print-qty-modal-backdrop")?.addEventListener("click", (ev) => {
+      if (ev.target.id === "print-qty-modal-backdrop") closePrintQuantityModal();
     });
   }
 
