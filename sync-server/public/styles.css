@@ -519,12 +519,6 @@ tr:hover td { background: #f8fafc; }
   font-size: 0.82rem;
 }
 
-.print-qty-phone-input[readonly] {
-  background: #f8fafc;
-  color: var(--muted);
-  cursor: not-allowed;
-}
-
 @media (max-width: 640px) {
   .print-qty-phone-grid { grid-template-columns: 1fr; }
 }

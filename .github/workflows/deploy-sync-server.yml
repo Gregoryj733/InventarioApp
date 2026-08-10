@@ -64,7 +64,7 @@ jobs:
           for i in $(seq 1 12); do
             body=$(curl -fsS "https://inventario-sync-totalcare.onrender.com/portal/build.json" || true)
             echo "build.json: $body"
-            echo "$body" | grep -q '"portalVersion":"17"' && exit 0
+            echo "$body" | grep -q '"portalVersion":"18"' && exit 0
             sleep 15
           done
-          echo "::warning::Producción aún no muestra portal v17. Haz Manual Deploy en Render si Auto-Deploy no corrió."
+          echo "::warning::Producción aún no muestra portal v18. Haz Manual Deploy en Render si Auto-Deploy no corrió."

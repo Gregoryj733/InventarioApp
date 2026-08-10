@@ -4,7 +4,7 @@
   const QR_TICKET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
   const QR_TICKET_TITLE = "Total Care · Cupón de descuento";
   const DEFAULT_CUSTOMER_PHONE = "00000000000";
-  const PORTAL_UI_VERSION = "17";
+  const PORTAL_UI_VERSION = "18";
   const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
   const PRINT_QUANTITY_OPTIONS = [1, 2, 4, 6, 8];
   const CARNET_WIDTH_IN = 2.125;
@@ -747,23 +747,18 @@
         Teléfono por cupón <span class="muted">(opcional)</span>
       </div>
       <p class="print-qty-phones-hint">
-        Un campo por cupón. Si lo dejas vacío se guardará como <strong>00000000000</strong>.
+        Un campo editable por cupón. Si lo dejas vacío se guardará como <strong>00000000000</strong>.
       </p>
       <div class="print-qty-phone-grid">
     `;
 
     for (let i = 0; i < count; i += 1) {
       const slot = i + 1;
-      const isExistingCoupon = Boolean(
+      const usesSeedPhone = Boolean(
         context?.seedTicket && (count === 1 || (context.includeSeedInBatch && i === 0))
       );
-      const seedPhone = context?.seedTicket?.customerPhone || "";
-      const displayValue = isExistingCoupon && seedPhone !== DEFAULT_CUSTOMER_PHONE
-        ? seedPhone
-        : "";
-      const placeholder = isExistingCoupon
-        ? "Teléfono ya registrado en este cupón"
-        : "Vacío = 00000000000";
+      const seedPhone = usesSeedPhone ? (context.seedTicket.customerPhone || "") : "";
+      const displayValue = seedPhone && seedPhone !== DEFAULT_CUSTOMER_PHONE ? seedPhone : "";
 
       html += `
         <div class="field print-qty-phone-field">
@@ -775,9 +770,8 @@
             autocomplete="tel"
             class="print-qty-phone-input"
             data-slot="${i}"
-            placeholder="${placeholder}"
+            placeholder="Vacío = 00000000000"
             value="${escapeHtml(displayValue)}"
-            ${isExistingCoupon ? "readonly" : ""}
           />
         </div>
       `;
@@ -788,20 +782,27 @@
     container.classList.remove("hidden");
   }
 
-  function collectPrintPhoneInputs(count, context) {
+  function collectPrintPhoneInputs(count) {
     const phones = [];
     for (let i = 0; i < count; i += 1) {
-      const isExistingCoupon = Boolean(
-        context?.seedTicket && (count === 1 || (context.includeSeedInBatch && i === 0))
-      );
-      if (isExistingCoupon) {
-        phones.push(context.seedTicket.customerPhone || DEFAULT_CUSTOMER_PHONE);
-        continue;
-      }
       const input = document.getElementById(`print-phone-${i}`);
       phones.push(sanitizeCustomerPhoneInput(input?.value));
     }
     return phones;
+  }
+
+  async function updateDiscountTicketPhone(code, customerPhone) {
+    return api(`/v1/discount-tickets/${encodeURIComponent(code)}/phone`, {
+      method: "PATCH",
+      body: JSON.stringify({ customerPhone: sanitizeCustomerPhoneInput(customerPhone) })
+    });
+  }
+
+  async function syncSeedTicketPhone(seedTicket, phone) {
+    const normalizedPhone = sanitizeCustomerPhoneInput(phone);
+    const currentPhone = seedTicket.customerPhone || DEFAULT_CUSTOMER_PHONE;
+    if (normalizedPhone === currentPhone) return seedTicket;
+    return updateDiscountTicketPhone(seedTicket.code, normalizedPhone);
   }
 
   async function createDiscountTicket(template) {
@@ -819,12 +820,14 @@
     const tickets = [];
 
     if (count === 1 && context.seedTicket) {
-      return [context.seedTicket];
+      const synced = await syncSeedTicketPhone(context.seedTicket, phones[0]);
+      return [synced];
     }
 
     let phoneIndex = 0;
     if (context.includeSeedInBatch && context.seedTicket) {
-      tickets.push(context.seedTicket);
+      const synced = await syncSeedTicketPhone(context.seedTicket, phones[phoneIndex]);
+      tickets.push(synced);
       phoneIndex = 1;
     }
 
@@ -876,7 +879,7 @@
     btn.disabled = true;
     $("#print-qty-error").classList.add("hidden");
     try {
-      const phones = collectPrintPhoneInputs(count, state.printContext);
+      const phones = collectPrintPhoneInputs(count);
       const tickets = await prepareTicketsForPrint(count, state.printContext, phones);
       closePrintQuantityModal();
       openPrintWindow(tickets, count);

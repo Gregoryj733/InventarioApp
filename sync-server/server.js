@@ -74,7 +74,7 @@ app.get("/", (_req, res) => {
 // Portal web: se sirve ANTES del chequeo de X-Api-Key para que el navegador
 // pueda cargar HTML/CSS/JS sin credenciales de dispositivo.
 const portalDir = path.join(__dirname, "public");
-const PORTAL_BUILD_VERSION = "17";
+const PORTAL_BUILD_VERSION = "18";
 
 app.get("/portal/build.json", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -171,19 +171,29 @@ function todayBoundsFrom(dateMillis) {
 }
 
 function generateTicketCode() {
-  return crypto.randomBytes(12).toString("hex").toUpperCase();
+  return crypto.randomUUID().toUpperCase();
+}
+
+function generateUniqueTicketCode(existingCodes) {
+  const taken = existingCodes instanceof Set ? existingCodes : new Set(existingCodes);
+  let code = generateTicketCode();
+  let attempts = 0;
+  while (taken.has(code)) {
+    attempts += 1;
+    if (attempts >= 64) {
+      throw publicError("No se pudo generar un código QR único. Intenta de nuevo.");
+    }
+    code = generateTicketCode();
+  }
+  return code;
 }
 
 const DEFAULT_CUSTOMER_PHONE = "00000000000";
 
 function sanitizeCustomerPhone(raw) {
   if (raw == null || raw === "") return DEFAULT_CUSTOMER_PHONE;
-  const digits = String(raw).replace(/\D/g, "");
-  if (!digits) return DEFAULT_CUSTOMER_PHONE;
-  if (digits.length < 7 || digits.length > 15) {
-    throw publicError("Teléfono inválido. Debe tener entre 7 y 15 dígitos.");
-  }
-  return digits;
+  const trimmed = String(raw).trim();
+  return trimmed || DEFAULT_CUSTOMER_PHONE;
 }
 
 function normalizeTicketRecord(ticket) {
@@ -1111,15 +1121,7 @@ async function start() {
           ? requestedPercent
           : defaultPercent;
         const existingCodes = new Set(state.discountTickets.map((t) => t.code));
-        let code = generateTicketCode();
-        let attempts = 0;
-        while (existingCodes.has(code) && attempts < 12) {
-          code = generateTicketCode();
-          attempts += 1;
-        }
-        if (existingCodes.has(code)) {
-          throw publicError("No se pudo generar un código único. Intenta de nuevo.");
-        }
+        const code = generateUniqueTicketCode(existingCodes);
         let ticket = {
           id: state.nextDiscountTicketId,
           code,
@@ -1157,6 +1159,31 @@ async function start() {
 
       realtime.broadcast("discountTickets", {});
       res.json(ticketPublicView(created));
+    })
+  );
+
+  app.patch(
+    "/v1/discount-tickets/:code/phone",
+    auth.requireAuth(DISCOUNT_MANAGE_ROLES),
+    asyncRoute(async (req, res) => {
+      const code = String(req.params.code || "").trim().toUpperCase();
+      const customerPhone = sanitizeCustomerPhone(req.body?.customerPhone);
+      const updated = await store.runTransaction(async (state) => {
+        const index = state.discountTickets.findIndex((t) => t.code.toUpperCase() === code);
+        if (index === -1) throw publicError("Código no encontrado", 404);
+        const ticket = state.discountTickets[index];
+        if (ticket.status === "USED" || ticket.status === "VOIDED") {
+          throw publicError("No se puede editar el teléfono de un cupón usado o anulado");
+        }
+        let next = { ...ticket, customerPhone };
+        next = appendTicketAudit(next, "PHONE_UPDATED", req.user?.username || "", {
+          customerPhone
+        });
+        const discountTickets = state.discountTickets.map((t, i) => (i === index ? next : t));
+        return { state: { ...state, discountTickets }, result: next };
+      });
+      realtime.broadcast("discountTickets", {});
+      res.json(ticketPublicView(updated));
     })
   );
 
