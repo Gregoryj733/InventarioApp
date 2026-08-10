@@ -4,7 +4,7 @@
   const QR_TICKET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
   const QR_TICKET_TITLE = "Total Care · Cupón de descuento";
   const DEFAULT_CUSTOMER_PHONE = "00000000000";
-  const PORTAL_UI_VERSION = "14";
+  const PORTAL_UI_VERSION = "15";
   const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
 
   const $ = (sel) => document.querySelector(sel);
@@ -569,11 +569,11 @@
           .banner span {
             display: inline-block;
             transform: skewX(12deg);
-            font-size: 22px;
+            font-size: 28px;
             font-weight: 900;
             letter-spacing: .06em;
+            color: #fff;
           }
-          .banner .dark { color: #1a1a1a; }
           .meta {
             font-size: 11px;
             line-height: 1.55;
@@ -598,7 +598,6 @@
             letter-spacing: .04em;
             color: #fff;
           }
-          .brand-main .dark { color: #1a1a1a; }
           .brand-address {
             margin-top: 6px;
             font-size: 10px;
@@ -630,12 +629,12 @@
                 <img class="qr-img" id="qr-img" src="${qrSrc}" alt="QR del cupón" />
               </div>
             </div>
-            <div class="banner"><span><span class="dark">SUPRA</span> PART</span></div>
+            <div class="banner"><span>SUPRA PART</span></div>
             <div class="meta">Creado: ${formatDate(ticket.issuedAt)}</div>
             <div class="meta">Vence: ${expiresText}</div>
             <div class="validity">${QR_TICKET_VALIDITY_TEXT}</div>
             <div class="brand">
-              <div class="brand-main"><span class="dark">TOTAL</span> CARE</div>
+              <div class="brand-main">TOTAL CARE</div>
               <div class="brand-address">dirección AV. RIVAS</div>
             </div>
             <div class="qr-error hidden" id="qr-error">No se pudo cargar el QR. Cierra e intenta de nuevo.</div>
