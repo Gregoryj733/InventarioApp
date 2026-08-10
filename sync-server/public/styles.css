@@ -150,6 +150,26 @@ label {
   font-weight: 400;
 }
 
+.checkbox-field {
+  margin-top: 2px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: auto;
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
 input, select, textarea {
   width: 100%;
   padding: 10px 12px;

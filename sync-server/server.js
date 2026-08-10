@@ -162,10 +162,12 @@ function generateTicketCode() {
   return crypto.randomBytes(12).toString("hex").toUpperCase();
 }
 
+const DEFAULT_CUSTOMER_PHONE = "00000000000";
+
 function sanitizeCustomerPhone(raw) {
-  if (raw == null || raw === "") return null;
+  if (raw == null || raw === "") return DEFAULT_CUSTOMER_PHONE;
   const digits = String(raw).replace(/\D/g, "");
-  if (!digits) return null;
+  if (!digits) return DEFAULT_CUSTOMER_PHONE;
   if (digits.length < 7 || digits.length > 15) {
     throw publicError("Teléfono inválido. Debe tener entre 7 y 15 dígitos.");
   }
@@ -1129,7 +1131,7 @@ async function start() {
         ticket = appendTicketAudit(ticket, "CREATED", req.user?.username || "", {
           discountPercent: percent,
           channel: ticket.issuedChannel,
-          ...(customerPhone ? { customerPhone } : {})
+          customerPhone
         });
         return {
           state: {

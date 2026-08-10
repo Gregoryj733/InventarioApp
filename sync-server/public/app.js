@@ -3,6 +3,7 @@
   const USER_KEY = "inventario_portal_user";
   const QR_TICKET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
   const QR_TICKET_TITLE = "Total Care · Cupón de descuento";
+  const DEFAULT_CUSTOMER_PHONE = "00000000000";
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -159,6 +160,7 @@
     $("#main-view").classList.remove("hidden");
     $("#user-label").textContent = `${state.user.username} (${roleLabel(state.user.role)})`;
     applyUiPermissions();
+    updateGenerateButtonState();
   }
 
   function roleLabel(role) {
@@ -301,7 +303,7 @@
     tbody.innerHTML = state.tickets.map((t) => `
       <tr>
         <td class="code-cell">${t.code}</td>
-        <td>${escapeHtml(t.customerPhone || "—")}</td>
+        <td>${escapeHtml(formatCustomerPhone(t.customerPhone))}</td>
         <td>${t.discountPercent}%</td>
         <td>${formatDate(t.issuedAt)}</td>
         <td>${formatDate(t.activatedAt)}</td>
@@ -324,38 +326,58 @@
       .replace(/"/g, "&quot;");
   }
 
+  function formatCustomerPhone(phone) {
+    if (!phone || phone === DEFAULT_CUSTOMER_PHONE) return "—";
+    return phone;
+  }
+
+  function updateGenerateButtonState() {
+    const btn = $("#generate-btn");
+    const confirm = $("#gen-confirm");
+    if (!btn || !confirm) return;
+    btn.disabled = !confirm.checked;
+  }
+
   async function generateCode(ev) {
     ev.preventDefault();
     $("#generate-error").classList.add("hidden");
     $("#generate-success").classList.add("hidden");
+    if (!$("#gen-confirm")?.checked) {
+      $("#generate-error").textContent = "Debes confirmar la generación del QR antes de continuar.";
+      $("#generate-error").classList.remove("hidden");
+      return;
+    }
     const btn = $("#generate-btn");
     btn.disabled = true;
     try {
       const phoneRaw = $("#gen-phone").value.trim();
       const payload = {
         discountPercent: Number($("#gen-percent").value),
-        channel: "PORTAL"
+        channel: "PORTAL",
+        customerPhone: phoneRaw || DEFAULT_CUSTOMER_PHONE
       };
-      if (phoneRaw) payload.customerPhone = phoneRaw;
       const ticket = await api("/v1/discount-tickets", {
         method: "POST",
         body: JSON.stringify(payload)
       });
       state.lastGenerated = ticket;
+      const phoneLabel = formatCustomerPhone(ticket.customerPhone);
       $("#generate-success").textContent =
         `Cupón ${ticket.code} generado (${ticket.discountPercent}%).` +
-        (ticket.customerPhone ? ` Teléfono: ${ticket.customerPhone}.` : "") +
+        (phoneLabel !== "—" ? ` Teléfono: ${phoneLabel}.` : "") +
         " Actívalo escaneando el QR desde la app.";
       $("#generate-success").classList.remove("hidden");
       $("#generate-qr-btn").classList.remove("hidden");
       $("#gen-phone").value = "";
+      $("#gen-confirm").checked = false;
+      updateGenerateButtonState();
       openDetail(ticket);
       await loadTickets();
     } catch (err) {
       $("#generate-error").textContent = err.message;
       $("#generate-error").classList.remove("hidden");
     } finally {
-      btn.disabled = false;
+      updateGenerateButtonState();
     }
   }
 
@@ -474,7 +496,7 @@
       ${qrBlock}
       <div class="detail-grid">
         <div class="detail-row"><span>Descuento</span><span>${ticket.discountPercent}%</span></div>
-        <div class="detail-row"><span>Teléfono</span><span>${escapeHtml(ticket.customerPhone || "—")}</span></div>
+        <div class="detail-row"><span>Teléfono</span><span>${escapeHtml(formatCustomerPhone(ticket.customerPhone))}</span></div>
         <div class="detail-row"><span>Estado</span><span><span class="badge ${badgeClass(ticket.displayStatus)}">${statusLabel(ticket.displayStatus)}</span></span></div>
         <div class="detail-row"><span>Creado</span><span>${formatDate(ticket.issuedAt)}</span></div>
         <div class="detail-row"><span>Activado</span><span>${formatDate(ticket.activatedAt)}</span></div>
@@ -543,6 +565,8 @@
     $("#logout-btn").addEventListener("click", logout);
     if ($("#generate-form")) {
       $("#generate-form").addEventListener("submit", generateCode);
+      $("#gen-confirm")?.addEventListener("change", updateGenerateButtonState);
+      updateGenerateButtonState();
     }
     $("#generate-qr-btn")?.addEventListener("click", () => {
       if (state.lastGenerated) printQrCode(state.lastGenerated);

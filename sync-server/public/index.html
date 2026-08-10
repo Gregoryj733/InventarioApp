@@ -7,8 +7,8 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Portal de Cupones · InventarioApp</title>
-  <link rel="stylesheet" href="styles.css?v=8" />
-  <script src="app.js?v=8" defer></script>
+  <link rel="stylesheet" href="styles.css?v=9" />
+  <script src="app.js?v=9" defer></script>
 </head>
 <body>
   <div id="app">
@@ -70,10 +70,16 @@
           </div>
           <div class="field">
             <label for="gen-phone">Teléfono del cliente <span class="muted">(opcional)</span></label>
-            <input id="gen-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Ej. 04141234567" />
+            <input id="gen-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Vacío = 00000000000" />
+          </div>
+          <div class="field checkbox-field" style="grid-column:1/-1;">
+            <label class="checkbox-label" for="gen-confirm">
+              <input id="gen-confirm" type="checkbox" />
+              Confirmo que deseo generar el código QR del cupón
+            </label>
           </div>
           <div class="field" style="display:flex;align-items:flex-end;gap:8px;grid-column:1/-1;">
-            <button id="generate-btn" type="submit" class="btn btn-primary" style="flex:1;">Generar cupón</button>
+            <button id="generate-btn" type="submit" class="btn btn-primary" style="flex:1;" disabled>Generar QR</button>
             <button id="generate-qr-btn" type="button" class="btn btn-ghost hidden" style="flex:1;">Imprimir QR</button>
           </div>
         </form>
