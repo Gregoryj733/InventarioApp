@@ -4,7 +4,8 @@
   const QR_TICKET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
   const QR_TICKET_TITLE = "Total Care · Cupón de descuento";
   const DEFAULT_CUSTOMER_PHONE = "00000000000";
-  const PORTAL_UI_VERSION = "10";
+  const PORTAL_UI_VERSION = "11";
+  const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -17,6 +18,8 @@
     portalMode: "none",
     tickets: [],
     stats: null,
+    page: 1,
+    pageSize: 10,
     selected: null,
     lastGenerated: null,
     loading: false,
@@ -283,10 +286,13 @@
       const data = await api(`/v1/discount-tickets?${buildQuery()}`);
       state.tickets = data.tickets || [];
       state.stats = data.stats || null;
+      normalizePagination();
       renderStats();
       renderTable();
+      renderPagination();
     } catch (err) {
       $("#table-body").innerHTML = `<tr><td colspan="8" class="empty">${err.message}</td></tr>`;
+      renderPagination();
     } finally {
       if (!silent) state.loading = false;
       if (!silent) $("#refresh-btn").disabled = false;
@@ -308,13 +314,50 @@
     $("#stat-voided").textContent = s.voided;
   }
 
+  function normalizePagination() {
+    const total = state.tickets.length;
+    const totalPages = Math.max(1, Math.ceil(total / state.pageSize) || 1);
+    if (state.page > totalPages) state.page = totalPages;
+    if (state.page < 1) state.page = 1;
+  }
+
+  function getPaginatedTickets() {
+    const start = (state.page - 1) * state.pageSize;
+    return state.tickets.slice(start, start + state.pageSize);
+  }
+
+  function renderPagination() {
+    const bar = $("#pagination-bar");
+    if (!bar) return;
+    const total = state.tickets.length;
+    const totalPages = Math.max(1, Math.ceil(total / state.pageSize) || 1);
+    const start = total === 0 ? 0 : (state.page - 1) * state.pageSize + 1;
+    const end = total === 0 ? 0 : Math.min(state.page * state.pageSize, total);
+
+    $("#page-info").textContent = total === 0
+      ? "Sin registros"
+      : `Mostrando ${start}–${end} de ${total} · Página ${state.page} de ${totalPages}`;
+
+    const prev = $("#page-prev");
+    const next = $("#page-next");
+    if (prev) prev.disabled = state.page <= 1 || total === 0;
+    if (next) next.disabled = state.page >= totalPages || total === 0;
+
+    const sizeSelect = $("#page-size");
+    if (sizeSelect && String(sizeSelect.value) !== String(state.pageSize)) {
+      sizeSelect.value = String(state.pageSize);
+    }
+  }
+
   function renderTable() {
     const tbody = $("#table-body");
     if (!state.tickets.length) {
       tbody.innerHTML = '<tr><td colspan="8" class="empty">No hay cupones que coincidan con los filtros.</td></tr>';
+      renderPagination();
       return;
     }
-    tbody.innerHTML = state.tickets.map((t) => `
+    const pageTickets = getPaginatedTickets();
+    tbody.innerHTML = pageTickets.map((t) => `
       <tr>
         <td class="code-cell">${t.code}</td>
         <td>${escapeHtml(formatCustomerPhone(t.customerPhone))}</td>
@@ -330,6 +373,7 @@
         </td>
       </tr>
     `).join("");
+    renderPagination();
   }
 
   function escapeHtml(str) {
@@ -585,7 +629,11 @@
     $("#generate-qr-btn")?.addEventListener("click", () => {
       if (state.lastGenerated) printQrCode(state.lastGenerated);
     });
-    $("#filter-form").addEventListener("submit", (ev) => { ev.preventDefault(); loadTickets(); });
+    $("#filter-form").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      state.page = 1;
+      loadTickets();
+    });
     $("#clear-filters").addEventListener("click", () => {
       $("#filter-status").value = "";
       $("#filter-code").value = "";
@@ -593,7 +641,27 @@
       $("#filter-percent").value = "";
       $("#filter-start").value = "";
       $("#filter-end").value = "";
+      state.page = 1;
       loadTickets();
+    });
+    $("#page-size")?.addEventListener("change", (ev) => {
+      const size = Number(ev.target.value);
+      if (!PAGE_SIZE_OPTIONS.includes(size)) return;
+      state.pageSize = size;
+      state.page = 1;
+      normalizePagination();
+      renderTable();
+    });
+    $("#page-prev")?.addEventListener("click", () => {
+      if (state.page <= 1) return;
+      state.page -= 1;
+      renderTable();
+    });
+    $("#page-next")?.addEventListener("click", () => {
+      const totalPages = Math.max(1, Math.ceil(state.tickets.length / state.pageSize) || 1);
+      if (state.page >= totalPages) return;
+      state.page += 1;
+      renderTable();
     });
     $("#refresh-btn").addEventListener("click", loadTickets);
     $("#modal-close").addEventListener("click", closeModal);
