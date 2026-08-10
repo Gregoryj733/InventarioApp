@@ -4,7 +4,7 @@
   const QR_TICKET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
   const QR_TICKET_TITLE = "Total Care · Cupón de descuento";
   const DEFAULT_CUSTOMER_PHONE = "00000000000";
-  const PORTAL_UI_VERSION = "12";
+  const PORTAL_UI_VERSION = "13";
   const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
 
   const $ = (sel) => document.querySelector(sel);
@@ -447,89 +447,230 @@
     return `/v1/discount-tickets/${encodeURIComponent(code)}/qr?${params.toString()}`;
   }
 
+  function buildQrPrintHtml(ticket, qrSrc) {
+    const expiresText = ticket.expiresAt
+      ? formatDate(ticket.expiresAt)
+      : "Al activar (30 días)";
+    const pct = Number(ticket.discountPercent);
+    const pctLabel = Number.isInteger(pct) ? String(pct) : String(pct);
+    return `<!DOCTYPE html>
+      <html lang="es"><head>
+        <meta charset="UTF-8" />
+        <title>QR cupón · ${escapeHtml(ticket.code)}</title>
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body {
+            font-family: "Segoe UI", "Arial Black", Impact, sans-serif;
+            margin: 0;
+            padding: 12px;
+            background: #111;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          .coupon {
+            position: relative;
+            width: 340px;
+            margin: 0 auto;
+            overflow: hidden;
+            border-radius: 12px;
+            color: #fff;
+            text-align: center;
+            background:
+              linear-gradient(145deg, rgba(0,0,0,.72), rgba(120,0,0,.55)),
+              repeating-linear-gradient(
+                45deg,
+                #1a1a1a 0 14px,
+                #2b2b2b 14px 28px
+              );
+            box-shadow: 0 12px 40px rgba(0,0,0,.45);
+          }
+          .coupon::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+              linear-gradient(115deg, transparent 40%, rgba(255,30,30,.35) 50%, transparent 60%),
+              radial-gradient(circle at 20% 10%, rgba(255,60,60,.25), transparent 45%),
+              radial-gradient(circle at 85% 20%, rgba(255,40,40,.2), transparent 40%);
+            pointer-events: none;
+          }
+          .inner { position: relative; z-index: 1; padding: 22px 16px 18px; }
+          .gear {
+            position: absolute;
+            width: 64px;
+            height: 64px;
+            opacity: .22;
+            border: 6px solid #c0c0c0;
+            border-radius: 50%;
+            top: 8px;
+            left: -18px;
+          }
+          .gear::before {
+            content: "";
+            position: absolute;
+            inset: 14px;
+            border: 4px solid #a8a8a8;
+            border-radius: 50%;
+          }
+          .discount {
+            font-size: 58px;
+            font-weight: 900;
+            font-style: italic;
+            line-height: .95;
+            letter-spacing: -1px;
+            color: #fff;
+            text-shadow:
+              0 0 12px rgba(255,40,40,.95),
+              0 0 28px rgba(255,0,0,.65),
+              0 3px 0 #8b0000;
+          }
+          .discount small {
+            font-size: 34px;
+            font-weight: 900;
+          }
+          .subtitle {
+            margin-top: 6px;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+          }
+          .qr-stage {
+            margin: 16px auto 14px;
+            width: 220px;
+            padding: 12px;
+            border-radius: 10px;
+            background: linear-gradient(180deg, #ececec 0%, #b8b8b8 100%);
+            box-shadow:
+              inset 0 1px 0 rgba(255,255,255,.8),
+              0 8px 18px rgba(0,0,0,.35);
+          }
+          .qr-frame {
+            background: #fff;
+            border-radius: 8px;
+            padding: 10px;
+            border: 2px solid #d4d4d4;
+          }
+          .qr-img {
+            display: block;
+            width: 176px;
+            height: 176px;
+            margin: 0 auto;
+            image-rendering: pixelated;
+          }
+          .banner {
+            display: inline-block;
+            margin: 4px auto 12px;
+            padding: 8px 22px;
+            transform: skewX(-12deg);
+            background: linear-gradient(90deg, #b30000, #ff1a1a);
+            box-shadow: 0 4px 14px rgba(255,0,0,.35);
+          }
+          .banner span {
+            display: inline-block;
+            transform: skewX(12deg);
+            font-size: 22px;
+            font-weight: 900;
+            letter-spacing: .06em;
+          }
+          .banner .dark { color: #1a1a1a; }
+          .meta {
+            font-size: 11px;
+            line-height: 1.55;
+            color: rgba(255,255,255,.92);
+            font-weight: 600;
+          }
+          .validity {
+            margin-top: 8px;
+            font-size: 10px;
+            line-height: 1.45;
+            color: rgba(255,255,255,.78);
+            font-weight: 500;
+          }
+          .brand {
+            margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255,255,255,.15);
+          }
+          .brand-main {
+            font-size: 18px;
+            font-weight: 900;
+            letter-spacing: .04em;
+            color: #fff;
+          }
+          .brand-main em {
+            font-style: normal;
+            color: #ff3030;
+          }
+          .brand-sub {
+            margin-top: 2px;
+            font-size: 9px;
+            letter-spacing: .18em;
+            text-transform: uppercase;
+            color: rgba(255,255,255,.75);
+          }
+          .qr-error {
+            color: #ffb4b4;
+            font-size: 12px;
+            margin-top: 8px;
+            font-weight: 700;
+          }
+          .hidden { display: none; }
+          @media print {
+            body { padding: 0; background: #fff; }
+            .coupon { box-shadow: none; page-break-inside: avoid; }
+          }
+        </style>
+      </head><body>
+        <div class="coupon">
+          <div class="gear" aria-hidden="true"></div>
+          <div class="inner">
+            <div class="discount">${pctLabel}% <small>OFF</small></div>
+            <div class="subtitle">Cupón de descuento</div>
+            <div class="qr-stage">
+              <div class="qr-frame">
+                <img class="qr-img" id="qr-img" src="${qrSrc}" alt="QR del cupón" />
+              </div>
+            </div>
+            <div class="banner"><span><span class="dark">TOTAL</span> CARE</span></div>
+            <div class="meta">Creado: ${formatDate(ticket.issuedAt)}</div>
+            <div class="meta">Vence: ${expiresText}</div>
+            <div class="validity">${QR_TICKET_VALIDITY_TEXT}</div>
+            <div class="brand">
+              <div class="brand-main">SUPER <em>REPUESTOS</em></div>
+              <div class="brand-sub">Canjeable en tienda · Total Care</div>
+            </div>
+            <div class="qr-error hidden" id="qr-error">No se pudo cargar el QR. Cierra e intenta de nuevo.</div>
+          </div>
+        </div>
+        <script>
+          (function() {
+            var img = document.getElementById("qr-img");
+            var err = document.getElementById("qr-error");
+            function printNow() { setTimeout(function() { window.print(); }, 350); }
+            if (!img) return;
+            img.addEventListener("error", function() {
+              if (err) err.classList.remove("hidden");
+            });
+            if (img.complete && img.naturalWidth > 0) printNow();
+            else img.addEventListener("load", printNow);
+          })();
+        <\/script>
+      </body></html>`;
+  }
+
   function printQrCode(ticket) {
     if (!state.token) {
       alert("Inicia sesión de nuevo para imprimir el QR.");
       return;
     }
     const qrSrc = ticketQrImageUrl(ticket.code);
-    const expiresText = ticket.expiresAt
-      ? formatDate(ticket.expiresAt)
-      : "Al activar (30 días)";
-    const win = window.open("", "_blank", "width=420,height=720");
+    const win = window.open("", "_blank", "width=420,height=780");
     if (!win) {
       alert("Permite ventanas emergentes para imprimir el QR.");
       return;
     }
-    win.document.write(`
-      <!DOCTYPE html>
-      <html lang="es"><head>
-        <meta charset="UTF-8" />
-        <title>QR cupón</title>
-        <style>
-          * { box-sizing: border-box; }
-          body { font-family: "Segoe UI", system-ui, sans-serif; margin: 0; padding: 16px; }
-          .qr-card {
-            border: 2px dashed #2563eb;
-            border-radius: 14px;
-            padding: 18px 14px;
-            width: 300px;
-            margin: 0 auto;
-            text-align: center;
-          }
-          .brand {
-            font-size: 12px;
-            color: #64748b;
-            font-weight: 600;
-            margin-bottom: 10px;
-            line-height: 1.35;
-          }
-          .pct { font-size: 30px; font-weight: 800; color: #059669; margin: 8px 0 12px; }
-          .qr-img {
-            display: block;
-            width: 200px;
-            height: 200px;
-            margin: 4px auto 10px;
-            image-rendering: pixelated;
-          }
-          .meta { font-size: 12px; color: #334155; margin: 5px 0; }
-          .validity {
-            font-size: 11px;
-            color: #64748b;
-            margin-top: 10px;
-            line-height: 1.45;
-          }
-          .qr-error { color: #b91c1c; font-size: 12px; margin-top: 8px; }
-          @media print {
-            body { padding: 0; }
-            .qr-card { border-width: 1.5px; page-break-inside: avoid; }
-          }
-        </style>
-      </head><body>
-        <div class="qr-card">
-          <div class="brand">${QR_TICKET_TITLE}</div>
-          <img class="qr-img" id="qr-img" src="${qrSrc}" alt="QR del cupón" />
-          <div class="pct">-${ticket.discountPercent}%</div>
-          <div class="meta">Creado: ${formatDate(ticket.issuedAt)}</div>
-          <div class="meta">Vence: ${expiresText}</div>
-          <div class="validity">${QR_TICKET_VALIDITY_TEXT}</div>
-          <div class="qr-error hidden" id="qr-error">No se pudo cargar el QR. Cierra e intenta de nuevo.</div>
-        </div>
-        <script>
-          (function() {
-            var img = document.getElementById("qr-img");
-            var err = document.getElementById("qr-error");
-            function printNow() { setTimeout(function() { window.print(); }, 300); }
-            if (!img) return;
-            img.addEventListener("error", function() {
-              err.classList.remove("hidden");
-            });
-            if (img.complete && img.naturalWidth > 0) printNow();
-            else img.addEventListener("load", printNow);
-          })();
-        <\/script>
-      </body></html>
-    `);
+    win.document.write(buildQrPrintHtml(ticket, qrSrc));
     win.document.close();
   }
 
