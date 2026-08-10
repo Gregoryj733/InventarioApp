@@ -4,7 +4,7 @@
   const QR_TICKET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
   const QR_TICKET_TITLE = "Total Care · Cupón de descuento";
   const DEFAULT_CUSTOMER_PHONE = "00000000000";
-  const PORTAL_UI_VERSION = "16";
+  const PORTAL_UI_VERSION = "17";
   const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
   const PRINT_QUANTITY_OPTIONS = [1, 2, 4, 6, 8];
   const CARNET_WIDTH_IN = 2.125;
@@ -426,7 +426,7 @@
       const payload = {
         discountPercent: Number($("#gen-percent").value),
         channel: "PORTAL",
-        customerPhone: phoneRaw || DEFAULT_CUSTOMER_PHONE
+        customerPhone: sanitizeCustomerPhoneInput(phoneRaw)
       };
       const ticket = await api("/v1/discount-tickets", {
         method: "POST",
@@ -733,34 +733,108 @@
     };
   }
 
+  function sanitizeCustomerPhoneInput(value) {
+    const trimmed = String(value || "").trim();
+    return trimmed || DEFAULT_CUSTOMER_PHONE;
+  }
+
+  function renderPrintPhoneFields(count, context) {
+    const container = $("#print-qty-phones");
+    if (!container) return;
+
+    let html = `
+      <div class="print-qty-phones-title">
+        Teléfono por cupón <span class="muted">(opcional)</span>
+      </div>
+      <p class="print-qty-phones-hint">
+        Un campo por cupón. Si lo dejas vacío se guardará como <strong>00000000000</strong>.
+      </p>
+      <div class="print-qty-phone-grid">
+    `;
+
+    for (let i = 0; i < count; i += 1) {
+      const slot = i + 1;
+      const isExistingCoupon = Boolean(
+        context?.seedTicket && (count === 1 || (context.includeSeedInBatch && i === 0))
+      );
+      const seedPhone = context?.seedTicket?.customerPhone || "";
+      const displayValue = isExistingCoupon && seedPhone !== DEFAULT_CUSTOMER_PHONE
+        ? seedPhone
+        : "";
+      const placeholder = isExistingCoupon
+        ? "Teléfono ya registrado en este cupón"
+        : "Vacío = 00000000000";
+
+      html += `
+        <div class="field print-qty-phone-field">
+          <label for="print-phone-${i}">Cupón ${slot}</label>
+          <input
+            id="print-phone-${i}"
+            type="tel"
+            inputmode="tel"
+            autocomplete="tel"
+            class="print-qty-phone-input"
+            data-slot="${i}"
+            placeholder="${placeholder}"
+            value="${escapeHtml(displayValue)}"
+            ${isExistingCoupon ? "readonly" : ""}
+          />
+        </div>
+      `;
+    }
+
+    html += "</div>";
+    container.innerHTML = html;
+    container.classList.remove("hidden");
+  }
+
+  function collectPrintPhoneInputs(count, context) {
+    const phones = [];
+    for (let i = 0; i < count; i += 1) {
+      const isExistingCoupon = Boolean(
+        context?.seedTicket && (count === 1 || (context.includeSeedInBatch && i === 0))
+      );
+      if (isExistingCoupon) {
+        phones.push(context.seedTicket.customerPhone || DEFAULT_CUSTOMER_PHONE);
+        continue;
+      }
+      const input = document.getElementById(`print-phone-${i}`);
+      phones.push(sanitizeCustomerPhoneInput(input?.value));
+    }
+    return phones;
+  }
+
   async function createDiscountTicket(template) {
     return api("/v1/discount-tickets", {
       method: "POST",
       body: JSON.stringify({
         discountPercent: template.discountPercent,
         channel: "PORTAL",
-        customerPhone: template.customerPhone || DEFAULT_CUSTOMER_PHONE
+        customerPhone: sanitizeCustomerPhoneInput(template.customerPhone)
       })
     });
   }
 
-  async function prepareTicketsForPrint(count, context) {
-    const template = {
-      discountPercent: Number(context.discountPercent),
-      customerPhone: context.customerPhone || DEFAULT_CUSTOMER_PHONE
-    };
+  async function prepareTicketsForPrint(count, context, phones = []) {
     const tickets = [];
 
     if (count === 1 && context.seedTicket) {
       return [context.seedTicket];
     }
 
+    let phoneIndex = 0;
     if (context.includeSeedInBatch && context.seedTicket) {
       tickets.push(context.seedTicket);
+      phoneIndex = 1;
     }
 
     while (tickets.length < count) {
-      tickets.push(await createDiscountTicket(template));
+      const phone = phones[phoneIndex] || DEFAULT_CUSTOMER_PHONE;
+      tickets.push(await createDiscountTicket({
+        discountPercent: Number(context.discountPercent),
+        customerPhone: phone
+      }));
+      phoneIndex += 1;
     }
     return tickets;
   }
@@ -774,11 +848,13 @@
     const firstOption = document.querySelector('input[name="print-qty"][value="1"]');
     if (firstOption) firstOption.checked = true;
     $("#print-qty-error").classList.add("hidden");
+    renderPrintPhoneFields(1, context);
     $("#print-qty-modal").classList.remove("hidden");
   }
 
   function closePrintQuantityModal() {
     $("#print-qty-modal").classList.add("hidden");
+    $("#print-qty-phones")?.classList.add("hidden");
     state.printContext = null;
   }
 
@@ -800,7 +876,8 @@
     btn.disabled = true;
     $("#print-qty-error").classList.add("hidden");
     try {
-      const tickets = await prepareTicketsForPrint(count, state.printContext);
+      const phones = collectPrintPhoneInputs(count, state.printContext);
+      const tickets = await prepareTicketsForPrint(count, state.printContext, phones);
       closePrintQuantityModal();
       openPrintWindow(tickets, count);
       await loadTickets();
@@ -1048,6 +1125,14 @@
     $("#print-qty-cancel")?.addEventListener("click", closePrintQuantityModal);
     $("#print-qty-modal-backdrop")?.addEventListener("click", (ev) => {
       if (ev.target.id === "print-qty-modal-backdrop") closePrintQuantityModal();
+    });
+    document.querySelectorAll('input[name="print-qty"]').forEach((radio) => {
+      radio.addEventListener("change", () => {
+        const count = getSelectedPrintQuantity();
+        if (count && state.printContext) {
+          renderPrintPhoneFields(count, state.printContext);
+        }
+      });
     });
   }
 
