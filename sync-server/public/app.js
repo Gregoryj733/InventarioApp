@@ -4,6 +4,7 @@
   const QR_TICKET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
   const QR_TICKET_TITLE = "Total Care · Cupón de descuento";
   const DEFAULT_CUSTOMER_PHONE = "00000000000";
+  const PORTAL_UI_VERSION = "10";
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -161,6 +162,19 @@
     $("#user-label").textContent = `${state.user.username} (${roleLabel(state.user.role)})`;
     applyUiPermissions();
     updateGenerateButtonState();
+    loadPortalBuildInfo();
+  }
+
+  async function loadPortalBuildInfo() {
+    const el = $("#portal-build");
+    if (!el) return;
+    try {
+      const data = await fetch("/portal/build.json", { cache: "no-store" }).then((r) => r.json());
+      const commit = data.commit ? String(data.commit).slice(0, 7) : "?";
+      el.textContent = `Portal v${data.portalVersion || PORTAL_UI_VERSION} · ${commit}`;
+    } catch (_) {
+      el.textContent = `Portal v${PORTAL_UI_VERSION}`;
+    }
   }
 
   function roleLabel(role) {

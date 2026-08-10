@@ -379,6 +379,12 @@ tr:hover td { background: #f8fafc; }
 .live-on::before { background: var(--success); }
 .live-off::before { background: var(--warning); }
 
+.portal-build {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .access-mode {
   margin-right: 10px;
   font-weight: 600;

@@ -73,6 +73,17 @@ app.get("/", (_req, res) => {
 // Portal web: se sirve ANTES del chequeo de X-Api-Key para que el navegador
 // pueda cargar HTML/CSS/JS sin credenciales de dispositivo.
 const portalDir = path.join(__dirname, "public");
+const PORTAL_BUILD_VERSION = "10";
+
+app.get("/portal/build.json", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    portalVersion: PORTAL_BUILD_VERSION,
+    commit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || "local",
+    deployedAt: process.env.RENDER_GIT_COMMIT ? "render" : "local"
+  });
+});
+
 app.use("/portal", express.static(portalDir, {
   index: "index.html",
   fallthrough: false,

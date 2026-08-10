@@ -9,6 +9,7 @@ services:
     plan: free
     region: ohio
     healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: API_KEY
         value: TcSync-7kM9pQ2xR4nW

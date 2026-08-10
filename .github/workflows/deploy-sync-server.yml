@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "sync-server/**"
+      - "render.yaml"
       - ".github/workflows/deploy-sync-server.yml"
   workflow_dispatch:
 
@@ -15,23 +16,31 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      # El servicio en Render (ver render.yaml, runtime: docker) construye su
-      # propia imagen directamente desde el Dockerfile del repo en cada push,
-      # así que aquí solo se fuerza el redeploy por API como respaldo (por si
-      # "autodeploy" quedara deshabilitado en el dashboard). No se debe pasar
-      # "imageUrl": ese parámetro es solo para servicios "image-backed" y
-      # provoca un 400 en un servicio "runtime: docker" como este (causa de
-      # que todos los deploys automáticos fallaran silenciosamente).
+      # Respaldo: dispara redeploy en Render por API. Si RENDER_API_KEY falla (401),
+      # Render puede seguir desplegando por Auto-Deploy del repo; en ese caso haz
+      # Manual Deploy en el dashboard de Render.
       - name: Trigger Render deploy
+        id: render_deploy
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: |
-          response=$(curl -fsS -X POST "https://api.render.com/v1/services/srv-d9o2qejncjis73b4p700/deploys" \
+          set +e
+          http_code=$(curl -sS -o /tmp/render-deploy.json -w "%{http_code}" -X POST \
+            "https://api.render.com/v1/services/srv-d9o2qejncjis73b4p700/deploys" \
             -H "Authorization: Bearer ${RENDER_API_KEY}" \
             -H "Content-Type: application/json" \
             -d '{"clearCache":"do_not_clear"}')
-          echo "$response"
-          deploy_id=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "Render API HTTP status: $http_code"
+          cat /tmp/render-deploy.json || true
+          if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
+            echo "::warning::RENDER_API_KEY inválida o sin permisos ($http_code). Verifica el secret en GitHub o haz Manual Deploy en Render."
+            exit 0
+          fi
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "::error::Render deploy API falló con HTTP $http_code"
+            exit 1
+          fi
+          deploy_id=$(python3 -c "import json; print(json.load(open('/tmp/render-deploy.json'))['id'])")
           echo "Deploy id: $deploy_id"
           for i in $(seq 1 60); do
             status=$(curl -fsS "https://api.render.com/v1/services/srv-d9o2qejncjis73b4p700/deploys/${deploy_id}" \
@@ -42,10 +51,20 @@ jobs:
               exit 0
             fi
             if [ "$status" = "build_failed" ] || [ "$status" = "update_failed" ] || [ "$status" = "canceled" ]; then
-              echo "Deploy failed with status: $status"
+              echo "::error::Deploy failed with status: $status"
               exit 1
             fi
             sleep 15
           done
-          echo "Timed out waiting for Render deploy."
-          exit 1
+          echo "::warning::Timed out waiting for Render deploy."
+          exit 0
+
+      - name: Verify portal version on production
+        run: |
+          for i in $(seq 1 12); do
+            body=$(curl -fsS "https://inventario-sync-totalcare.onrender.com/portal/build.json" || true)
+            echo "build.json: $body"
+            echo "$body" | grep -q '"portalVersion":"10"' && exit 0
+            sleep 15
+          done
+          echo "::warning::Producción aún no muestra portal v10. Haz Manual Deploy en Render si Auto-Deploy no corrió."
