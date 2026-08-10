@@ -4,7 +4,7 @@
   const QR_TICKET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
   const QR_TICKET_TITLE = "Total Care · Cupón de descuento";
   const DEFAULT_CUSTOMER_PHONE = "00000000000";
-  const PORTAL_UI_VERSION = "11";
+  const PORTAL_UI_VERSION = "12";
   const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
 
   const $ = (sel) => document.querySelector(sel);
@@ -22,6 +22,7 @@
     pageSize: 10,
     selected: null,
     lastGenerated: null,
+    pendingDeleteCode: null,
     loading: false,
     ws: null
   };
@@ -370,6 +371,7 @@
           <button class="btn btn-ghost btn-sm" data-action="detail" data-code="${t.code}">Ver</button>
           ${canManagePortal() && (t.displayStatus === "ISSUED" || t.displayStatus === "ACTIVE") ? `<button class="btn btn-ghost btn-sm" data-action="print-qr" data-code="${t.code}">QR</button>` : ""}
           ${canManagePortal() && (t.displayStatus === "ISSUED" || t.displayStatus === "ACTIVE") ? `<button class="btn btn-danger btn-sm" data-action="void" data-code="${t.code}">Anular</button>` : ""}
+          ${canManagePortal() && t.displayStatus === "VOIDED" ? `<button class="btn btn-danger btn-sm" data-action="delete" data-code="${t.code}">Eliminar</button>` : ""}
         </td>
       </tr>
     `).join("");
@@ -575,9 +577,15 @@
       </ul>
     `;
     const printBtn = $("#modal-print-qr");
+    const deleteBtn = $("#modal-delete");
     if (printBtn) {
-      printBtn.classList.toggle("hidden", !canManagePortal());
+      printBtn.classList.toggle("hidden", !canManagePortal() || ticket.displayStatus === "VOIDED");
       printBtn.onclick = () => printQrCode(ticket);
+    }
+    if (deleteBtn) {
+      const canDelete = canManagePortal() && ticket.displayStatus === "VOIDED";
+      deleteBtn.classList.toggle("hidden", !canDelete);
+      deleteBtn.onclick = () => openDeleteModal(ticket.code);
     }
     $("#modal").classList.remove("hidden");
   }
@@ -605,10 +613,64 @@
         method: "PATCH",
         body: JSON.stringify({ reason: reason.trim() })
       });
+      await loadTickets();
+      const updated = state.tickets.find((t) => t.code === code);
+      if (updated && state.selected?.code === code) {
+        openDetail(updated);
+      } else {
+        closeModal();
+      }
+      alert("Cupón anulado. Para eliminarlo permanentemente, usa el botón Eliminar e ingresa el código de acceso.");
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  function openDeleteModal(code) {
+    if (!canManagePortal()) return;
+    const ticket = state.tickets.find((t) => t.code === code) || state.selected;
+    if (!ticket || ticket.displayStatus !== "VOIDED") {
+      alert("Para eliminar un cupón primero debes anularlo con el botón Anular.");
+      return;
+    }
+    state.pendingDeleteCode = code;
+    $("#delete-access-code").value = "";
+    $("#delete-error").classList.add("hidden");
+    $("#delete-modal-code").textContent = code;
+    $("#delete-modal").classList.remove("hidden");
+  }
+
+  function closeDeleteModal() {
+    $("#delete-modal").classList.add("hidden");
+    state.pendingDeleteCode = null;
+    $("#delete-access-code").value = "";
+    $("#delete-error").classList.add("hidden");
+  }
+
+  async function confirmDeleteTicket() {
+    const code = state.pendingDeleteCode;
+    if (!code || !canManagePortal()) return;
+    const accessCode = $("#delete-access-code").value.trim();
+    if (!accessCode) {
+      $("#delete-error").textContent = "Ingresa el código de acceso.";
+      $("#delete-error").classList.remove("hidden");
+      return;
+    }
+    const btn = $("#delete-confirm");
+    btn.disabled = true;
+    try {
+      await api(`/v1/discount-tickets/${code}`, {
+        method: "DELETE",
+        body: JSON.stringify({ accessCode })
+      });
+      closeDeleteModal();
       closeModal();
       await loadTickets();
     } catch (err) {
-      alert(err.message);
+      $("#delete-error").textContent = err.message || "No se pudo eliminar el cupón.";
+      $("#delete-error").classList.remove("hidden");
+    } finally {
+      btn.disabled = false;
     }
   }
 
@@ -678,6 +740,12 @@
         if (ticket) printQrCode(ticket);
       }
       if (btn.dataset.action === "void") voidCode(code);
+      if (btn.dataset.action === "delete") openDeleteModal(code);
+    });
+    $("#delete-confirm")?.addEventListener("click", confirmDeleteTicket);
+    $("#delete-cancel")?.addEventListener("click", closeDeleteModal);
+    $("#delete-modal-backdrop")?.addEventListener("click", (ev) => {
+      if (ev.target.id === "delete-modal-backdrop") closeDeleteModal();
     });
   }
 

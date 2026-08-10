@@ -7,8 +7,8 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Portal de Cupones · InventarioApp</title>
-  <link rel="stylesheet" href="styles.css?v=11" />
-  <script src="app.js?v=11" defer></script>
+  <link rel="stylesheet" href="styles.css?v=12" />
+  <script src="app.js?v=12" defer></script>
 </head>
 <body>
   <div id="app">
@@ -171,7 +171,27 @@
         <div id="modal-body"></div>
         <div class="actions-row">
           <button id="modal-print-qr" class="btn btn-primary hidden">Imprimir QR</button>
+          <button id="modal-delete" class="btn btn-danger hidden">Eliminar</button>
           <button id="modal-close" class="btn btn-ghost">Cerrar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="delete-modal" class="modal-backdrop hidden">
+      <div class="modal" id="delete-modal-backdrop">
+        <h3>Eliminar cupón permanentemente</h3>
+        <p class="delete-modal-text">
+          El cupón <strong id="delete-modal-code"></strong> será borrado de la base de datos.
+          Solo puedes eliminar cupones que ya estén <strong>anulados</strong>.
+        </p>
+        <div class="field">
+          <label for="delete-access-code">Código de acceso</label>
+          <input id="delete-access-code" type="password" autocomplete="off" placeholder="Ingresa el código de acceso" />
+        </div>
+        <div id="delete-error" class="alert alert-error hidden"></div>
+        <div class="actions-row">
+          <button id="delete-confirm" type="button" class="btn btn-danger">Eliminar permanentemente</button>
+          <button id="delete-cancel" type="button" class="btn btn-ghost">Cancelar</button>
         </div>
       </div>
     </div>

@@ -38,6 +38,7 @@ const DISCOUNT_MANAGE_ROLES = ["ADMIN", "SUPERVISOR"];
 // Vigencia fija de 30 días desde la activación del cupón en la app móvil.
 const DISCOUNT_TICKET_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_DISCOUNT_PERCENT = 10;
+const PORTAL_DELETE_ACCESS_CODE = process.env.PORTAL_DELETE_ACCESS_CODE || "super";
 
 const app = express();
 app.use(express.json({ limit: "12mb" }));
@@ -73,7 +74,7 @@ app.get("/", (_req, res) => {
 // Portal web: se sirve ANTES del chequeo de X-Api-Key para que el navegador
 // pueda cargar HTML/CSS/JS sin credenciales de dispositivo.
 const portalDir = path.join(__dirname, "public");
-const PORTAL_BUILD_VERSION = "11";
+const PORTAL_BUILD_VERSION = "12";
 
 app.get("/portal/build.json", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -1232,6 +1233,30 @@ async function start() {
       });
       realtime.broadcast("discountTickets", {});
       res.json({ ticket: ticketPublicView(updated) });
+    })
+  );
+
+  app.delete(
+    "/v1/discount-tickets/:code",
+    auth.requireAuth(DISCOUNT_MANAGE_ROLES),
+    asyncRoute(async (req, res) => {
+      const code = String(req.params.code || "").trim().toUpperCase();
+      const accessCode = String(req.body?.accessCode || "").trim();
+      if (accessCode !== PORTAL_DELETE_ACCESS_CODE) {
+        throw publicError("Código de acceso incorrecto", 403);
+      }
+      const deleted = await store.runTransaction(async (state) => {
+        const index = state.discountTickets.findIndex((t) => t.code === code);
+        if (index === -1) throw publicError("Código no encontrado", 404);
+        const ticket = state.discountTickets[index];
+        if (ticket.status !== "VOIDED") {
+          throw publicError("El cupón debe estar anulado antes de eliminarlo");
+        }
+        const discountTickets = state.discountTickets.filter((t) => t.code !== code);
+        return { state: { ...state, discountTickets }, result: { code } };
+      });
+      realtime.broadcast("discountTickets", {});
+      res.json({ ok: true, code: deleted.code });
     })
   );
 
