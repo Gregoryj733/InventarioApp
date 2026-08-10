@@ -4,7 +4,7 @@
   const QR_TICKET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
   const QR_TICKET_TITLE = "Total Care · Cupón de descuento";
   const DEFAULT_CUSTOMER_PHONE = "00000000000";
-  const PORTAL_UI_VERSION = "13";
+  const PORTAL_UI_VERSION = "14";
   const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
 
   const $ = (sel) => document.querySelector(sel);
@@ -598,16 +598,14 @@
             letter-spacing: .04em;
             color: #fff;
           }
-          .brand-main em {
-            font-style: normal;
-            color: #ff3030;
-          }
-          .brand-sub {
-            margin-top: 2px;
-            font-size: 9px;
-            letter-spacing: .18em;
+          .brand-main .dark { color: #1a1a1a; }
+          .brand-address {
+            margin-top: 6px;
+            font-size: 10px;
+            letter-spacing: .1em;
             text-transform: uppercase;
-            color: rgba(255,255,255,.75);
+            color: rgba(255,255,255,.85);
+            font-weight: 600;
           }
           .qr-error {
             color: #ffb4b4;
@@ -632,13 +630,13 @@
                 <img class="qr-img" id="qr-img" src="${qrSrc}" alt="QR del cupón" />
               </div>
             </div>
-            <div class="banner"><span><span class="dark">TOTAL</span> CARE</span></div>
+            <div class="banner"><span><span class="dark">SUPRA</span> PART</span></div>
             <div class="meta">Creado: ${formatDate(ticket.issuedAt)}</div>
             <div class="meta">Vence: ${expiresText}</div>
             <div class="validity">${QR_TICKET_VALIDITY_TEXT}</div>
             <div class="brand">
-              <div class="brand-main">SUPER <em>REPUESTOS</em></div>
-              <div class="brand-sub">Canjeable en tienda · Total Care</div>
+              <div class="brand-main"><span class="dark">TOTAL</span> CARE</div>
+              <div class="brand-address">dirección AV. RIVAS</div>
             </div>
             <div class="qr-error hidden" id="qr-error">No se pudo cargar el QR. Cierra e intenta de nuevo.</div>
           </div>
