@@ -145,6 +145,11 @@ label {
   margin-bottom: 6px;
 }
 
+.muted {
+  color: var(--muted);
+  font-weight: 400;
+}
+
 input, select, textarea {
   width: 100%;
   padding: 10px 12px;

@@ -242,11 +242,13 @@
     const params = new URLSearchParams({ list: "1" });
     const status = $("#filter-status").value;
     const code = $("#filter-code").value.trim();
+    const phone = $("#filter-phone").value.trim();
     const percent = $("#filter-percent").value;
     const issuedStart = $("#filter-start").value;
     const issuedEnd = $("#filter-end").value;
     if (status) params.set("status", status);
     if (code) params.set("code", code);
+    if (phone) params.set("phone", phone);
     if (percent) params.set("percent", percent);
     if (issuedStart) params.set("issuedStart", String(new Date(issuedStart).getTime()));
     if (issuedEnd) {
@@ -268,7 +270,7 @@
       renderStats();
       renderTable();
     } catch (err) {
-      $("#table-body").innerHTML = `<tr><td colspan="7" class="empty">${err.message}</td></tr>`;
+      $("#table-body").innerHTML = `<tr><td colspan="8" class="empty">${err.message}</td></tr>`;
     } finally {
       if (!silent) state.loading = false;
       if (!silent) $("#refresh-btn").disabled = false;
@@ -293,12 +295,13 @@
   function renderTable() {
     const tbody = $("#table-body");
     if (!state.tickets.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty">No hay cupones que coincidan con los filtros.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty">No hay cupones que coincidan con los filtros.</td></tr>';
       return;
     }
     tbody.innerHTML = state.tickets.map((t) => `
       <tr>
         <td class="code-cell">${t.code}</td>
+        <td>${escapeHtml(t.customerPhone || "—")}</td>
         <td>${t.discountPercent}%</td>
         <td>${formatDate(t.issuedAt)}</td>
         <td>${formatDate(t.activatedAt)}</td>
@@ -328,18 +331,24 @@
     const btn = $("#generate-btn");
     btn.disabled = true;
     try {
+      const phoneRaw = $("#gen-phone").value.trim();
+      const payload = {
+        discountPercent: Number($("#gen-percent").value),
+        channel: "PORTAL"
+      };
+      if (phoneRaw) payload.customerPhone = phoneRaw;
       const ticket = await api("/v1/discount-tickets", {
         method: "POST",
-        body: JSON.stringify({
-          discountPercent: Number($("#gen-percent").value),
-          channel: "PORTAL"
-        })
+        body: JSON.stringify(payload)
       });
       state.lastGenerated = ticket;
       $("#generate-success").textContent =
-        `Cupón ${ticket.code} generado (${ticket.discountPercent}%). Actívalo escaneando el QR desde la app.`;
+        `Cupón ${ticket.code} generado (${ticket.discountPercent}%).` +
+        (ticket.customerPhone ? ` Teléfono: ${ticket.customerPhone}.` : "") +
+        " Actívalo escaneando el QR desde la app.";
       $("#generate-success").classList.remove("hidden");
       $("#generate-qr-btn").classList.remove("hidden");
+      $("#gen-phone").value = "";
       openDetail(ticket);
       await loadTickets();
     } catch (err) {
@@ -465,6 +474,7 @@
       ${qrBlock}
       <div class="detail-grid">
         <div class="detail-row"><span>Descuento</span><span>${ticket.discountPercent}%</span></div>
+        <div class="detail-row"><span>Teléfono</span><span>${escapeHtml(ticket.customerPhone || "—")}</span></div>
         <div class="detail-row"><span>Estado</span><span><span class="badge ${badgeClass(ticket.displayStatus)}">${statusLabel(ticket.displayStatus)}</span></span></div>
         <div class="detail-row"><span>Creado</span><span>${formatDate(ticket.issuedAt)}</span></div>
         <div class="detail-row"><span>Activado</span><span>${formatDate(ticket.activatedAt)}</span></div>
@@ -541,6 +551,7 @@
     $("#clear-filters").addEventListener("click", () => {
       $("#filter-status").value = "";
       $("#filter-code").value = "";
+      $("#filter-phone").value = "";
       $("#filter-percent").value = "";
       $("#filter-start").value = "";
       $("#filter-end").value = "";

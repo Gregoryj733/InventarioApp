@@ -7,15 +7,15 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Portal de Cupones · InventarioApp</title>
-  <link rel="stylesheet" href="styles.css?v=7" />
-  <script src="app.js?v=7" defer></script>
+  <link rel="stylesheet" href="styles.css?v=8" />
+  <script src="app.js?v=8" defer></script>
 </head>
 <body>
   <div id="app">
     <section id="login-view" class="login-wrap">
       <div class="login-card">
         <h1>Cupones de descuento</h1>
-        <p>Sin datos personales. Los cupones se activan escaneando el QR desde la app móvil.</p>
+        <p>Sin datos personales obligatorios. Teléfono opcional para seguimiento. Los cupones se activan escaneando el QR desde la app móvil.</p>
         <div id="login-error" class="alert alert-error hidden"></div>
         <form id="login-form">
           <div class="field">
@@ -68,7 +68,11 @@
             <label for="gen-percent">Porcentaje de descuento (%)</label>
             <input id="gen-percent" type="number" min="1" max="100" step="0.5" value="10" required />
           </div>
-          <div class="field" style="display:flex;align-items:flex-end;gap:8px;">
+          <div class="field">
+            <label for="gen-phone">Teléfono del cliente <span class="muted">(opcional)</span></label>
+            <input id="gen-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Ej. 04141234567" />
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;gap:8px;grid-column:1/-1;">
             <button id="generate-btn" type="submit" class="btn btn-primary" style="flex:1;">Generar cupón</button>
             <button id="generate-qr-btn" type="button" class="btn btn-ghost hidden" style="flex:1;">Imprimir QR</button>
           </div>
@@ -81,6 +85,10 @@
           <div class="field">
             <label for="filter-code">Buscar por código</label>
             <input id="filter-code" type="search" placeholder="Código del cupón…" />
+          </div>
+          <div class="field">
+            <label for="filter-phone">Buscar por teléfono</label>
+            <input id="filter-phone" type="search" inputmode="tel" placeholder="Ej. 0414…" />
           </div>
           <div class="field">
             <label for="filter-status">Estado</label>
@@ -116,6 +124,7 @@
             <thead>
               <tr>
                 <th>Código</th>
+                <th>Teléfono</th>
                 <th>%</th>
                 <th>Creado</th>
                 <th>Activado</th>
@@ -125,7 +134,7 @@
               </tr>
             </thead>
             <tbody id="table-body">
-              <tr><td colspan="7" class="empty">Cargando…</td></tr>
+              <tr><td colspan="8" class="empty">Cargando…</td></tr>
             </tbody>
           </table>
         </div>

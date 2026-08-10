@@ -162,6 +162,16 @@ function generateTicketCode() {
   return crypto.randomBytes(12).toString("hex").toUpperCase();
 }
 
+function sanitizeCustomerPhone(raw) {
+  if (raw == null || raw === "") return null;
+  const digits = String(raw).replace(/\D/g, "");
+  if (!digits) return null;
+  if (digits.length < 7 || digits.length > 15) {
+    throw publicError("Teléfono inválido. Debe tener entre 7 y 15 dígitos.");
+  }
+  return digits;
+}
+
 function normalizeTicketRecord(ticket) {
   if (!ticket) return ticket;
   const normalized = { ...ticket };
@@ -204,6 +214,7 @@ function ticketPublicView(ticket, now = Date.now()) {
     usedBySaleSyncId: enriched.usedBySaleSyncId || null,
     issuedByUsername: enriched.issuedByUsername || "",
     issuedChannel: enriched.issuedChannel || "PORTAL",
+    customerPhone: enriched.customerPhone || null,
     auditLog: enriched.auditLog || []
   };
 }
@@ -273,6 +284,10 @@ function filterDiscountTickets(tickets, query, now = Date.now()) {
   const codeQuery = String(query.code || query.customer || "").trim().toUpperCase();
   if (codeQuery) {
     result = result.filter((t) => t.code.includes(codeQuery));
+  }
+  const phoneQuery = String(query.phone || "").replace(/\D/g, "");
+  if (phoneQuery) {
+    result = result.filter((t) => String(t.customerPhone || "").includes(phoneQuery));
   }
   const percent = Number(query.percent);
   if (Number.isFinite(percent) && percent > 0) {
@@ -1072,6 +1087,7 @@ async function start() {
       const sourceSaleSyncId = req.body?.sourceSaleSyncId ? String(req.body.sourceSaleSyncId) : null;
       const channel = String(req.body?.channel || "PORTAL").trim().toUpperCase();
       const requestedPercent = Number(req.body?.discountPercent);
+      const customerPhone = sanitizeCustomerPhone(req.body?.customerPhone);
       const created = await store.runTransaction(async (state) => {
         const now = Date.now();
         const defaultPercent = Number(state.meta.discountPercent) > 0
@@ -1103,6 +1119,7 @@ async function start() {
           usedByUsername: null,
           issuedByUsername: req.user?.username || "",
           issuedChannel: channel === "APP" ? "APP" : "PORTAL",
+          customerPhone,
           sourceSaleSyncId,
           voidedAt: null,
           voidedByUsername: null,
@@ -1111,7 +1128,8 @@ async function start() {
         };
         ticket = appendTicketAudit(ticket, "CREATED", req.user?.username || "", {
           discountPercent: percent,
-          channel: ticket.issuedChannel
+          channel: ticket.issuedChannel,
+          ...(customerPhone ? { customerPhone } : {})
         });
         return {
           state: {
