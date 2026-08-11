@@ -331,11 +331,19 @@ async function runTransaction(mutator) {
   }
 }
 
+async function ping() {
+  if (!pool) {
+    throw new Error("Postgres no inicializado");
+  }
+  await pool.query("SELECT 1");
+}
+
 module.exports = {
   init,
   loadState,
   loadSales,
   saveState,
   runTransaction,
+  ping,
   backend: "postgres"
 };

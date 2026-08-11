@@ -87,6 +87,7 @@ module.exports = {
   loadSales,
   saveState,
   runTransaction,
+  ping: async () => {},
   backend: "file",
   dataPath: DATA_FILE
 };

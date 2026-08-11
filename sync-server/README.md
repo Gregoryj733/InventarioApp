@@ -84,6 +84,10 @@ Recompila el APK e instálalo en los celulares.
 
 - El plan free de Render **duerme** tras ~15 min sin tráfico; la app lo reactiva al sincronizar (puede tardar ~30 s).
 - Sin `DATABASE_URL`, el inventario **no persiste** entre reinicios del servicio.
+- Si Neon muestra *"exceeded the data transfer quota"* (código `53000`), el servidor
+  hace fallback a archivo para poder arrancar; en Render free eso sigue siendo
+  efímero. Solución: nuevo proyecto en [neon.tech](https://neon.tech), plan de pago,
+  o esperar el reset mensual de cuota.
 - Alternativa local: `npm start` en esta carpeta.
 
 ## API

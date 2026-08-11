@@ -64,7 +64,11 @@ app.get("/health", async (_req, res) => {
     return res.status(200).json({ ok: false, service: "inventario-sync", starting: true });
   }
   try {
-    await storeRef.loadState();
+    if (typeof storeRef.ping === "function") {
+      await storeRef.ping();
+    } else {
+      await storeRef.loadState();
+    }
     res.json({ ok: true, service: "inventario-sync", backend: storeRef.backend });
   } catch (error) {
     console.error("Health check failed", error);
