@@ -38,10 +38,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 
-enum class LoginStatus {
-    SUCCESS,
-    INVALID,
-    INACTIVE
+sealed class LoginResult {
+    data class Success(val user: User) : LoginResult()
+    data object InvalidCredentials : LoginResult()
+    data object Inactive : LoginResult()
+    data class Unavailable(val message: String) : LoginResult()
 }
 
 /**
@@ -60,8 +61,23 @@ class AuthRepository(
     /** El servidor crea los usuarios por defecto (admin/admin, consulta/consulta) al iniciar. */
     suspend fun ensureDefaultUsers() = Unit
 
-    suspend fun login(username: String, password: String): User? = withContext(Dispatchers.IO) {
-        runCatching {
+    /**
+     * Despierta el sync-server si hace falta y autentica en una sola pasada.
+     * Distingue credenciales inválidas de servidor caído / cold start.
+     */
+    suspend fun login(username: String, password: String): LoginResult = withContext(Dispatchers.IO) {
+        try {
+            cloudSync.ensureServerReadyForLogin()
+        } catch (error: Throwable) {
+            return@withContext LoginResult.Unavailable(
+                error.toUserMessage(
+                    "No se pudo contactar al servidor de sincronización. " +
+                        "En plan gratuito puede tardar hasta 1 minuto en iniciar; inténtalo de nuevo."
+                )
+            )
+        }
+
+        try {
             val response = cloudSync.postJson(
                 "/v1/auth/login",
                 JSONObject().apply {
@@ -72,22 +88,19 @@ class AuthRepository(
             val token = response.getString("token")
             cloudSync.setAuthToken(token)
             sessionManager.saveToken(token)
-            response.getJSONObject("user").toUser()
-        }.getOrNull()
-    }
-
-    suspend fun loginStatus(username: String, password: String): LoginStatus = withContext(Dispatchers.IO) {
-        runCatching {
-            cloudSync.postJson(
-                "/v1/auth/login",
-                JSONObject().apply {
-                    put("username", username.trim())
-                    put("password", password)
-                }
+            LoginResult.Success(response.getJSONObject("user").toUser())
+        } catch (error: ApiException) {
+            when (error.code) {
+                403 -> LoginResult.Inactive
+                401 -> LoginResult.InvalidCredentials
+                else -> LoginResult.Unavailable(
+                    error.toUserMessage("No se pudo iniciar sesión. Inténtalo de nuevo.")
+                )
+            }
+        } catch (error: Throwable) {
+            LoginResult.Unavailable(
+                error.toUserMessage("No se pudo iniciar sesión. Inténtalo de nuevo.")
             )
-            LoginStatus.SUCCESS
-        }.getOrElse { error ->
-            if (error is ApiException && error.code == 403) LoginStatus.INACTIVE else LoginStatus.INVALID
         }
     }
 

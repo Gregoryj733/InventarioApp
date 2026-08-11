@@ -66,10 +66,9 @@ class ApiException(val code: Int, message: String) : Exception(message)
 fun Throwable.toUserMessage(fallback: String = "Ocurrió un error inesperado."): String {
     if (this !is ApiException) {
         return when {
-            message?.contains("network", ignoreCase = true) == true ||
-                message?.contains("failed to connect", ignoreCase = true) == true ||
-                message?.contains("Unable to resolve host", ignoreCase = true) == true ->
-                "Sin conexión a internet o servidor inaccesible."
+            isTransientNetworkFailure() ->
+                "Sin conexión a internet o el servidor no responde. " +
+                    "En plan gratuito puede tardar hasta 1 minuto en iniciar; inténtalo de nuevo."
             else -> localizedMessage ?: fallback
         }
     }
@@ -85,6 +84,26 @@ fun Throwable.toUserMessage(fallback: String = "Ocurrió un error inesperado."):
         in 500..599 -> "Error del servidor de sincronización (HTTP $code). Vuelve a intentarlo."
         else -> fallback
     }
+}
+
+/** Timeouts, DNS o conexión rechazada: suelen ocurrir mientras Render/Neon despiertan. */
+fun Throwable.isTransientNetworkFailure(): Boolean {
+    if (this is java.net.SocketTimeoutException ||
+        this is java.net.ConnectException ||
+        this is java.net.UnknownHostException ||
+        this is java.net.NoRouteToHostException ||
+        this is java.io.InterruptedIOException
+    ) {
+        return true
+    }
+    val msg = message.orEmpty()
+    return msg.contains("timeout", ignoreCase = true) ||
+        msg.contains("timed out", ignoreCase = true) ||
+        msg.contains("failed to connect", ignoreCase = true) ||
+        msg.contains("Unable to resolve host", ignoreCase = true) ||
+        msg.contains("Connection reset", ignoreCase = true) ||
+        msg.contains("Connection refused", ignoreCase = true) ||
+        msg.contains("network", ignoreCase = true)
 }
 
 /**
@@ -106,8 +125,10 @@ class CloudSync(private val config: SyncConfig) {
     val sessionExpired: SharedFlow<Unit> = _sessionExpired.asSharedFlow()
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        // Render free puede tardar ~30–60s en el cold start; un connect corto
+        // hace que el login falle antes de que el contenedor esté listo.
+        .connectTimeout(45, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .pingInterval(25, TimeUnit.SECONDS)
         .build()
@@ -308,6 +329,22 @@ class CloudSync(private val config: SyncConfig) {
         }
     }
 
+    /**
+     * Despierta el sync-server (plan free de Render/Neon) hasta que /health
+     * responda OK. Usado al arrancar el WebSocket y antes del login.
+     */
+    suspend fun ensureServerReady(maxAttempts: Int = RETRY_DELAYS_MS.size) {
+        requireConfigured()
+        wakeServerWithRetry(maxAttempts)
+    }
+
+    /** Login: menos reintentos si el servidor local ya respondió al probe. */
+    suspend fun ensureServerReadyForLogin() {
+        requireConfigured()
+        val attempts = if (SyncServerResolver.probe(config)) 1 else RETRY_DELAYS_MS.size
+        wakeServerWithRetry(attempts)
+    }
+
     /** Espera a que el servidor (posiblemente "dormido" en el plan free) responda /health. */
     private suspend fun wakeServerWithRetry(maxAttempts: Int = RETRY_DELAYS_MS.size) {
         var lastError: Throwable? = null
@@ -395,21 +432,21 @@ class CloudSync(private val config: SyncConfig) {
             else -> message ?: "Error HTTP $code"
         }
         else -> when {
-            message?.contains("network", ignoreCase = true) == true ||
-                message?.contains("failed to connect", ignoreCase = true) == true ||
-                message?.contains("Unable to resolve host", ignoreCase = true) == true ->
+            isTransientNetworkFailure() ->
                 "Sin conexión a internet o servidor inaccesible."
             else -> localizedMessage ?: "Error de sincronización"
         }
     }
 
     private fun Throwable.isRetryableSyncError(): Boolean =
-        this is ApiException && code in RETRYABLE_HTTP_CODES
+        (this is ApiException && code in RETRYABLE_HTTP_CODES) || isTransientNetworkFailure()
 
     companion object {
         private const val TAG = "CloudSync"
         private val RETRYABLE_HTTP_CODES = setOf(502, 503, 504)
-        private val RETRY_DELAYS_MS = longArrayOf(0L, 8_000L, 15_000L, 25_000L, 40_000L)
+        // ~0+8+15+25+40+45s de espera entre intentos; con connectTimeout 45s
+        // cubre cold starts largos de Render sin marcar "credenciales incorrectas".
+        private val RETRY_DELAYS_MS = longArrayOf(0L, 8_000L, 15_000L, 25_000L, 40_000L, 45_000L)
         private val RECONNECT_DELAYS_MS = longArrayOf(3_000L, 6_000L, 12_000L, 20_000L, 30_000L)
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private const val NOT_CONFIGURED_MESSAGE =

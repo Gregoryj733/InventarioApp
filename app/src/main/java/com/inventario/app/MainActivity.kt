@@ -176,7 +176,13 @@ private fun InventarioRoot(app: InventarioApplication) {
         if (!loggedIn) {
             val loginVm: LoginViewModel = viewModel(
                 key = "login_$loginSessionKey",
-                factory = LoginViewModel.factory(app.authRepository, app.sessionManager)
+                factory = LoginViewModel.factory(
+                    authRepository = app.authRepository,
+                    sessionManager = app.sessionManager,
+                    appContext = app,
+                    cloudSyncStatus = app.cloudSyncStatus,
+                    restartCloudSync = { app.restartCloudSync() }
+                )
             )
             LoginScreen(
                 viewModel = loginVm,

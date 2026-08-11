@@ -46,9 +46,22 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 
 
 let storeRef = null;
 
+const httpServer = http.createServer(app);
+
+function listenHttpServer() {
+  return new Promise((resolve, reject) => {
+    httpServer.once("error", reject);
+    httpServer.listen(PORT, "0.0.0.0", () => {
+      httpServer.off("error", reject);
+      resolve();
+    });
+  });
+}
+
 app.get("/health", async (_req, res) => {
   if (!storeRef) {
-    return res.status(503).json({ ok: false, service: "inventario-sync", starting: true });
+    // 200 (no 503) para que el health check de Render pase mientras Neon/Postgres despierta.
+    return res.status(200).json({ ok: false, service: "inventario-sync", starting: true });
   }
   try {
     await storeRef.loadState();
@@ -494,6 +507,10 @@ function startKeepAlive() {
 }
 
 async function start() {
+  realtime.attach(httpServer, API_KEY);
+  await listenHttpServer();
+  console.log(`Inventario sync server listening on http://0.0.0.0:${PORT} (inicializando almacenamiento…)`);
+
   const store = await createStore();
   storeRef = store;
   push.init();
@@ -1401,20 +1418,14 @@ async function start() {
     })
   );
 
-  const httpServer = http.createServer(app);
-  realtime.attach(httpServer, API_KEY);
-
-  httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`Inventario sync server on http://0.0.0.0:${PORT}`);
-    console.log(`Storage backend: ${store.backend}`);
-    if (store.dataPath) {
-      console.log(`Data file: ${store.dataPath}`);
-    }
-    console.log(`API key configured: ${API_KEY ? "yes" : "no"}`);
-    console.log(`WebSocket endpoint: /v1/ws`);
-    console.log(`Discount portal: http://0.0.0.0:${PORT}/portal/`);
-    startKeepAlive();
-  });
+  console.log(`Storage backend: ${store.backend}`);
+  if (store.dataPath) {
+    console.log(`Data file: ${store.dataPath}`);
+  }
+  console.log(`API key configured: ${API_KEY ? "yes" : "no"}`);
+  console.log(`WebSocket endpoint: /v1/ws`);
+  console.log(`Discount portal: http://0.0.0.0:${PORT}/portal/`);
+  startKeepAlive();
 }
 
 start().catch((error) => {

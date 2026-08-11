@@ -1,4 +1,8 @@
 {
   "baseUrl": "https://inventario-sync-totalcare.onrender.com",
-  "apiKey": "TcSync-7kM9pQ2xR4nW"
+  "apiKey": "TcSync-7kM9pQ2xR4nW",
+  "fallbackUrls": [
+    "http://10.0.2.2:8787",
+    "http://192.168.1.6:8787"
+  ]
 }

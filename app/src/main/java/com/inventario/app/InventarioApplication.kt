@@ -61,6 +61,9 @@ class InventarioApplication : Application() {
     private lateinit var cloudSync: CloudSync
     private var networkMonitor: NetworkMonitor? = null
 
+    val cloudSyncStatus: StateFlow<CloudSyncInfo>
+        get() = cloudSync.status
+
     /**
      * Estable a través de reinicios de [cloudSync] (p. ej. al cambiar de
      * servidor desde ajustes): reenvía el evento de sesión vencida para que

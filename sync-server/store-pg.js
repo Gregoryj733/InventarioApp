@@ -221,7 +221,8 @@ async function init() {
   const useSsl = process.env.PGSSL !== "false";
   pool = new Pool({
     connectionString: stripSslModeParam(connectionString),
-    ssl: useSsl ? { rejectUnauthorized: false } : undefined
+    ssl: useSsl ? { rejectUnauthorized: false } : undefined,
+    connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS) || 20_000
   });
 
   const client = await pool.connect();

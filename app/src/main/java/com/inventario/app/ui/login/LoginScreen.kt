@@ -28,6 +28,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -152,6 +153,14 @@ fun LoginScreen(
                 if (state.error != null) {
                     Spacer(Modifier.height(10.dp))
                     Text(state.error!!, color = MaterialTheme.colorScheme.error)
+                } else if (state.loading && state.statusMessage != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = state.statusMessage!!,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center
+                    )
                 }
 
                 Spacer(Modifier.height(20.dp))
@@ -171,6 +180,70 @@ fun LoginScreen(
                         )
                     } else {
                         Text("Ingresar", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                TextButton(
+                    onClick = viewModel::toggleServerConfig,
+                    enabled = !state.loading
+                ) {
+                    Text(
+                        if (state.showServerConfig) "Ocultar servidor" else "Configurar servidor",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                if (state.activeServerUrl.isNotBlank() && !state.showServerConfig) {
+                    Text(
+                        text = state.activeServerUrl,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                }
+                if (state.showServerConfig) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Nube: https://inventario-sync-totalcare.onrender.com\n" +
+                            "Local (este PC): http://192.168.1.6:8787\n" +
+                            "Emulador Android: http://10.0.2.2:8787",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = state.serverUrl,
+                        onValueChange = viewModel::onServerUrlChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("URL del servidor") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = state.serverApiKey,
+                        onValueChange = viewModel::onServerApiKeyChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Clave API") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    if (state.serverConfigMessage != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            state.serverConfigMessage!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = viewModel::saveServerConfig,
+                        enabled = !state.loading,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Guardar servidor")
                     }
                 }
                 }

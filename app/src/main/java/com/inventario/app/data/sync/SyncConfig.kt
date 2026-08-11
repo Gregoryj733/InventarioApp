@@ -1,11 +1,13 @@
 package com.inventario.app.data.sync
 
 import android.content.Context
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class SyncConfig(
     val baseUrl: String,
-    val apiKey: String
+    val apiKey: String,
+    val fallbackUrls: List<String> = emptyList()
 ) {
     val isConfigured: Boolean
         get() = baseUrl.isNotBlank() &&
@@ -21,14 +23,29 @@ data class SyncConfig(
             return loadFromAssets(context)
         }
 
+        fun loadAssetFallbacks(context: Context): List<String> = runCatching {
+            context.assets.open("sync_config.json").bufferedReader().use { reader ->
+                JSONObject(reader.readText())
+                    .optJSONArray("fallbackUrls")
+                    ?.toStringList()
+                    .orEmpty()
+            }
+        }.getOrDefault(emptyList())
+
         private fun loadFromAssets(context: Context): SyncConfig? = runCatching {
             context.assets.open("sync_config.json").bufferedReader().use { reader ->
                 val json = JSONObject(reader.readText())
                 SyncConfig(
                     baseUrl = json.optString("baseUrl", "").trim(),
-                    apiKey = json.optString("apiKey", "").trim()
+                    apiKey = json.optString("apiKey", "").trim(),
+                    fallbackUrls = json.optJSONArray("fallbackUrls")?.toStringList().orEmpty()
                 )
             }
         }.getOrNull()?.takeIf { it.isConfigured }
+
+        private fun JSONArray.toStringList(): List<String> =
+            (0 until length()).mapNotNull { index ->
+                optString(index, "").trim().takeIf { it.isNotBlank() }
+            }
     }
 }

@@ -20,6 +20,7 @@ object CloudConfigStore {
         val baseUrl = prefs.getString(KEY_BASE_URL, null).orEmpty()
         val apiKey = prefs.getString(KEY_API_KEY, null).orEmpty()
         if (baseUrl.isBlank()) return null
-        return SyncConfig(baseUrl = baseUrl, apiKey = apiKey)
+        val assetFallbacks = SyncConfig.loadAssetFallbacks(context)
+        return SyncConfig(baseUrl = baseUrl, apiKey = apiKey, fallbackUrls = assetFallbacks)
     }
 }
