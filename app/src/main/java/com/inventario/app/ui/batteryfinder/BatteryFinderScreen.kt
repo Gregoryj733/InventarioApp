@@ -43,6 +43,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.inventario.app.data.battery.BatteryRecommendation
+import com.inventario.app.ui.battery.BatteryHigherAmperageNote
+import com.inventario.app.ui.battery.BatteryStockAvailabilitySection
 import com.inventario.app.ui.theme.AppScreenBackground
 import com.inventario.app.ui.theme.BrandAppTopBar
 import com.inventario.app.ui.theme.screenHorizontalPadding
@@ -139,7 +142,8 @@ fun BatteryFinderScreen(
                                         marca = state.selectedMarca,
                                         modelo = state.selectedModelo,
                                         anio = state.selectedAnio,
-                                        baterias = state.resultBaterias
+                                        recommendations = state.recommendations,
+                                        bcvRate = state.bcvRate
                                     )
                                 }
                             }
@@ -307,7 +311,8 @@ private fun BatteryFinderResultCard(
     marca: String?,
     modelo: String?,
     anio: String?,
-    baterias: List<String>
+    recommendations: List<BatteryRecommendation>,
+    bcvRate: Double?
 ) {
     val vehicleLabel = listOfNotNull(
         marca?.uppercase(),
@@ -332,7 +337,7 @@ private fun BatteryFinderResultCard(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = if (baterias.isEmpty()) "Sin coincidencias" else "Batería recomendada",
+                    text = if (recommendations.isEmpty()) "Sin coincidencias" else "Batería recomendada",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -347,14 +352,14 @@ private fun BatteryFinderResultCard(
                 )
                 Spacer(Modifier.height(8.dp))
             }
-            if (baterias.isEmpty()) {
+            if (recommendations.isEmpty()) {
                 Text(
                     text = "No encontramos una batería para esta combinación. Contáctanos para asesorarte.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
             } else {
-                baterias.forEach { bateria ->
+                recommendations.forEach { recommendation ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(vertical = 4.dp)
@@ -367,13 +372,18 @@ private fun BatteryFinderResultCard(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = bateria,
+                            text = recommendation.code,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     }
+                    BatteryStockAvailabilitySection(
+                        stockMatch = recommendation.stockMatch,
+                        bcvRate = bcvRate
+                    )
                 }
+                BatteryHigherAmperageNote()
             }
         }
     }

@@ -41,6 +41,13 @@ class SessionManager(context: Context) {
         prefs.edit().putLong(ackKey(username), closingId).apply()
     }
 
+    fun lastPlayedSoundEventKey(): String? =
+        prefs.getString(KEY_LAST_SOUND_EVENT, null)
+
+    fun markSoundEventPlayed(key: String) {
+        prefs.edit().putString(KEY_LAST_SOUND_EVENT, key).apply()
+    }
+
     private fun ackKey(username: String): String = "closing_ack_${username.trim().lowercase()}"
 
     companion object {
@@ -48,5 +55,6 @@ class SessionManager(context: Context) {
         private const val KEY_ROLE = "role"
         private const val KEY_SUCURSAL = "sucursal"
         private const val KEY_TOKEN = "auth_token"
+        private const val KEY_LAST_SOUND_EVENT = "last_sound_event"
     }
 }

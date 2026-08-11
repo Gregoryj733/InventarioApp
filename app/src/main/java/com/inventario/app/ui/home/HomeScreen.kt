@@ -9,6 +9,7 @@ import com.journeyapps.barcodescanner.ScanOptions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -61,6 +63,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -107,7 +110,7 @@ import com.inventario.app.ui.theme.WhatsAppGreen
 import com.inventario.app.ui.theme.WhatsAppGreenDark
 import com.inventario.app.util.WhatsAppNotifier
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
@@ -146,7 +149,7 @@ fun HomeScreen(
         scanTicketLauncher.launch(
             ScanOptions()
                 .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                .setPrompt("Escanea el código QR del ticket de descuento")
+                .setPrompt("Escanea el cupón para ejecutarlo (2.º escaneo)")
                 .setBeepEnabled(true)
                 .setOrientationLocked(true)
         )
@@ -189,6 +192,14 @@ fun HomeScreen(
             state = state,
             viewModel = viewModel,
             onDismiss = viewModel::dismissGenerateTicketDialog
+        )
+    }
+
+    if (state.showDiscountTicketPhoneDialog) {
+        DiscountTicketExecutionPhoneDialog(
+            state = state,
+            viewModel = viewModel,
+            onDismiss = viewModel::dismissDiscountTicketPhoneDialog
         )
     }
 
@@ -243,6 +254,45 @@ fun HomeScreen(
         }
     }
 
+    val listState = rememberLazyListState()
+    var showOrderSheet by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state.orderLines.isEmpty()) {
+        if (state.orderLines.isEmpty()) showOrderSheet = false
+    }
+
+    if (showOrderSheet && state.orderLines.isNotEmpty()) {
+        val orderSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showOrderSheet = false },
+            sheetState = orderSheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = horizontalPad)
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .padding(bottom = 20.dp)
+            ) {
+                OrderSummaryCard(
+                    state = state,
+                    viewModel = viewModel,
+                    onConfirm = {
+                        showOrderSheet = false
+                        viewModel.showOrderReceipt()
+                    },
+                    onClear = {
+                        viewModel.clearOrder()
+                        showOrderSheet = false
+                    },
+                    onScanTicket = launchTicketScan
+                )
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             BrandAppTopBar(
@@ -256,10 +306,24 @@ fun HomeScreen(
                 showBack = true,
                 onBack = onBack
             )
+        },
+        bottomBar = {
+            if (state.orderLines.isNotEmpty()) {
+                OrderQuickAccessBar(
+                    itemCount = state.orderLines.size,
+                    totalUsd = viewModel.formatPrice(viewModel.orderTotalUsdAfterDiscount()),
+                    totalBs = viewModel.orderTotalBsAfterDiscount()
+                        ?.let { "Bs ${viewModel.formatMoney(it)}" },
+                    onViewOrder = { showOrderSheet = true },
+                    onConfirm = viewModel::showOrderReceipt,
+                    canConfirm = viewModel.canConfirmOrder()
+                )
+            }
         }
     ) { padding ->
         AppScreenBackground(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
@@ -275,15 +339,6 @@ fun HomeScreen(
                     )
                 }
 
-                if (state.role == UserRole.ADMIN && state.productCount == 0) {
-                    item(key = "admin_prompt") {
-                        AdminInventoryPromptCard(
-                            importing = state.importing,
-                            onImport = launchExcelImport
-                        )
-                    }
-                }
-
                 item(key = "search") {
                     SearchField(
                         query = state.query,
@@ -291,6 +346,74 @@ fun HomeScreen(
                         onSearch = viewModel::runSearch,
                         onClear = viewModel::clearSearch
                     )
+                }
+
+                when {
+                    state.searching -> {
+                        item(key = "loading") {
+                            BoxLoading()
+                        }
+                    }
+                    displayProducts.isEmpty() && state.query.trim().isNotEmpty() -> {
+                        item(key = "no_results") {
+                            Text(
+                                "Sin resultados para \"${state.query}\"",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                    displayProducts.isEmpty() -> {
+                        item(key = "empty_inventory") {
+                            Text(
+                                when {
+                                    state.productCount == 0 && state.role == UserRole.ADMIN ->
+                                        "Aún no hay inventario. Usa «Cargar inventario» en la barra superior o el botón de abajo."
+                                    state.productCount == 0 ->
+                                        "Aún no hay inventario. Pide al administrador que lo cargue."
+                                    else ->
+                                        "Escribe para buscar. Toca un producto y agrégalo al pedido."
+                                },
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                    else -> {
+                        if (state.query.trim().isEmpty() && state.allProducts.isNotEmpty()) {
+                            item(key = "inventory_label") {
+                                Text(
+                                    "Inventario (${state.allProducts.size} productos). Toca para agregar al pedido.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(bottom = 2.dp)
+                                )
+                            }
+                        }
+                        items(displayProducts, key = { it.id }) { product ->
+                            val inOrder = product.id in orderProductIds
+                            val selected = state.selectedProduct?.id == product.id
+                            ProductRow(
+                                product = product,
+                                selected = selected,
+                                inOrder = inOrder,
+                                compact = compact,
+                                priceLabel = viewModel.formatPrice(product.price),
+                                qtyLabel = "${viewModel.formatQty(product.quantity)} ${product.unit}",
+                                bsLabel = viewModel.bsEquivalent(product.price),
+                                onClick = { viewModel.selectProduct(product) }
+                            )
+                        }
+                    }
+                }
+
+                if (state.role == UserRole.ADMIN && state.productCount == 0) {
+                    item(key = "admin_prompt") {
+                        AdminInventoryPromptCard(
+                            importing = state.importing,
+                            onImport = launchExcelImport
+                        )
+                    }
                 }
 
                 if (state.role.canManageDiscountTickets()) {
@@ -383,77 +506,64 @@ fun HomeScreen(
                         Text(state.error!!, color = MaterialTheme.colorScheme.error)
                     }
                 }
+            }
+        }
+    }
+}
 
-                if (state.orderLines.isNotEmpty()) {
-                    item(key = "order_summary") {
-                        OrderSummaryCard(
-                            state = state,
-                            viewModel = viewModel,
-                            onConfirm = viewModel::showOrderReceipt,
-                            onClear = viewModel::clearOrder,
-                            onScanTicket = launchTicketScan
-                        )
-                    }
-                }
-
-                when {
-                    state.searching -> {
-                        item(key = "loading") {
-                            BoxLoading()
-                        }
-                    }
-                    displayProducts.isEmpty() && state.query.trim().isNotEmpty() -> {
-                        item(key = "no_results") {
-                            Text(
-                                "Sin resultados para \"${state.query}\"",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 4.dp)
-                            )
-                        }
-                    }
-                    displayProducts.isEmpty() -> {
-                        item(key = "empty_inventory") {
-                            Text(
-                                when {
-                                    state.productCount == 0 && state.role == UserRole.ADMIN ->
-                                        "Aún no hay inventario. Usa «Cargar inventario» en la barra superior o el botón de abajo."
-                                    state.productCount == 0 ->
-                                        "Aún no hay inventario. Pide al administrador que lo cargue."
-                                    else ->
-                                        "Escribe para buscar. Toca un producto y agrégalo al pedido."
-                                },
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 4.dp)
-                            )
-                        }
-                    }
-                    else -> {
-                        if (state.query.trim().isEmpty() && state.allProducts.isNotEmpty()) {
-                            item(key = "inventory_label") {
-                                Text(
-                                    "Inventario (${state.allProducts.size} productos). Toca para agregar al pedido.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(bottom = 2.dp)
-                                )
-                            }
-                        }
-                        items(displayProducts, key = { it.id }) { product ->
-                            val inOrder = product.id in orderProductIds
-                            val selected = state.selectedProduct?.id == product.id
-                            ProductRow(
-                                product = product,
-                                selected = selected,
-                                inOrder = inOrder,
-                                compact = compact,
-                                priceLabel = viewModel.formatPrice(product.price),
-                                qtyLabel = "${viewModel.formatQty(product.quantity)} ${product.unit}",
-                                bsLabel = viewModel.bsEquivalent(product.price),
-                                onClick = { viewModel.selectProduct(product) }
-                            )
-                        }
-                    }
-                }
+@Composable
+private fun OrderQuickAccessBar(
+    itemCount: Int,
+    totalUsd: String,
+    totalBs: String?,
+    onViewOrder: () -> Unit,
+    onConfirm: () -> Unit,
+    canConfirm: Boolean
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 6.dp,
+        shadowElevation = 4.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Pedido: $itemCount ítem${if (itemCount == 1) "" else "s"}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = buildString {
+                        append(totalUsd)
+                        if (totalBs != null) append(" · $totalBs")
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            OutlinedButton(
+                onClick = onViewOrder,
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Text("Ver pedido")
+            }
+            Button(
+                onClick = onConfirm,
+                enabled = canConfirm,
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Text("Confirmar")
             }
         }
     }
@@ -927,12 +1037,13 @@ private fun OrderSummaryCard(
     viewModel: HomeViewModel,
     onConfirm: () -> Unit,
     onClear: () -> Unit,
-    onScanTicket: () -> Unit
+    onScanTicket: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val onPrimary = MaterialTheme.colorScheme.onPrimary
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
         elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)

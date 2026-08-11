@@ -94,9 +94,14 @@ fun DiscountTicketSection(
     } else {
         Column(modifier = Modifier.fillMaxWidth()) {
             Text(
-                "¿El cliente tiene un ticket de descuento?",
+                "¿El cliente tiene un cupón de descuento?",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "Escanea o ingresa el código. Si el cupón está activo, se solicitará el teléfono para ejecutarlo.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(6.dp))
             Row(
@@ -139,10 +144,70 @@ fun DiscountTicketSection(
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text("Validar ticket")
+                Text("Validar y ejecutar cupón")
             }
         }
     }
+}
+
+@Composable
+fun DiscountTicketExecutionPhoneDialog(
+    state: HomeUiState,
+    viewModel: HomeViewModel,
+    onDismiss: () -> Unit
+) {
+    val ticket = state.pendingDiscountTicket ?: return
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Validación con teléfono") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Cupón ${ticket.code} · -${viewModel.formatQty(ticket.discountPercent)}%",
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Ingresa el número telefónico del cliente para ejecutar el cupón. " +
+                        "Este dato queda registrado para auditoría.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                OutlinedTextField(
+                    value = state.discountTicketPhoneInput,
+                    onValueChange = viewModel::onDiscountTicketPhoneChange,
+                    label = { Text("Número telefónico") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Phone,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { viewModel.confirmDiscountTicketExecution() })
+                )
+                if (state.discountTicketError != null) {
+                    Text(
+                        state.discountTicketError,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = viewModel::confirmDiscountTicketExecution,
+                enabled = !state.executingDiscountTicket && state.discountTicketPhoneInput.isNotBlank()
+            ) {
+                if (state.executingDiscountTicket) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text("Ejecutar cupón")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
 }
 
 @Composable

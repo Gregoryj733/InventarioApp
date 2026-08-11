@@ -3,8 +3,12 @@ package com.inventario.app.ui.batteryfinder
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.inventario.app.data.battery.BatteryInventoryMatcher
+import com.inventario.app.data.battery.BatteryRecommendation
 import com.inventario.app.data.entity.BatteryFinderEntry
+import com.inventario.app.data.entity.Product
 import com.inventario.app.data.repository.BatteryFinderRepository
+import com.inventario.app.data.repository.InventoryRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,7 +24,8 @@ data class BatteryFinderUiState(
     val selectedMarca: String? = null,
     val selectedModelo: String? = null,
     val selectedAnio: String? = null,
-    val resultBaterias: List<String> = emptyList()
+    val recommendations: List<BatteryRecommendation> = emptyList(),
+    val bcvRate: Double? = null
 ) {
     val hasResult: Boolean get() = selectedAnio != null
 }
@@ -32,15 +37,28 @@ data class BatteryFinderUiState(
  * en cascada ocurre en memoria, igual que en el sitio de origen.
  */
 class BatteryFinderViewModel(
-    private val batteryFinderRepository: BatteryFinderRepository
+    private val batteryFinderRepository: BatteryFinderRepository,
+    private val inventoryRepository: InventoryRepository
 ) : ViewModel() {
     private val _state = MutableStateFlow(BatteryFinderUiState())
     val state: StateFlow<BatteryFinderUiState> = _state.asStateFlow()
 
     private var entries: List<BatteryFinderEntry> = emptyList()
+    private var inventoryProducts: List<Product> = emptyList()
 
     init {
         load()
+        viewModelScope.launch {
+            inventoryRepository.observeAllProducts().collect { products ->
+                inventoryProducts = products
+                refreshStockMatches()
+            }
+        }
+        viewModelScope.launch {
+            inventoryRepository.observeMeta().collect { meta ->
+                _state.update { it.copy(bcvRate = meta?.bcvRate) }
+            }
+        }
     }
 
     /** Limpia selección al volver a entrar al módulo (evita resultados anteriores). */
@@ -73,7 +91,7 @@ class BatteryFinderViewModel(
                     selectedAnio = null,
                     modelos = emptyList(),
                     anios = emptyList(),
-                    resultBaterias = emptyList()
+                    recommendations = emptyList()
                 )
             }
         }
@@ -91,7 +109,7 @@ class BatteryFinderViewModel(
                 selectedAnio = null,
                 modelos = modelos,
                 anios = emptyList(),
-                resultBaterias = emptyList()
+                recommendations = emptyList()
             )
         }
     }
@@ -107,7 +125,7 @@ class BatteryFinderViewModel(
                 selectedModelo = normalizedModelo,
                 selectedAnio = null,
                 anios = anios,
-                resultBaterias = emptyList()
+                recommendations = emptyList()
             )
         }
     }
@@ -116,12 +134,15 @@ class BatteryFinderViewModel(
         val marca = _state.value.selectedMarca ?: return
         val modelo = _state.value.selectedModelo ?: return
         val normalizedAnio = anio.trim()
-        val baterias = entries
+        val codes = entries
             .filter { it.marca == marca && it.modelo == modelo && it.anio == normalizedAnio }
             .map { adjustBatteryAmperageForDisplay(it.bateria) }
             .distinct()
+        val recommendations = codes.map { code ->
+            BatteryInventoryMatcher.recommend(code, inventoryProducts)
+        }
         _state.update {
-            it.copy(selectedAnio = normalizedAnio, resultBaterias = baterias)
+            it.copy(selectedAnio = normalizedAnio, recommendations = recommendations)
         }
     }
 
@@ -133,9 +154,18 @@ class BatteryFinderViewModel(
                 selectedAnio = null,
                 modelos = emptyList(),
                 anios = emptyList(),
-                resultBaterias = emptyList()
+                recommendations = emptyList()
             )
         }
+    }
+
+    private fun refreshStockMatches() {
+        val current = _state.value
+        if (current.recommendations.isEmpty()) return
+        val refreshed = current.recommendations.map { recommendation ->
+            BatteryInventoryMatcher.recommend(recommendation.code, inventoryProducts)
+        }
+        _state.update { it.copy(recommendations = refreshed) }
     }
 
     private fun distinctSorted(values: List<String>): List<String> =
@@ -156,10 +186,13 @@ class BatteryFinderViewModel(
     companion object {
         private const val DUNCAN_AMPERAGE_OFFSET = 50
 
-        fun factory(batteryFinderRepository: BatteryFinderRepository) = object : ViewModelProvider.Factory {
+        fun factory(
+            batteryFinderRepository: BatteryFinderRepository,
+            inventoryRepository: InventoryRepository
+        ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return BatteryFinderViewModel(batteryFinderRepository) as T
+                return BatteryFinderViewModel(batteryFinderRepository, inventoryRepository) as T
             }
         }
     }

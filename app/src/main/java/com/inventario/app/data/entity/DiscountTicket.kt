@@ -27,7 +27,9 @@ data class DiscountTicket(
     val usedAt: Long? = null,
     val usedBySaleSyncId: String? = null,
     val issuedByUsername: String = "",
-    val sourceSaleSyncId: String? = null
+    val sourceSaleSyncId: String? = null,
+    val telefonoEjecucion: String? = null,
+    val fechaEjecucion: Long? = null
 )
 
 fun DiscountTicket.isIssued(): Boolean =
@@ -38,11 +40,23 @@ fun DiscountTicket.isExpired(now: Long = System.currentTimeMillis()): Boolean =
 
 fun DiscountTicket.isUsed(): Boolean = status == DiscountTicketStatus.USED
 
+/** Ejecutado en app (teléfono capturado) pero aún sin venta vinculada. */
+fun DiscountTicket.isExecutedPendingSale(): Boolean =
+    status == DiscountTicketStatus.USED && usedBySaleSyncId.isNullOrBlank()
+
+/** Cupón consumido por completo (ejecutado y vinculado a una venta). */
+fun DiscountTicket.isFullyConsumed(): Boolean =
+    status == DiscountTicketStatus.USED && !usedBySaleSyncId.isNullOrBlank()
+
 fun DiscountTicket.isVoided(): Boolean = status == DiscountTicketStatus.VOIDED
 
-/** Solo cupones activos y no vencidos pueden aplicarse al carrito. */
-fun DiscountTicket.isRedeemable(now: Long = System.currentTimeMillis()): Boolean =
+/** Solo cupones activos pueden ejecutarse (segundo escaneo con teléfono). */
+fun DiscountTicket.isExecutable(now: Long = System.currentTimeMillis()): Boolean =
     status == DiscountTicketStatus.ACTIVE && !isExpired(now)
+
+/** Cupón listo para aplicar al carrito: activo (pendiente de ejecutar) o ya ejecutado sin venta. */
+fun DiscountTicket.isRedeemable(now: Long = System.currentTimeMillis()): Boolean =
+    isExecutable(now) || isExecutedPendingSale()
 
 fun DiscountTicket.displayStatusLabel(now: Long = System.currentTimeMillis()): String = when {
     isVoided() -> "Anulado"

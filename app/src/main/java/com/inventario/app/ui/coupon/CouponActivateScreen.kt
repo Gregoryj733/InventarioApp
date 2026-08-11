@@ -72,8 +72,8 @@ fun CouponActivateScreen(
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    "Escanea el código QR del cupón. El cupón comenzará su vigencia de 30 días " +
-                        "y luego podrá usarse una sola vez en el carrito de compras.",
+                    "Primer escaneo: activa el cupón (vigencia 30 días). " +
+                        "Segundo escaneo: ejecútalo desde el carrito de compras con el teléfono del cliente.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -103,6 +103,13 @@ fun CouponActivateScreen(
                 }
                 if (state.error != null) {
                     Text(state.error!!, color = MaterialTheme.colorScheme.error)
+                }
+                if (state.infoMessage != null) {
+                    Text(
+                        state.infoMessage!!,
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
                 state.lastActivated?.let { ticket ->
                     Text(

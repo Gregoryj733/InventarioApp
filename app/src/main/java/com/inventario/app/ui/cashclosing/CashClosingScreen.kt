@@ -44,6 +44,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -59,6 +60,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
@@ -78,6 +80,7 @@ import com.inventario.app.ui.theme.ReportDivider
 import com.inventario.app.ui.theme.ReportHeader
 import com.inventario.app.ui.theme.ReportKeyValueRow
 import com.inventario.app.ui.theme.ConfirmedOrdersBanner
+import com.inventario.app.ui.theme.ConfirmedOrdersPreviewDialog
 import com.inventario.app.ui.theme.ReportMetaChip
 import com.inventario.app.ui.theme.ReportTotalBanner
 import com.inventario.app.ui.theme.StatusPill
@@ -107,6 +110,20 @@ fun CashClosingScreen(
             onShare = {
                 WhatsAppNotifier.shareToGroupChooser(context, viewModel.buildWhatsAppMessage())
             }
+        )
+    }
+
+    if (state.showConfirmedOrdersPreview) {
+        ConfirmedOrdersPreviewDialog(
+            orders = state.confirmedOrdersPreview,
+            loading = false,
+            error = null,
+            currentBcvRate = state.bcvRate,
+            formatPrice = viewModel::formatPrice,
+            formatQty = viewModel::formatQty,
+            formatMoney = viewModel::formatMoney,
+            formatTime = viewModel::formatOrderTime,
+            onDismiss = viewModel::dismissConfirmedOrdersPreview
         )
     }
 
@@ -204,13 +221,20 @@ fun CashClosingScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(8.dp))
-                DualCurrencyField(
-                    usdLabel = "Ef. anterior USD",
-                    bsLabel = "Ef. anterior Bs",
-                    usdText = state.prevCashUsdText,
-                    bsText = state.prevCashBsText,
-                    onUsdChange = viewModel::onPrevCashUsdChange,
-                    onBsChange = viewModel::onPrevCashBsChange
+                CurrencyWithEquivRow(
+                    inputLabel = "Monto USD",
+                    equivLabel = "Equiv. Bs",
+                    inputText = state.prevCashUsdText,
+                    equivText = viewModel.prevCashUsdEquivBsText(),
+                    onInputChange = viewModel::onPrevCashUsdChange
+                )
+                Spacer(Modifier.height(8.dp))
+                CurrencyWithEquivRow(
+                    inputLabel = "Monto Bs",
+                    equivLabel = "Equiv. USD",
+                    inputText = state.prevCashBsText,
+                    equivText = viewModel.prevCashBsEquivUsdText(),
+                    onInputChange = viewModel::onPrevCashBsChange
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -235,7 +259,8 @@ fun CashClosingScreen(
                     DailySalesMetaRow(
                         bcvLabel = state.bcvLabel,
                         orderCount = state.confirmedOrdersToday,
-                        onReset = viewModel::resetTodayOrders,
+                        onReset = if (state.canResetTodayOrders) viewModel::resetTodayOrders else null,
+                        onPreview = viewModel::openConfirmedOrdersPreview,
                         resetting = state.resettingOrders
                     )
                     Spacer(Modifier.height(10.dp))
@@ -599,8 +624,15 @@ private fun CashClosingPreviewDialog(
                 if (viewModel.prevCashUsd() > 0) {
                     Spacer(Modifier.height(6.dp))
                     ReportKeyValueRow(
-                        label = "Efectivo cierre anterior",
-                        value = "${viewModel.formatPrice(viewModel.prevCashUsd())} · ${viewModel.formatBs(viewModel.prevCashBs())}"
+                        label = "Efectivo cierre anterior (USD)",
+                        value = "${viewModel.formatPrice(viewModel.prevCashUsd())} · ${viewModel.formatBs(viewModel.textToAmount(viewModel.prevCashUsdEquivBsText()))}"
+                    )
+                }
+                if (viewModel.prevCashBs() > 0) {
+                    Spacer(Modifier.height(6.dp))
+                    ReportKeyValueRow(
+                        label = "Efectivo cierre anterior (Bs)",
+                        value = "${viewModel.formatBs(viewModel.prevCashBs())} · ${viewModel.formatPrice(viewModel.textToAmount(viewModel.prevCashBsEquivUsdText()))}"
                     )
                 }
                 Spacer(Modifier.height(8.dp))
@@ -979,6 +1011,7 @@ private fun DailySalesMetaRow(
     bcvLabel: String,
     orderCount: Int,
     onReset: (() -> Unit)? = null,
+    onPreview: (() -> Unit)? = null,
     resetting: Boolean = false
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -989,6 +1022,7 @@ private fun DailySalesMetaRow(
         ConfirmedOrdersBanner(
             count = orderCount,
             onReset = onReset,
+            onPreview = onPreview,
             resetting = resetting
         )
     }
@@ -1013,13 +1047,12 @@ private fun SectionCard(
 }
 
 @Composable
-private fun DualCurrencyField(
-    usdLabel: String,
-    bsLabel: String,
-    usdText: String,
-    bsText: String,
-    onUsdChange: (String) -> Unit,
-    onBsChange: (String) -> Unit
+private fun CurrencyWithEquivRow(
+    inputLabel: String,
+    equivLabel: String,
+    inputText: String,
+    equivText: String,
+    onInputChange: (String) -> Unit
 ) {
     val stackVertical = isVeryCompactWidth()
     if (stackVertical) {
@@ -1027,39 +1060,175 @@ private fun DualCurrencyField(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            KeyboardAwareTextField(
-                value = usdText,
-                onValueChange = onUsdChange,
-                label = usdLabel,
+            CurrencyInputField(
+                value = inputText,
+                onValueChange = onInputChange,
+                label = inputLabel,
                 keyboardType = KeyboardType.Decimal,
                 modifier = Modifier.fillMaxWidth()
             )
-            KeyboardAwareTextField(
-                value = bsText,
-                onValueChange = onBsChange,
-                label = bsLabel,
+            CurrencyInputField(
+                value = equivText,
+                onValueChange = {},
+                label = equivLabel,
                 keyboardType = KeyboardType.Decimal,
+                editable = false,
+                isConversionField = true,
+                focusable = false,
                 modifier = Modifier.fillMaxWidth()
             )
         }
     } else {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            KeyboardAwareTextField(
-                value = usdText,
-                onValueChange = onUsdChange,
-                label = usdLabel,
+            CurrencyInputField(
+                value = inputText,
+                onValueChange = onInputChange,
+                label = inputLabel,
                 keyboardType = KeyboardType.Decimal,
                 modifier = Modifier.weight(1f)
             )
-            KeyboardAwareTextField(
-                value = bsText,
-                onValueChange = onBsChange,
-                label = bsLabel,
+            CurrencyInputField(
+                value = equivText,
+                onValueChange = {},
+                label = equivLabel,
                 keyboardType = KeyboardType.Decimal,
+                editable = false,
+                isConversionField = true,
+                focusable = false,
                 modifier = Modifier.weight(1f)
             )
         }
     }
+}
+
+private enum class ActiveCurrency { USD, BS }
+
+@Composable
+private fun DualCurrencyField(
+    usdLabel: String,
+    bsLabel: String,
+    usdText: String,
+    bsText: String,
+    onUsdChange: (String) -> Unit,
+    onBsChange: (String) -> Unit,
+    readOnlyConversion: Boolean = false
+) {
+    var activeCurrency by remember { mutableStateOf(ActiveCurrency.USD) }
+    val usdEditable = !readOnlyConversion || activeCurrency == ActiveCurrency.USD
+    val bsEditable = !readOnlyConversion || activeCurrency == ActiveCurrency.BS
+    val usdConversionLabel = if (readOnlyConversion) "Equiv. USD" else usdLabel
+    val bsConversionLabel = if (readOnlyConversion) "Equiv. Bs" else bsLabel
+
+    val stackVertical = isVeryCompactWidth()
+    if (stackVertical) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            CurrencyInputField(
+                value = usdText,
+                onValueChange = onUsdChange,
+                label = if (usdEditable) usdLabel else usdConversionLabel,
+                keyboardType = KeyboardType.Decimal,
+                editable = usdEditable,
+                isConversionField = readOnlyConversion && !usdEditable,
+                onFocus = { activeCurrency = ActiveCurrency.USD },
+                modifier = Modifier.fillMaxWidth()
+            )
+            CurrencyInputField(
+                value = bsText,
+                onValueChange = onBsChange,
+                label = if (bsEditable) bsLabel else bsConversionLabel,
+                keyboardType = KeyboardType.Decimal,
+                editable = bsEditable,
+                isConversionField = readOnlyConversion && !bsEditable,
+                onFocus = { activeCurrency = ActiveCurrency.BS },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    } else {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CurrencyInputField(
+                value = usdText,
+                onValueChange = onUsdChange,
+                label = if (usdEditable) usdLabel else usdConversionLabel,
+                keyboardType = KeyboardType.Decimal,
+                editable = usdEditable,
+                isConversionField = readOnlyConversion && !usdEditable,
+                onFocus = { activeCurrency = ActiveCurrency.USD },
+                modifier = Modifier.weight(1f)
+            )
+            CurrencyInputField(
+                value = bsText,
+                onValueChange = onBsChange,
+                label = if (bsEditable) bsLabel else bsConversionLabel,
+                keyboardType = KeyboardType.Decimal,
+                editable = bsEditable,
+                isConversionField = readOnlyConversion && !bsEditable,
+                onFocus = { activeCurrency = ActiveCurrency.BS },
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CurrencyInputField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    editable: Boolean = true,
+    isConversionField: Boolean = false,
+    focusable: Boolean = true,
+    onFocus: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val coroutineScope = rememberCoroutineScope()
+    val readOnlyBg = MaterialTheme.colorScheme.surfaceVariant.copy(
+        alpha = if (isConversionField) 0.65f else 0.45f
+    )
+    val fieldColors = if (editable) {
+        OutlinedTextFieldDefaults.colors()
+    } else {
+        OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = readOnlyBg,
+            unfocusedContainerColor = readOnlyBg,
+            disabledContainerColor = readOnlyBg,
+            errorContainerColor = readOnlyBg,
+            focusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+            disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+            disabledTextColor = MaterialTheme.colorScheme.onSurface,
+            focusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+
+    OutlinedTextField(
+        value = value,
+        onValueChange = { if (editable) onValueChange(it) },
+        label = { Text(label) },
+        modifier = modifier
+            .focusProperties { this.canFocus = focusable }
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .onFocusEvent { event ->
+                if (event.isFocused) {
+                    onFocus()
+                    coroutineScope.launch { bringIntoViewRequester.bringIntoView() }
+                }
+            },
+        readOnly = !editable,
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        shape = RoundedCornerShape(12.dp),
+        colors = fieldColors
+    )
 }
 
 @Composable
@@ -1157,12 +1326,13 @@ private fun CashEntryRow(
         }
         Spacer(Modifier.height(4.dp))
         DualCurrencyField(
-            usdLabel = "USD",
-            bsLabel = "Bs",
+            usdLabel = "Monto USD",
+            bsLabel = "Monto Bs",
             usdText = entry.usdText,
             bsText = entry.bsText,
             onUsdChange = onUsdChange,
-            onBsChange = onBsChange
+            onBsChange = onBsChange,
+            readOnlyConversion = true
         )
     }
 }

@@ -75,6 +75,7 @@ import com.inventario.app.ui.theme.ReportHeader
 import com.inventario.app.ui.theme.ReportKeyValueRow
 import com.inventario.app.ui.theme.ReportTotalBanner
 import com.inventario.app.ui.theme.AppSnackbarController
+import com.inventario.app.util.AppNotificationMessages
 import com.inventario.app.ui.theme.StatusPill
 import com.inventario.app.ui.theme.screenHorizontalPadding
 import com.inventario.app.ui.theme.screenVerticalPadding
@@ -150,7 +151,8 @@ class ReportsViewModel(
     private val bcvRateProvider: suspend () -> Double?,
     private val sessionManager: SessionManager,
     private val userRole: UserRole,
-    private val cloudEvents: SharedFlow<CloudEvent>? = null
+    private val cloudEvents: SharedFlow<CloudEvent>? = null,
+    private val onReviewCompleted: (dedupeKey: String, title: String, message: String) -> Unit = { _, _, _ -> }
 ) : ViewModel() {
     private val _state = MutableStateFlow(ReportsUiState(canReviewClosings = userRole.canReviewClosings()))
     val state: StateFlow<ReportsUiState> = _state.asStateFlow()
@@ -289,9 +291,14 @@ class ReportsViewModel(
                     ClosingReviewAction.REVERT ->
                         "Cierre revertido. Ya no cuenta en Recaudación Total y el usuario puede registrar uno nuevo."
                 }
+                val (title, popupMessage) = when (action) {
+                    ClosingReviewAction.APPROVE -> AppNotificationMessages.cashClosingApprovedByReviewer()
+                    ClosingReviewAction.REJECT -> AppNotificationMessages.cashClosingRejectedByReviewer()
+                    ClosingReviewAction.REVERT -> AppNotificationMessages.cashClosingRevertedByReviewer()
+                }
                 _state.update { it.copy(actionMessage = message) }
                 load()
-                AppSnackbarController.show(message)
+                onReviewCompleted("review_${action.name}_$id", title, popupMessage)
             }.onFailure { err ->
                 val message = err.toUserMessage("No se pudo completar la acción.")
                 _state.update {
@@ -319,7 +326,8 @@ class ReportsViewModel(
             bcvRateProvider: suspend () -> Double?,
             sessionManager: SessionManager,
             userRole: UserRole,
-            cloudEvents: SharedFlow<CloudEvent>? = null
+            cloudEvents: SharedFlow<CloudEvent>? = null,
+            onReviewCompleted: (dedupeKey: String, title: String, message: String) -> Unit = { _, _, _ -> }
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -328,7 +336,8 @@ class ReportsViewModel(
                     bcvRateProvider,
                     sessionManager,
                     userRole,
-                    cloudEvents
+                    cloudEvents,
+                    onReviewCompleted
                 ) as T
             }
         }

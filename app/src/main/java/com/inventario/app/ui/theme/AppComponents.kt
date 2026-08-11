@@ -13,11 +13,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -25,6 +27,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -38,13 +41,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.inventario.app.data.entity.ConfirmedOrderPreview
+import com.inventario.app.data.cashea.CasheaCalculator
 import com.inventario.app.data.entity.SaleLineItem
+import com.inventario.app.ui.home.CasheaIneligibleReadOnlySummary
+import com.inventario.app.ui.home.SaleLineItemCasheaSummary
+import kotlin.math.round
 
 @Composable
 fun AppScreenBackground(
@@ -444,6 +454,12 @@ fun ReportMetaChip(
 fun confirmedOrdersLabel(count: Int): String =
     "$count pedido${if (count == 1) "" else "s"} confirmado${if (count == 1) "" else "s"} hoy"
 
+/** Número secuencial del día (1 = primer pedido confirmado hoy). */
+fun confirmedOrderNumbersBySyncId(orders: List<ConfirmedOrderPreview>): Map<String, Int> =
+    orders.sortedBy { it.createdAt }
+        .mapIndexed { index, order -> order.syncId to (index + 1) }
+        .toMap()
+
 @Composable
 fun ConfirmedOrdersBanner(
     count: Int,
@@ -483,31 +499,18 @@ fun ConfirmedOrdersBanner(
         }
     }
 
-    if (showConfirm) {
-        AlertDialog(
-            onDismissRequest = { showConfirm = false },
-            title = { Text("Reiniciar contador del día") },
-            text = {
-                Text(
-                    "Se borrará el registro de los $count pedido${if (count == 1) "" else "s"} " +
-                        "confirmado${if (count == 1) "" else "s"} hoy y el total de ventas precargado. " +
-                        "El inventario descontado no se restaura."
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showConfirm = false
-                        onReset?.invoke()
-                    }
-                ) {
-                    Text("Reiniciar", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showConfirm = false }) {
-                    Text("Cancelar")
-                }
+    if (showConfirm && onReset != null) {
+        ConfirmCheckDialog(
+            title = "Reiniciar contador del día",
+            description = "Se borrará el registro de los $count pedido${if (count == 1) "" else "s"} " +
+                "confirmado${if (count == 1) "" else "s"} hoy y el total de ventas precargado. " +
+                "El inventario descontado no se restaura.",
+            checkLabel = "Confirmo que deseo reiniciar el contador del día",
+            confirmLabel = "Reiniciar",
+            onDismiss = { showConfirm = false },
+            onConfirm = {
+                showConfirm = false
+                onReset()
             }
         )
     }
@@ -525,73 +528,124 @@ fun ConfirmedOrdersPreviewDialog(
     formatTime: (Long) -> String,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "Pedidos confirmados hoy",
-                fontWeight = FontWeight.Bold
-            )
-        },
-        text = {
-            when {
-                loading -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 24.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator()
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                    MaterialTheme.colorScheme.surface
+                                )
+                            )
+                        )
+                        .padding(horizontal = 20.dp, vertical = 18.dp)
+                ) {
+                    Text(
+                        text = "Pedidos confirmados hoy",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (!loading && error == null && orders.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = confirmedOrdersLabel(orders.size),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
-                error != null -> {
-                    Text(
-                        text = error,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-                orders.isEmpty() -> {
-                    Text(
-                        text = "No hay pedidos confirmados hoy.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                else -> {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 420.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        itemsIndexed(orders, key = { _, order -> order.syncId }) { index, order ->
-                            ConfirmedOrderPreviewCard(
-                                index = index + 1,
-                                order = order,
-                                currentBcvRate = currentBcvRate,
-                                formatPrice = formatPrice,
-                                formatQty = formatQty,
-                                formatMoney = formatMoney,
-                                formatTime = formatTime
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp, max = 440.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    when {
+                        loading -> {
+                            Box(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator()
+                            }
+                        }
+                        error != null -> {
+                            Text(
+                                text = error,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodyMedium
                             )
+                        }
+                        orders.isEmpty() -> {
+                            Text(
+                                text = "No hay pedidos confirmados hoy.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                        else -> {
+                            val orderNumbers = confirmedOrderNumbersBySyncId(orders)
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                items(
+                                    orders,
+                                    key = { order -> order.syncId }
+                                ) { order ->
+                                    ConfirmedOrderPreviewCard(
+                                        orderNumber = orderNumbers[order.syncId] ?: 0,
+                                        order = order,
+                                        currentBcvRate = currentBcvRate,
+                                        formatPrice = formatPrice,
+                                        formatQty = formatQty,
+                                        formatMoney = formatMoney,
+                                        formatTime = formatTime
+                                    )
+                                }
+                            }
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cerrar")
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Cerrar")
+                }
             }
         }
-    )
+    }
 }
 
 @Composable
 private fun ConfirmedOrderPreviewCard(
-    index: Int,
+    orderNumber: Int,
     order: ConfirmedOrderPreview,
     currentBcvRate: Double?,
     formatPrice: (Double) -> String,
@@ -600,54 +654,109 @@ private fun ConfirmedOrderPreviewCard(
     formatTime: (Long) -> String
 ) {
     val bcvRate = order.bcvRate.takeIf { it > 0 } ?: currentBcvRate
+    val totalBs = bcvRate?.let { round(order.totalUsd * it * 100.0) / 100.0 }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-        )
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Pedido $index · ${formatTime(order.createdAt)}",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
                     color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = formatPrice(order.totalUsd),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            if (bcvRate != null) {
-                Text(
-                    text = "Bs ${formatMoney(order.totalUsd * bcvRate)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            if (order.lines.isEmpty()) {
-                Text(
-                    text = "Sin detalle de productos.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
-                order.lines.forEach { line ->
-                    ConfirmedOrderLineRow(
-                        line = line,
-                        formatQty = formatQty
+                ) {
+                    Text(
+                        text = "Nº $orderNumber",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    StatusPill(
+                        text = "Confirmado",
+                        color = BrandSuccess
+                    )
+                    Text(
+                        text = formatTime(order.createdAt),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                ReportTotalBanner(
+                    label = "Totales del pedido",
+                    usd = formatPrice(order.totalUsd),
+                    bs = totalBs?.let { "Bs ${formatMoney(it)}" },
+                    highlight = false
+                )
+
+                if (order.lines.isEmpty()) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)
+                    ) {
+                        Text(
+                            text = "Sin detalle de productos.",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontStyle = FontStyle.Italic
+                        )
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "Productos",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        order.lines.forEachIndexed { index, line ->
+                            if (index > 0) {
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                                )
+                            }
+                            ConfirmedOrderLineRow(
+                                line = line,
+                                bcvRate = order.bcvRate.takeIf { it > 0 } ?: currentBcvRate,
+                                formatQty = formatQty,
+                                formatPrice = formatPrice,
+                                formatMoney = formatMoney
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -657,25 +766,97 @@ private fun ConfirmedOrderPreviewCard(
 @Composable
 private fun ConfirmedOrderLineRow(
     line: SaleLineItem,
-    formatQty: (Double) -> String
+    bcvRate: Double?,
+    formatQty: (Double) -> String,
+    formatPrice: (Double) -> String,
+    formatMoney: (Double) -> String
 ) {
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.Top
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
             text = line.description,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.weight(1f),
-            maxLines = 2,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 4,
             overflow = TextOverflow.Ellipsis
         )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ConfirmedOrderDetailChip(label = "Cant.", value = formatQty(line.quantity))
+            ConfirmedOrderDetailChip(label = "Unidad", value = line.unit)
+            ConfirmedOrderDetailChip(label = "Precio", value = formatPrice(line.unitPriceUsd))
+        }
+        val totalBs = bcvRate?.takeIf { it > 0 }?.let { rate ->
+            round(line.totalUsd * rate * 100.0) / 100.0
+        }
         Text(
-            text = "${formatQty(line.quantity)} ${line.unit}",
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            text = buildString {
+                append("Total: ${formatPrice(line.totalUsd)}")
+                if (totalBs != null) {
+                    append(" · Bs ${formatMoney(totalBs)}")
+                }
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.fillMaxWidth()
         )
+        if (line.hasCashea) {
+            SaleLineItemCasheaSummary(
+                line = line,
+                formatPrice = formatPrice,
+                formatMoney = formatMoney
+            )
+        } else if (
+            !CasheaCalculator.isCasheaEligible(line.totalUsd) &&
+            bcvRate != null &&
+            bcvRate > 0
+        ) {
+            CasheaCalculator.simulate(
+                baseUsd = line.totalUsd,
+                rate = bcvRate,
+                quantity = line.quantity
+            )?.let { simulation ->
+                CasheaIneligibleReadOnlySummary(
+                    simulation = simulation,
+                    formatPrice = formatPrice,
+                    formatMoney = formatMoney
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfirmedOrderDetailChip(
+    label: String,
+    value: String
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = "$label:",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
     }
 }

@@ -334,7 +334,7 @@ class InventoryRepository(
         }
     }
 
-    /** Activa un cupón escaneado (primer uso desde la app). */
+    /** Activa un cupón escaneado (primer escaneo desde la app). */
     suspend fun activateDiscountTicket(code: String): Result<DiscountTicket> = withContext(Dispatchers.IO) {
         runCatching {
             cloudSync.patchJson(
@@ -343,6 +343,17 @@ class InventoryRepository(
             ).toDiscountTicket()
         }
     }
+
+    /** Ejecuta un cupón activo (segundo escaneo): captura teléfono y marca como usado. */
+    suspend fun executeDiscountTicket(code: String, telefonoEjecucion: String): Result<DiscountTicket> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                cloudSync.patchJson(
+                    "/v1/discount-tickets/${code.trim().uppercase()}/execute",
+                    JSONObject().apply { put("telefono_ejecucion", telefonoEjecucion.trim()) }
+                ).toDiscountTicket()
+            }
+        }
 
     /**
      * Descuenta stock y registra la venta directamente en el servidor. Si el

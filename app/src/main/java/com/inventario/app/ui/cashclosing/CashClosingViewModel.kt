@@ -9,6 +9,9 @@ import com.inventario.app.data.entity.CashClosingRecord
 import com.inventario.app.data.entity.CashClosingSnapshot
 import com.inventario.app.data.entity.CashClosingSnapshotCodec
 import com.inventario.app.data.entity.CashClosingStatus
+import com.inventario.app.data.entity.ConfirmedOrderPreview
+import com.inventario.app.data.entity.UserRole
+import com.inventario.app.data.entity.canResetTodayOrders
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.session.SessionManager
 import com.inventario.app.data.sync.CloudEvent
@@ -74,6 +77,9 @@ data class CashClosingUiState(
     val bcvRefreshing: Boolean = false,
     val confirmedOrdersToday: Int = 0,
     val resettingOrders: Boolean = false,
+    val canResetTodayOrders: Boolean = false,
+    val showConfirmedOrdersPreview: Boolean = false,
+    val confirmedOrdersPreview: List<ConfirmedOrderPreview> = emptyList(),
     val saveError: String? = null,
     val saveSuccess: Boolean = false,
     val closingAlert: CashClosingAlertType? = null,
@@ -83,13 +89,15 @@ data class CashClosingUiState(
 class CashClosingViewModel(
     private val inventoryRepository: InventoryRepository,
     private val sessionManager: SessionManager,
-    private val bcvRateFetcher: BcvRateFetcher
+    private val bcvRateFetcher: BcvRateFetcher,
+    private val onClosingSubmittedSound: () -> Unit = {}
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(CashClosingUiState())
     val state: StateFlow<CashClosingUiState> = _state.asStateFlow()
 
     private val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale("es", "VE"))
+    private val timeFormat = SimpleDateFormat("HH:mm", Locale("es", "VE"))
     private val moneyFormat = NumberFormat.getNumberInstance(Locale("es", "VE")).apply {
         minimumFractionDigits = 2
         maximumFractionDigits = 4
@@ -103,19 +111,24 @@ class CashClosingViewModel(
 
     init {
         val userSucursal = sessionManager.sucursal()
+        val role = sessionManager.role() ?: UserRole.CONSULTA
         _state.update {
             it.copy(
                 username = sessionManager.username().orEmpty(),
                 dateText = dateFormat.format(Date()),
                 posEntries = listOf(newPosEntry("Punto 1")),
                 cashEntries = listOf(newCashEntry("")),
-                branchName = userSucursal.ifBlank { it.branchName }
+                branchName = userSucursal.ifBlank { it.branchName },
+                canResetTodayOrders = role.canResetTodayOrders()
             )
         }
         viewModelScope.launch {
             inventoryRepository.observeMeta().collect { meta ->
                 val rate = meta?.bcvRate?.let(::roundRate)
                 onBcvRateAvailable(rate, forceRateText = false)
+                if (BcvRateFetcher.isStale(meta?.bcvFetchedAt)) {
+                    refreshBcv()
+                }
             }
         }
         viewModelScope.launch {
@@ -134,10 +147,15 @@ class CashClosingViewModel(
             }
         }
         viewModelScope.launch {
-            // Contador siempre en vivo: se actualiza solo cuando cualquier
+            // Lista completa en vivo: se actualiza sola cuando cualquier
             // dispositivo confirma o reinicia los pedidos del día.
-            inventoryRepository.observeConfirmedOrdersToday().collect { count ->
-                _state.update { it.copy(confirmedOrdersToday = count) }
+            inventoryRepository.observeConfirmedOrdersToday().collect { orders ->
+                _state.update {
+                    it.copy(
+                        confirmedOrdersToday = orders.size,
+                        confirmedOrdersPreview = orders
+                    )
+                }
             }
         }
         viewModelScope.launch {
@@ -190,7 +208,31 @@ class CashClosingViewModel(
         }
     }
 
+    fun openConfirmedOrdersPreview() {
+        if (_state.value.confirmedOrdersToday <= 0) return
+        _state.update { it.copy(showConfirmedOrdersPreview = true) }
+        viewModelScope.launch {
+            runCatching { inventoryRepository.refreshConfirmedOrdersToday() }
+        }
+    }
+
+    fun dismissConfirmedOrdersPreview() {
+        _state.update { it.copy(showConfirmedOrdersPreview = false) }
+    }
+
+    fun formatOrderTime(createdAt: Long): String = timeFormat.format(Date(createdAt))
+
+    fun formatQty(value: Double): String {
+        return if (value % 1.0 == 0.0) value.toInt().toString() else moneyFormat.format(value)
+    }
+
+    fun formatMoney(value: Double): String = moneyFormat.format(value)
+
     fun resetTodayOrders() {
+        if (!_state.value.canResetTodayOrders) {
+            AppSnackbarController.show("No tienes permisos para reiniciar el contador.")
+            return
+        }
         viewModelScope.launch {
             _state.update { it.copy(resettingOrders = true) }
             runCatching { inventoryRepository.resetTodayOrders() }
@@ -199,6 +241,8 @@ class CashClosingViewModel(
                         it.copy(
                             resettingOrders = false,
                             confirmedOrdersToday = 0,
+                            confirmedOrdersPreview = emptyList(),
+                            showConfirmedOrdersPreview = false,
                             salesUsdText = "",
                             salesBsText = ""
                         )
@@ -246,18 +290,18 @@ class CashClosingViewModel(
     }
 
     fun onPrevCashUsdChange(raw: String) {
-        val cleaned = cleanDecimal(raw)
-        val rate = currentRate()
-        val bs = convertUsdToBs(cleaned, rate)
-        _state.update { it.copy(prevCashUsdText = cleaned, prevCashBsText = bs) }
+        _state.update { it.copy(prevCashUsdText = cleanDecimal(raw)) }
     }
 
     fun onPrevCashBsChange(raw: String) {
-        val cleaned = cleanDecimal(raw)
-        val rate = currentRate()
-        val usd = convertBsToUsd(cleaned, rate)
-        _state.update { it.copy(prevCashBsText = cleaned, prevCashUsdText = usd) }
+        _state.update { it.copy(prevCashBsText = cleanDecimal(raw)) }
     }
+
+    fun prevCashUsdEquivBsText(): String =
+        convertUsdToBs(_state.value.prevCashUsdText, currentRate())
+
+    fun prevCashBsEquivUsdText(): String =
+        convertBsToUsd(_state.value.prevCashBsText, currentRate())
 
     fun onSalesUsdChange(raw: String) {
         val cleaned = cleanDecimal(raw)
@@ -529,9 +573,9 @@ class CashClosingViewModel(
             inventoryRepository.saveCashClosing(record)
                 .onSuccess {
                     _state.update { it.copy(saveSuccess = true) }
+                    onClosingSubmittedSound()
                     refreshClosingStatus()
                     onComplete(true)
-                    AppSnackbarController.show("Cierre de caja guardado. Queda pendiente de aprobación.")
                 }
                 .onFailure { err ->
                     val message = err.toUserMessage("No se pudo guardar el cierre.")
@@ -629,9 +673,17 @@ class CashClosingViewModel(
             if (rate != null) {
                 appendLine("Tasa BCV: Bs ${bcvRateFormat.format(rate)}")
             }
-            val prevCash = prevCashUsd()
-            if (prevCash > 0) {
-                appendLine("Efectivo cierre anterior: ${formatPrice(prevCash)} | ${formatBs(prevCashBs())}")
+            val prevUsd = prevCashUsd()
+            val prevBs = prevCashBs()
+            if (prevUsd > 0) {
+                appendLine(
+                    "Efectivo cierre anterior (USD): ${formatPrice(prevUsd)} | ${formatBs(parseUsd(prevCashUsdEquivBsText()))}"
+                )
+            }
+            if (prevBs > 0) {
+                appendLine(
+                    "Efectivo cierre anterior (Bs): ${formatBs(prevBs)} | ${formatPrice(parseUsd(prevCashBsEquivUsdText()))}"
+                )
             }
             appendLine()
             appendLine("--- VENTAS DEL DIA ---")
@@ -753,11 +805,6 @@ class CashClosingViewModel(
 
     private fun syncBsConversions(state: CashClosingUiState, rate: Double): CashClosingUiState =
         state.copy(
-            prevCashBsText = if (state.prevCashUsdText.isNotBlank()) {
-                convertUsdToBs(state.prevCashUsdText, rate)
-            } else {
-                state.prevCashBsText
-            },
             salesBsText = if (state.salesUsdText.isNotBlank()) {
                 convertUsdToBs(state.salesUsdText, rate)
             } else {
@@ -852,11 +899,17 @@ class CashClosingViewModel(
         fun factory(
             inventoryRepository: InventoryRepository,
             sessionManager: SessionManager,
-            bcvRateFetcher: BcvRateFetcher
+            bcvRateFetcher: BcvRateFetcher,
+            onClosingSubmittedSound: () -> Unit = {}
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return CashClosingViewModel(inventoryRepository, sessionManager, bcvRateFetcher) as T
+                return CashClosingViewModel(
+                    inventoryRepository,
+                    sessionManager,
+                    bcvRateFetcher,
+                    onClosingSubmittedSound
+                ) as T
             }
         }
     }

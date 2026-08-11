@@ -13,11 +13,12 @@ import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.canManageDiscountTickets
 import com.inventario.app.data.entity.canResetTodayOrders
-import com.inventario.app.data.entity.isRedeemable
 import com.inventario.app.data.entity.isIssued
 import com.inventario.app.data.entity.isExpired
-import com.inventario.app.data.entity.isUsed
 import com.inventario.app.data.entity.isVoided
+import com.inventario.app.data.entity.isExecutable
+import com.inventario.app.data.entity.isExecutedPendingSale
+import com.inventario.app.data.entity.isFullyConsumed
 import com.inventario.app.data.order.OrderLine
 import com.inventario.app.data.order.ProductPaymentChoice
 import com.inventario.app.data.excel.ImportResult
@@ -93,6 +94,10 @@ data class HomeUiState(
     val validatingDiscountTicket: Boolean = false,
     val discountTicketError: String? = null,
     val appliedDiscountTicket: DiscountTicket? = null,
+    val showDiscountTicketPhoneDialog: Boolean = false,
+    val pendingDiscountTicket: DiscountTicket? = null,
+    val discountTicketPhoneInput: String = "",
+    val executingDiscountTicket: Boolean = false,
     // ---- Ticket de descuento: generación tras confirmar una venta ----
     val lastConfirmedSaleSyncId: String? = null,
     val showGenerateTicketDialog: Boolean = false,
@@ -552,7 +557,6 @@ class HomeViewModel(
             )
         }
         revalidateOrderCasheaEligibility()
-        AppSnackbarController.show("\"${product.description}\" agregado al pedido.")
     }
 
     fun isOrderCasheaEligible(): Boolean =
@@ -673,6 +677,51 @@ class HomeViewModel(
         _state.update { it.copy(discountTicketCodeInput = value.uppercase(), discountTicketError = null) }
     }
 
+    fun onDiscountTicketPhoneChange(value: String) {
+        _state.update { it.copy(discountTicketPhoneInput = value, discountTicketError = null) }
+    }
+
+    fun dismissDiscountTicketPhoneDialog() {
+        _state.update {
+            it.copy(
+                showDiscountTicketPhoneDialog = false,
+                pendingDiscountTicket = null,
+                discountTicketPhoneInput = "",
+                discountTicketError = null
+            )
+        }
+    }
+
+    private fun applyExecutedTicketToCart(ticket: DiscountTicket) {
+        _state.update {
+            it.copy(
+                validatingDiscountTicket = false,
+                executingDiscountTicket = false,
+                showDiscountTicketPhoneDialog = false,
+                pendingDiscountTicket = null,
+                discountTicketPhoneInput = "",
+                discountTicketError = null,
+                appliedDiscountTicket = ticket,
+                discountTicketCodeInput = ""
+            )
+        }
+        AppSnackbarController.show(
+            "Descuento de ${formatQty(ticket.discountPercent)}% aplicado (cupón ${ticket.code})."
+        )
+    }
+
+    private fun promptDiscountTicketExecution(ticket: DiscountTicket) {
+        _state.update {
+            it.copy(
+                validatingDiscountTicket = false,
+                showDiscountTicketPhoneDialog = true,
+                pendingDiscountTicket = ticket,
+                discountTicketPhoneInput = "",
+                discountTicketError = null
+            )
+        }
+    }
+
     /** Valida un código (escrito o escaneado) contra el servidor antes de aplicarlo al carrito. */
     fun applyDiscountTicket(code: String = _state.value.discountTicketCodeInput) {
         val trimmed = code.trim()
@@ -687,30 +736,31 @@ class HomeViewModel(
                     val errorMessage = when {
                         ticket == null -> "Cupón no encontrado. Verifica el código."
                         ticket.isVoided() -> "Este cupón fue anulado."
-                        ticket.isUsed() -> "Este cupón ya fue utilizado."
+                        ticket.isFullyConsumed() -> "Este cupón ya fue utilizado."
                         ticket.isIssued() -> "Este cupón no está activado. Usa «Activar cupón» en el menú principal."
                         ticket.isExpired() -> ticket.expiresAt?.let {
                             "Este cupón expiró el ${formatTicketDate(it)}."
                         } ?: "Este cupón no está activo."
-                        !ticket.isRedeemable() -> "Este cupón no puede aplicarse."
-                        else -> null
+                        ticket.isExecutedPendingSale() -> null
+                        ticket.isExecutable() -> null
+                        else -> "Este cupón no puede aplicarse."
                     }
-                    if (errorMessage != null) {
-                        _state.update {
-                            it.copy(validatingDiscountTicket = false, discountTicketError = errorMessage)
+                    when {
+                        errorMessage != null -> {
+                            _state.update {
+                                it.copy(validatingDiscountTicket = false, discountTicketError = errorMessage)
+                            }
                         }
-                    } else {
-                        _state.update {
-                            it.copy(
-                                validatingDiscountTicket = false,
-                                discountTicketError = null,
-                                appliedDiscountTicket = ticket,
-                                discountTicketCodeInput = ""
-                            )
+                        ticket!!.isExecutedPendingSale() -> applyExecutedTicketToCart(ticket)
+                        ticket.isExecutable() -> promptDiscountTicketExecution(ticket)
+                        else -> {
+                            _state.update {
+                                it.copy(
+                                    validatingDiscountTicket = false,
+                                    discountTicketError = "Este cupón no puede aplicarse."
+                                )
+                            }
                         }
-                        AppSnackbarController.show(
-                            "Descuento de ${formatQty(ticket!!.discountPercent)}% aplicado (cupón ${ticket.code})."
-                        )
                     }
                 }
                 .onFailure { err ->
@@ -718,6 +768,31 @@ class HomeViewModel(
                         it.copy(
                             validatingDiscountTicket = false,
                             discountTicketError = err.toUserMessage("No se pudo validar el ticket.")
+                        )
+                    }
+                }
+        }
+    }
+
+    /** Segundo escaneo: ejecuta el cupón con teléfono y lo aplica al carrito. */
+    fun confirmDiscountTicketExecution() {
+        val ticket = _state.value.pendingDiscountTicket ?: return
+        val phone = _state.value.discountTicketPhoneInput.trim()
+        if (phone.isEmpty()) {
+            _state.update { it.copy(discountTicketError = "Ingresa un número telefónico válido.") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(executingDiscountTicket = true, discountTicketError = null) }
+            inventoryRepository.executeDiscountTicket(ticket.code, phone)
+                .onSuccess { executed ->
+                    applyExecutedTicketToCart(executed)
+                }
+                .onFailure { err ->
+                    _state.update {
+                        it.copy(
+                            executingDiscountTicket = false,
+                            discountTicketError = err.toUserMessage("No se pudo ejecutar el cupón.")
                         )
                     }
                 }
@@ -733,7 +808,15 @@ class HomeViewModel(
     }
 
     fun removeDiscountTicket() {
-        _state.update { it.copy(appliedDiscountTicket = null, discountTicketError = null) }
+        _state.update {
+            it.copy(
+                appliedDiscountTicket = null,
+                discountTicketError = null,
+                showDiscountTicketPhoneDialog = false,
+                pendingDiscountTicket = null,
+                discountTicketPhoneInput = ""
+            )
+        }
     }
 
     fun openGenerateTicketDialog() {

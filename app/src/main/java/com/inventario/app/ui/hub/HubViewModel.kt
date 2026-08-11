@@ -67,6 +67,9 @@ class HubViewModel(
                         }
                     )
                 }
+                if (BcvRateFetcher.isStale(meta?.bcvFetchedAt)) {
+                    refreshBcv()
+                }
             }
         }
         refreshBcv()

@@ -213,6 +213,15 @@ function sanitizeCustomerPhone(raw) {
   return trimmed || DEFAULT_CUSTOMER_PHONE;
 }
 
+/** Teléfono obligatorio al ejecutar (canjear) un cupón desde la app móvil. */
+function sanitizeExecutionPhone(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) {
+    throw publicError("Debes ingresar un número telefónico válido");
+  }
+  return trimmed;
+}
+
 function normalizeTicketRecord(ticket) {
   if (!ticket) return ticket;
   const normalized = { ...ticket };
@@ -256,6 +265,8 @@ function ticketPublicView(ticket, now = Date.now()) {
     issuedByUsername: enriched.issuedByUsername || "",
     issuedChannel: enriched.issuedChannel || "PORTAL",
     customerPhone: enriched.customerPhone || null,
+    telefono_ejecucion: enriched.telefono_ejecucion || null,
+    fecha_ejecucion: enriched.fecha_ejecucion || enriched.usedAt || null,
     auditLog: enriched.auditLog || []
   };
 }
@@ -328,7 +339,11 @@ function filterDiscountTickets(tickets, query, now = Date.now()) {
   }
   const phoneQuery = String(query.phone || "").replace(/\D/g, "");
   if (phoneQuery) {
-    result = result.filter((t) => String(t.customerPhone || "").includes(phoneQuery));
+    result = result.filter((t) => {
+      const customer = String(t.customerPhone || "").replace(/\D/g, "");
+      const execution = String(t.telefono_ejecucion || "").replace(/\D/g, "");
+      return customer.includes(phoneQuery) || execution.includes(phoneQuery);
+    });
   }
   const percent = Number(query.percent);
   if (Number.isFinite(percent) && percent > 0) {
@@ -737,28 +752,38 @@ async function start() {
           if (ticket.status === "ISSUED") {
             throw publicError("Este cupón aún no está activado. Escanéalo primero en «Activar cupón».");
           }
-          if (ticket.status !== "ACTIVE") {
-            throw publicError("Este cupón ya fue utilizado");
+          if (ticket.status === "ACTIVE") {
+            throw publicError(
+              "Este cupón debe ejecutarse con teléfono antes de confirmar la venta. " +
+              "Escanea el código en el carrito e ingresa el número telefónico."
+            );
+          }
+          if (ticket.status !== "USED") {
+            throw publicError("Este cupón no puede aplicarse a esta venta");
+          }
+          if (ticket.usedBySaleSyncId && ticket.usedBySaleSyncId !== syncId) {
+            throw publicError("Este cupón ya fue utilizado en otra venta");
           }
           if (!ticket.expiresAt || ticket.expiresAt <= createdAt) {
             throw publicError("Este cupón está expirado");
           }
           appliedDiscountPercent = Number(ticket.discountPercent) || 0;
-          const usedTicket = appendTicketAudit(
-            {
-              ...ticket,
-              status: "USED",
-              usedAt: createdAt,
-              usedBySaleSyncId: syncId,
-              usedByUsername: req.user?.username || ""
-            },
-            "USED",
-            req.user?.username || "",
-            { saleSyncId: syncId }
-          );
-          discountTickets = state.discountTickets.map((t, i) =>
-            i === ticketIndex ? usedTicket : t
-          );
+          let usedTicket = ticket;
+          if (!ticket.usedBySaleSyncId) {
+            usedTicket = appendTicketAudit(
+              {
+                ...ticket,
+                usedBySaleSyncId: syncId,
+                usedByUsername: req.user?.username || ticket.usedByUsername || ""
+              },
+              "SALE_LINKED",
+              req.user?.username || "",
+              { saleSyncId: syncId }
+            );
+            discountTickets = state.discountTickets.map((t, i) =>
+              i === ticketIndex ? usedTicket : t
+            );
+          }
           discountTicketApplied = true;
         }
 
@@ -1245,6 +1270,62 @@ async function start() {
         );
         const discountTickets = state.discountTickets.map((t, i) => (i === index ? activated : t));
         return { state: { ...state, discountTickets }, result: activated };
+      });
+      realtime.broadcast("discountTickets", {});
+      res.json(ticketPublicView(updated));
+    })
+  );
+
+  app.patch(
+    "/v1/discount-tickets/:code/execute",
+    auth.requireAuth(),
+    asyncRoute(async (req, res) => {
+      const code = String(req.params.code || "").trim().toUpperCase();
+      const telefono_ejecucion = sanitizeExecutionPhone(
+        req.body?.telefono_ejecucion ?? req.body?.executionPhone
+      );
+      const updated = await store.runTransaction(async (state) => {
+        const index = state.discountTickets.findIndex((t) => t.code === code);
+        if (index === -1) throw publicError("Cupón no encontrado", 404);
+        const ticket = normalizeTicketRecord(state.discountTickets[index]);
+        if (ticket.status === "VOIDED") {
+          throw publicError("Este cupón fue anulado");
+        }
+        if (ticket.status === "ISSUED") {
+          throw publicError(
+            "Este cupón aún no está activado. Escanéalo primero en «Activar cupón»."
+          );
+        }
+        if (ticket.status === "USED") {
+          if (!ticket.usedBySaleSyncId) {
+            return { state, result: ticket };
+          }
+          throw publicError("Este cupón ya fue utilizado");
+        }
+        if (ticket.status !== "ACTIVE") {
+          throw publicError("Este cupón no puede ejecutarse");
+        }
+        const now = Date.now();
+        if (!ticket.expiresAt || ticket.expiresAt <= now) {
+          throw publicError("Este cupón está expirado");
+        }
+        let executed = {
+          ...ticket,
+          status: "USED",
+          telefono_ejecucion,
+          fecha_ejecucion: now,
+          usedAt: now,
+          usedByUsername: req.user?.username || "",
+          usedBySaleSyncId: null
+        };
+        executed = appendTicketAudit(
+          executed,
+          "EXECUTED",
+          req.user?.username || "",
+          { telefono_ejecucion, fecha_ejecucion: now }
+        );
+        const discountTickets = state.discountTickets.map((t, i) => (i === index ? executed : t));
+        return { state: { ...state, discountTickets }, result: executed };
       });
       realtime.broadcast("discountTickets", {});
       res.json(ticketPublicView(updated));

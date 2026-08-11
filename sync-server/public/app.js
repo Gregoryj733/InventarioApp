@@ -304,7 +304,7 @@
       renderTable();
       renderPagination();
     } catch (err) {
-      $("#table-body").innerHTML = `<tr><td colspan="8" class="empty">${err.message}</td></tr>`;
+      $("#table-body").innerHTML = `<tr><td colspan="10" class="empty">${err.message}</td></tr>`;
       renderPagination();
     } finally {
       if (!silent) state.loading = false;
@@ -365,7 +365,7 @@
   function renderTable() {
     const tbody = $("#table-body");
     if (!state.tickets.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty">No hay cupones que coincidan con los filtros.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="empty">No hay cupones que coincidan con los filtros.</td></tr>';
       renderPagination();
       return;
     }
@@ -374,10 +374,12 @@
       <tr>
         <td class="code-cell">${t.code}</td>
         <td>${escapeHtml(formatCustomerPhone(t.customerPhone))}</td>
+        <td>${escapeHtml(formatExecutionPhone(t.telefono_ejecucion))}</td>
         <td>${t.discountPercent}%</td>
         <td>${formatDate(t.issuedAt)}</td>
         <td>${formatDate(t.activatedAt)}</td>
         <td>${formatDate(t.expiresAt)}</td>
+        <td>${formatDate(t.fecha_ejecucion || t.usedAt)}</td>
         <td><span class="badge ${badgeClass(t.displayStatus)}">${statusLabel(t.displayStatus)}</span></td>
         <td>
           <button class="btn btn-ghost btn-sm" data-action="detail" data-code="${t.code}">Ver</button>
@@ -400,6 +402,11 @@
 
   function formatCustomerPhone(phone) {
     if (!phone || phone === DEFAULT_CUSTOMER_PHONE) return "—";
+    return phone;
+  }
+
+  function formatExecutionPhone(phone) {
+    if (!phone) return "—";
     return phone;
   }
 
@@ -932,14 +939,16 @@
       ${qrBlock}
       <div class="detail-grid">
         <div class="detail-row"><span>Descuento</span><span>${ticket.discountPercent}%</span></div>
-        <div class="detail-row"><span>Teléfono</span><span>${escapeHtml(formatCustomerPhone(ticket.customerPhone))}</span></div>
+        <div class="detail-row"><span>Teléfono (emisión)</span><span>${escapeHtml(formatCustomerPhone(ticket.customerPhone))}</span></div>
+        <div class="detail-row"><span>Teléfono ejecución</span><span>${escapeHtml(formatExecutionPhone(ticket.telefono_ejecucion))}</span></div>
         <div class="detail-row"><span>Estado</span><span><span class="badge ${badgeClass(ticket.displayStatus)}">${statusLabel(ticket.displayStatus)}</span></span></div>
         <div class="detail-row"><span>Creado</span><span>${formatDate(ticket.issuedAt)}</span></div>
         <div class="detail-row"><span>Activado</span><span>${formatDate(ticket.activatedAt)}</span></div>
         <div class="detail-row"><span>Vence</span><span>${formatDate(ticket.expiresAt)}</span></div>
+        <div class="detail-row"><span>Fecha ejecución</span><span>${formatDate(ticket.fecha_ejecucion || ticket.usedAt)}</span></div>
         <div class="detail-row"><span>Emitido por</span><span>${escapeHtml(ticket.issuedByUsername || "—")}</span></div>
         <div class="detail-row"><span>Canal</span><span>${ticket.issuedChannel === "APP" ? "App móvil" : "Portal web"}</span></div>
-        ${ticket.usedAt ? `<div class="detail-row"><span>Usado</span><span>${formatDate(ticket.usedAt)}</span></div>` : ""}
+        ${ticket.usedAt ? `<div class="detail-row"><span>Venta vinculada</span><span>${ticket.usedBySaleSyncId ? "Sí" : "Pendiente"}</span></div>` : ""}
       </div>
       <p class="validity-note">${QR_TICKET_VALIDITY_TEXT}</p>
       <h4>Historial</h4>
@@ -970,8 +979,11 @@
     return {
       CREATED: "Creado",
       ACTIVATED: "Activado",
+      EXECUTED: "Ejecutado (app)",
       USED: "Canjeado",
-      VOIDED: "Anulado"
+      SALE_LINKED: "Vinculado a venta",
+      VOIDED: "Anulado",
+      PHONE_UPDATED: "Teléfono actualizado"
     }[action] || action;
   }
 

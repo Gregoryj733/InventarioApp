@@ -286,7 +286,9 @@ internal fun JSONObject.toDiscountTicket(): DiscountTicket = DiscountTicket(
     usedAt = optLongOrNull("usedAt"),
     usedBySaleSyncId = optString("usedBySaleSyncId").takeIf { it.isNotBlank() },
     issuedByUsername = optString("issuedByUsername"),
-    sourceSaleSyncId = optString("sourceSaleSyncId").takeIf { it.isNotBlank() }
+    sourceSaleSyncId = optString("sourceSaleSyncId").takeIf { it.isNotBlank() },
+    telefonoEjecucion = optString("telefono_ejecucion").takeIf { it.isNotBlank() },
+    fechaEjecucion = optLongOrNull("fecha_ejecucion")
 )
 
 internal fun JSONArray.toDiscountTicketList(): List<DiscountTicket> {
