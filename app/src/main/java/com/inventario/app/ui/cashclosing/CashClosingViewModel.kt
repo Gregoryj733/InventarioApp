@@ -12,6 +12,7 @@ import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.entity.ConfirmedOrderPreview
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.canResetTodayOrders
+import com.inventario.app.data.entity.canViewClosingHistory
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.session.SessionManager
 import com.inventario.app.data.sync.CloudEvent
@@ -83,7 +84,10 @@ data class CashClosingUiState(
     val saveError: String? = null,
     val saveSuccess: Boolean = false,
     val closingAlert: CashClosingAlertType? = null,
-    val remainingAttempts: Int = 5
+    val remainingAttempts: Int = 5,
+    val canViewClosingHistory: Boolean = false,
+    val closingHistory: List<CashClosingRecord> = emptyList(),
+    val loadingClosingHistory: Boolean = false
 )
 
 class CashClosingViewModel(
@@ -119,7 +123,8 @@ class CashClosingViewModel(
                 posEntries = listOf(newPosEntry("Punto 1")),
                 cashEntries = listOf(newCashEntry("")),
                 branchName = userSucursal.ifBlank { it.branchName },
-                canResetTodayOrders = role.canResetTodayOrders()
+                canResetTodayOrders = role.canResetTodayOrders(),
+                canViewClosingHistory = role.canViewClosingHistory()
             )
         }
         viewModelScope.launch {
@@ -165,11 +170,13 @@ class CashClosingViewModel(
             inventoryRepository.observeCloudEvents().collect { event ->
                 if (event is CloudEvent.CashClosings) {
                     refreshClosingStatus()
+                    refreshClosingHistory()
                 }
             }
         }
         refreshBcv()
         refreshClosingStatus()
+        refreshClosingHistory()
     }
 
     fun refreshClosingStatus() {
@@ -195,6 +202,33 @@ class CashClosingViewModel(
                 )
             }
         }
+    }
+
+    /** Historial hoy + días anteriores (Supervisor/Admin/gerente). */
+    fun refreshClosingHistory() {
+        if (!_state.value.canViewClosingHistory) return
+        viewModelScope.launch {
+            _state.update { it.copy(loadingClosingHistory = true) }
+            runCatching { inventoryRepository.listClosingHistory() }
+                .onSuccess { list ->
+                    _state.update {
+                        it.copy(closingHistory = list, loadingClosingHistory = false)
+                    }
+                }
+                .onFailure {
+                    _state.update { it.copy(loadingClosingHistory = false) }
+                }
+        }
+    }
+
+    fun formatClosingDateTime(closedAt: Long): String =
+        "${dateFormat.format(Date(closedAt))} ${timeFormat.format(Date(closedAt))}"
+
+    fun closingStatusLabel(status: CashClosingStatus): String = when (status) {
+        CashClosingStatus.PENDING -> "Pendiente"
+        CashClosingStatus.APPROVED -> "Aprobado"
+        CashClosingStatus.REJECTED -> "Rechazado"
+        CashClosingStatus.REVERTED -> "Revertido"
     }
 
     fun acknowledgeClosingAlert() {
@@ -575,6 +609,7 @@ class CashClosingViewModel(
                     _state.update { it.copy(saveSuccess = true) }
                     onClosingSubmittedSound()
                     refreshClosingStatus()
+                    refreshClosingHistory()
                     onComplete(true)
                 }
                 .onFailure { err ->

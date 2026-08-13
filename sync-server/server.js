@@ -91,7 +91,7 @@ app.get("/", (_req, res) => {
 // Portal web: se sirve ANTES del chequeo de X-Api-Key para que el navegador
 // pueda cargar HTML/CSS/JS sin credenciales de dispositivo.
 const portalDir = path.join(__dirname, "public");
-const PORTAL_BUILD_VERSION = "18";
+const PORTAL_BUILD_VERSION = "19";
 
 app.get("/portal/build.json", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -469,6 +469,54 @@ async function ensureVentasPortalUser(store) {
   });
 }
 
+/** Asegura el usuario gerente/gerente con rol SUPERVISOR (permisos de supervisión
+ *  completos en app y portal). Se recrea en cada arranque si falta o quedó
+ *  desactivado — importante en backend file efímero de Render free. */
+async function ensureGerenteSupervisorUser(store) {
+  const GERENTE_USERNAME = "gerente";
+  const GERENTE_PASSWORD = "gerente";
+  await store.runTransaction(async (state) => {
+    const users = state.users.map((u) => ({ ...u }));
+    let nextUserId = state.nextUserId;
+    let changed = false;
+    const index = users.findIndex((u) => String(u.username).toLowerCase() === GERENTE_USERNAME);
+    if (index >= 0) {
+      const current = users[index];
+      const updated = {
+        ...current,
+        username: GERENTE_USERNAME,
+        role: "SUPERVISOR",
+        active: true,
+        passwordHash: auth.hashPassword(GERENTE_PASSWORD),
+        sucursal: current.sucursal || "Principal"
+      };
+      if (
+        current.role !== updated.role ||
+        current.username !== updated.username ||
+        !current.active ||
+        current.passwordHash !== updated.passwordHash ||
+        current.sucursal !== updated.sucursal
+      ) {
+        users[index] = updated;
+        changed = true;
+      }
+    } else {
+      users.push({
+        id: nextUserId,
+        username: GERENTE_USERNAME,
+        passwordHash: auth.hashPassword(GERENTE_PASSWORD),
+        role: "SUPERVISOR",
+        active: true,
+        sucursal: "Principal"
+      });
+      nextUserId += 1;
+      changed = true;
+    }
+    if (!changed) return { state, result: null };
+    return { state: { ...state, users, nextUserId }, result: null };
+  });
+}
+
 /**
  * Carga el catálogo de compatibilidad marca/modelo/año -> batería (copiado
  * de duncan.com.ve, ver sync-server/data/battery-finder.json) solo si la
@@ -535,6 +583,7 @@ async function start() {
   push.init();
   await seedDefaultUsers(store);
   await ensureVentasPortalUser(store);
+  await ensureGerenteSupervisorUser(store);
   await seedBatteryFinderData(store);
 
   // ---------- Autenticación ----------

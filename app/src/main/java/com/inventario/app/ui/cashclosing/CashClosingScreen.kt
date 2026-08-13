@@ -71,6 +71,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.inventario.app.data.entity.CashClosingAlertType
+import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.ui.theme.AccentSectionCard
 import com.inventario.app.ui.theme.AppScreenBackground
 import com.inventario.app.ui.theme.BrandOutflow
@@ -187,6 +188,10 @@ fun CashClosingScreen(
             )
             if (state.closingAlert != null) {
                 Spacer(Modifier.height(10.dp))
+            }
+            if (state.canViewClosingHistory) {
+                ClosingHistorySection(state = state, viewModel = viewModel)
+                Spacer(Modifier.height(12.dp))
             }
             SectionCard(title = "Encabezado") {
                 KeyboardAwareTextField(
@@ -493,6 +498,126 @@ fun CashClosingScreen(
     }
 }
 
+
+@Composable
+private fun ClosingHistorySection(
+    state: CashClosingUiState,
+    viewModel: CashClosingViewModel
+) {
+    val today = state.dateText
+    val todayClosings = state.closingHistory.filter { it.dateText == today }
+    val previousClosings = state.closingHistory.filter { it.dateText != today }
+
+    AccentSectionCard(title = "Historial de cierres") {
+        Text(
+            "Visible para Supervisor y Admin: cierre de hoy y días anteriores.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        if (state.loadingClosingHistory) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+            }
+            return@AccentSectionCard
+        }
+        if (state.closingHistory.isEmpty()) {
+            Text(
+                "Aún no hay cierres registrados en el servidor.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            return@AccentSectionCard
+        }
+        Text("Hoy ($today)", fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        if (todayClosings.isEmpty()) {
+            Text(
+                "Sin cierres del día actual.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            todayClosings.forEach { closing ->
+                ClosingHistoryRow(closing = closing, viewModel = viewModel)
+                Spacer(Modifier.height(6.dp))
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("Días anteriores", fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        if (previousClosings.isEmpty()) {
+            Text(
+                "Sin cierres de días anteriores.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            previousClosings.take(40).forEach { closing ->
+                ClosingHistoryRow(closing = closing, viewModel = viewModel)
+                Spacer(Modifier.height(6.dp))
+            }
+        }
+        OutlinedButton(
+            onClick = viewModel::refreshClosingHistory,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Actualizar historial")
+        }
+    }
+}
+
+@Composable
+private fun ClosingHistoryRow(
+    closing: com.inventario.app.data.entity.CashClosingRecord,
+    viewModel: CashClosingViewModel
+) {
+    val statusColor = when (closing.status) {
+        CashClosingStatus.PENDING -> BrandWarning
+        CashClosingStatus.APPROVED -> BrandSuccess
+        CashClosingStatus.REJECTED -> MaterialTheme.colorScheme.error
+        CashClosingStatus.REVERTED -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    viewModel.formatClosingDateTime(closing.closedAt),
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                StatusPill(
+                    text = viewModel.closingStatusLabel(closing.status),
+                    color = statusColor
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "${closing.username} · ${closing.branchName.ifBlank { closing.userSucursal }.ifBlank { "Sin sucursal" }}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "${viewModel.formatPrice(closing.grandTotalUsd)} · Diff ${viewModel.formatPrice(closing.differenceUsd)}",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
 
 @Composable
 private fun CashClosingAlertBanner(

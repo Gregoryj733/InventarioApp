@@ -493,8 +493,21 @@ class InventoryRepository(
     }
 
     suspend fun hasPendingClosings(): Boolean = withContext(Dispatchers.IO) {
-        val (dayStart, dayEnd) = todayBounds()
-        fetchCashClosings(dayStart, dayEnd).any { it.status == CashClosingStatus.PENDING }
+        // Cola de aprobación: cualquier PENDING cuenta, no solo los de hoy.
+        fetchCashClosings().any { it.status == CashClosingStatus.PENDING }
+    }
+
+    suspend fun pendingClosingsCount(): Int = withContext(Dispatchers.IO) {
+        fetchCashClosings().count { it.status == CashClosingStatus.PENDING }
+    }
+
+    /**
+     * Historial de cierres (hoy + días anteriores) para Supervisor/Admin.
+     * Sin filtro de fechas: el servidor devuelve toda la colección; el cliente
+     * ordena por más reciente.
+     */
+    suspend fun listClosingHistory(): List<CashClosingRecord> = withContext(Dispatchers.IO) {
+        fetchCashClosings().sortedByDescending { it.closedAt }
     }
 
     suspend fun todayCashClosings(): List<CashClosingRecord> = withContext(Dispatchers.IO) {

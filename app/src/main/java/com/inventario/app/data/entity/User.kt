@@ -14,14 +14,37 @@ fun UserRole.displayLabel(): String = when (this) {
     UserRole.CONSULTA -> "Consulta"
 }
 
-/** Roles con permiso para aprobar, rechazar o revertir cierres de caja (Flujo Aprobación). */
-fun UserRole.canReviewClosings(): Boolean = this == UserRole.ADMIN || this == UserRole.SUPERVISOR
+/**
+ * Permisos del perfil **Supervisor** (también aplican a Admin):
+ *
+ * App móvil
+ * - Menú Flujo Aprobación: ver y validar cierres (aprobar / rechazar / revertir).
+ * - Historial de cierres: día actual + días anteriores (hasta 90 días).
+ * - Reiniciar contador de pedidos confirmados del día.
+ * - Generar / anular cupones de descuento (cuando el flujo lo permita).
+ * - Inventario, Activar cupón, Cierre de caja, validadores de batería.
+ *
+ * Portal web
+ * - Modo manage: listar, generar, anular y administrar códigos de descuento.
+ *
+ * No incluye (solo Admin):
+ * - CRUD de usuarios (crear/editar/eliminar cuentas).
+ * - Importar inventario Excel (si está restringido a Admin en el servidor).
+ */
+fun UserRole.canReviewClosings(): Boolean =
+    this == UserRole.ADMIN || this == UserRole.SUPERVISOR
 
-/** Roles con permiso para reiniciar el contador de pedidos confirmados del día. */
-fun UserRole.canResetTodayOrders(): Boolean = this == UserRole.ADMIN || this == UserRole.SUPERVISOR
+/** Ver historial de cierres (hoy + días anteriores) en Cierre de caja / Flujo Aprobación. */
+fun UserRole.canViewClosingHistory(): Boolean =
+    this == UserRole.ADMIN || this == UserRole.SUPERVISOR
 
-/** Roles con permiso para generar códigos de descuento (app o portal). */
-fun UserRole.canManageDiscountTickets(): Boolean = this == UserRole.ADMIN || this == UserRole.SUPERVISOR
+/** Reiniciar el contador de pedidos confirmados del día. */
+fun UserRole.canResetTodayOrders(): Boolean =
+    this == UserRole.ADMIN || this == UserRole.SUPERVISOR
+
+/** Generar / gestionar códigos de descuento (app o portal). */
+fun UserRole.canManageDiscountTickets(): Boolean =
+    this == UserRole.ADMIN || this == UserRole.SUPERVISOR
 
 data class User(
     val id: Long = 0,

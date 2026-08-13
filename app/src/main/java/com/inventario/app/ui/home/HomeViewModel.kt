@@ -24,6 +24,7 @@ import com.inventario.app.data.order.ProductPaymentChoice
 import com.inventario.app.data.excel.ImportResult
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.session.SessionManager
+import com.inventario.app.data.sync.ApiException
 import com.inventario.app.data.sync.CloudConfigStore
 import com.inventario.app.data.sync.CloudSyncInfo
 import com.inventario.app.data.sync.CloudSyncStatus
@@ -789,6 +790,18 @@ class HomeViewModel(
                     applyExecutedTicketToCart(executed)
                 }
                 .onFailure { err ->
+                    // Servidor aún sin PATCH /execute (deploy pendiente): en esa versión
+                    // el canje ocurre al confirmar la venta sobre un cupón ACTIVE.
+                    if (isMissingExecuteRoute(err)) {
+                        val now = System.currentTimeMillis()
+                        applyExecutedTicketToCart(
+                            ticket.copy(
+                                telefonoEjecucion = phone,
+                                fechaEjecucion = now
+                            )
+                        )
+                        return@onFailure
+                    }
                     _state.update {
                         it.copy(
                             executingDiscountTicket = false,
@@ -797,6 +810,13 @@ class HomeViewModel(
                     }
                 }
         }
+    }
+
+    /** 404 sin JSON de negocio = ruta ausente en el sync-server desplegado. */
+    private fun isMissingExecuteRoute(error: Throwable): Boolean {
+        if (error !is ApiException || error.code != 404) return false
+        val raw = error.message.orEmpty()
+        return raw.isBlank() || raw.matches(Regex("^HTTP \\d+$"))
     }
 
     /** Código leído desde el escáner de QR (ScanContract de ZXing): igual flujo que escribirlo a mano. */

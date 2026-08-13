@@ -4,7 +4,7 @@
   const QR_TICKET_VALIDITY_TEXT = "Cupón válido por 30 días desde activación";
   const QR_TICKET_TITLE = "Total Care · Cupón de descuento";
   const DEFAULT_CUSTOMER_PHONE = "00000000000";
-  const PORTAL_UI_VERSION = "18";
+  const PORTAL_UI_VERSION = "19";
   const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
   const PRINT_QUANTITY_OPTIONS = [1, 2, 4, 6, 8];
   const CARNET_WIDTH_IN = 2.125;

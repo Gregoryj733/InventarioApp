@@ -164,11 +164,18 @@ class ReportsViewModel(
     }
 
     init {
-        // Por defecto se muestra únicamente el día en curso; el usuario puede
-        // ampliar el rango hasta MAX_RANGE_DAYS con el selector de calendario.
-        val today = dateFormat.format(Calendar.getInstance().time)
+        // Por defecto se carga el histórico completo permitido (90 días) para
+        // recaudación/aprobados/rechazados. Los PENDING se listan todos sin
+        // importar el rango (ver ReportsRepository.loadSummary).
+        val end = Calendar.getInstance()
+        val start = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_MONTH, -(ReportsRepository.MAX_RANGE_DAYS - 1))
+        }
         _state.update {
-            it.copy(startDateText = today, endDateText = today)
+            it.copy(
+                startDateText = dateFormat.format(start.time),
+                endDateText = dateFormat.format(end.time)
+            )
         }
         load()
         cloudEvents?.let { events ->
@@ -380,8 +387,8 @@ fun ReportsScreen(
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Por defecto se muestra el día en curso. Histórico hasta " +
-                        "${ReportsRepository.MAX_RANGE_DAYS} días.",
+                    text = "Pendientes de validar: todos. Recaudación e histórico: hasta " +
+                        "${ReportsRepository.MAX_RANGE_DAYS} días (por defecto el máximo).",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -102,7 +102,7 @@ class HubViewModel(
                     latest.id > ackId -> CashClosingAlertType.APPROVED_SUCCESS
                 else -> null
             }
-            val pendingCount = if (inventoryRepository.hasPendingClosings()) 1 else 0
+            val pendingCount = inventoryRepository.pendingClosingsCount()
             _state.update {
                 it.copy(
                     cashClosingAlert = visibleAlert,

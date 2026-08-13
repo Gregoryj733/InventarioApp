@@ -28,10 +28,10 @@ class ReportsRepository(private var cloudSync: CloudSync) {
 
     suspend fun loadSummary(start: Long, end: Long, bcvRate: Double?): ReportsSummary =
         withContext(Dispatchers.IO) {
-            // El rango se filtra en el servidor (query start/end) en vez de traer
-            // todo el historial y filtrar en el cliente: evita transferir datos
-            // fuera del rango del reporte, algo que crece indefinidamente con el
-            // tiempo en un servidor de plan gratuito.
+            // Ventas sí se acotan al rango (crecen sin límite). Los cierres se
+            // traen completos: la cola de aprobación debe mostrar TODOS los
+            // PENDING (cuadrados y con diferencia), igual que en la definición
+            // original del módulo; aprobados/rechazados se filtran al período.
             val rangeQuery = mapOf("start" to start.toString(), "end" to end.toString())
             val sales = cloudSync.get("/v1/sales", rangeQuery).optJSONArray("sales")?.toSaleList().orEmpty()
             val totalUsd = sales.sumOf { it.totalUsd }
@@ -42,9 +42,11 @@ class ReportsRepository(private var cloudSync: CloudSync) {
             }
             val orderCount = sales.size
 
-            val closings = cloudSync.get("/v1/cash-closings", rangeQuery).optJSONArray("cashClosings")
+            val allClosings = cloudSync.get("/v1/cash-closings").optJSONArray("cashClosings")
                 ?.toCashClosingList().orEmpty()
-            val approvedClosings = closings.filter { it.status == CashClosingStatus.APPROVED }
+            val periodClosings = allClosings.filter { it.closedAt >= start && it.closedAt < end }
+            val approvedClosings = periodClosings
+                .filter { it.status == CashClosingStatus.APPROVED }
                 .sortedByDescending { it.closedAt }
             val approvedIncomeUsd = approvedClosings.sumOf { it.grandTotalUsd }
             val approvedIncomeBs = approvedClosings.sumOf { it.grandTotalBs }
@@ -53,16 +55,16 @@ class ReportsRepository(private var cloudSync: CloudSync) {
                 totalSalesUsd = totalUsd,
                 totalSalesBs = totalBs,
                 orderCount = orderCount,
-                balancedPendingClosings = closings
+                balancedPendingClosings = allClosings
                     .filter { it.status == CashClosingStatus.PENDING && !it.hasDifference }
                     .sortedByDescending { it.closedAt },
-                differencePendingClosings = closings
+                differencePendingClosings = allClosings
                     .filter { it.status == CashClosingStatus.PENDING && it.hasDifference }
                     .sortedByDescending { it.closedAt },
                 approvedClosings = approvedClosings,
                 approvedClosingIncomeUsd = approvedIncomeUsd,
                 approvedClosingIncomeBs = approvedIncomeBs,
-                rejectedClosings = closings
+                rejectedClosings = periodClosings
                     .filter { it.status == CashClosingStatus.REJECTED }
                     .sortedByDescending { it.closedAt }
             )
