@@ -92,7 +92,8 @@ data class UserManagementUiState(
 class UserManagementViewModel(
     private val authRepository: AuthRepository,
     private val cloudEvents: SharedFlow<CloudEvent>? = null,
-    private val inventoryRepository: InventoryRepository? = null
+    private val inventoryRepository: InventoryRepository? = null,
+    private val defaultBranchLabel: String = ""
 ) : ViewModel() {
     private val _state = MutableStateFlow(UserManagementUiState())
     val state: StateFlow<UserManagementUiState> = _state.asStateFlow()
@@ -191,7 +192,7 @@ class UserManagementViewModel(
                 showCreateDialog = true,
                 newUsername = "",
                 newPassword = "",
-                newSucursal = "",
+                newSucursal = defaultBranchLabel,
                 newRole = UserRole.CONSULTA,
                 message = null,
                 error = null
@@ -387,11 +388,17 @@ class UserManagementViewModel(
         fun factory(
             authRepository: AuthRepository,
             cloudEvents: SharedFlow<CloudEvent>? = null,
-            inventoryRepository: InventoryRepository? = null
+            inventoryRepository: InventoryRepository? = null,
+            defaultBranchLabel: String = ""
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return UserManagementViewModel(authRepository, cloudEvents, inventoryRepository) as T
+                return UserManagementViewModel(
+                    authRepository,
+                    cloudEvents,
+                    inventoryRepository,
+                    defaultBranchLabel
+                ) as T
             }
         }
     }

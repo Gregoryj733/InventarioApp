@@ -1,5 +1,7 @@
 package com.inventario.app.ui.cashclosing
 
+import android.content.ContentResolver
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -11,8 +13,12 @@ import com.inventario.app.data.entity.CashClosingSnapshotCodec
 import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.entity.ConfirmedOrderPreview
 import com.inventario.app.data.entity.UserRole
+import com.inventario.app.data.entity.canExportClosingHistory
 import com.inventario.app.data.entity.canResetTodayOrders
 import com.inventario.app.data.entity.canViewClosingHistory
+import com.inventario.app.data.entity.displayLabel
+import com.inventario.app.data.excel.CashClosingExcelExporter
+import com.inventario.app.data.excel.CashClosingHistoryExport
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.session.SessionManager
 import com.inventario.app.data.sync.CloudEvent
@@ -86,8 +92,10 @@ data class CashClosingUiState(
     val closingAlert: CashClosingAlertType? = null,
     val remainingAttempts: Int = 5,
     val canViewClosingHistory: Boolean = false,
+    val canExportClosingHistory: Boolean = false,
     val closingHistory: List<CashClosingRecord> = emptyList(),
-    val loadingClosingHistory: Boolean = false
+    val loadingClosingHistory: Boolean = false,
+    val exportingClosingHistory: Boolean = false
 )
 
 class CashClosingViewModel(
@@ -124,7 +132,8 @@ class CashClosingViewModel(
                 cashEntries = listOf(newCashEntry("")),
                 branchName = userSucursal.ifBlank { it.branchName },
                 canResetTodayOrders = role.canResetTodayOrders(),
-                canViewClosingHistory = role.canViewClosingHistory()
+                canViewClosingHistory = role.canViewClosingHistory(),
+                canExportClosingHistory = role.canExportClosingHistory()
             )
         }
         viewModelScope.launch {
@@ -224,11 +233,30 @@ class CashClosingViewModel(
     fun formatClosingDateTime(closedAt: Long): String =
         "${dateFormat.format(Date(closedAt))} ${timeFormat.format(Date(closedAt))}"
 
-    fun closingStatusLabel(status: CashClosingStatus): String = when (status) {
-        CashClosingStatus.PENDING -> "Pendiente"
-        CashClosingStatus.APPROVED -> "Aprobado"
-        CashClosingStatus.REJECTED -> "Rechazado"
-        CashClosingStatus.REVERTED -> "Revertido"
+    fun closingStatusLabel(status: CashClosingStatus): String = status.displayLabel()
+
+    fun suggestedClosingExportFileName(): String = CashClosingExcelExporter.suggestedFileName()
+
+    suspend fun exportClosingHistoryToUri(resolver: ContentResolver, uri: Uri): Result<Unit> =
+        CashClosingHistoryExport.writeToUri(resolver, uri, _state.value.closingHistory)
+
+    fun requestClosingHistoryExport() {
+        if (!_state.value.canExportClosingHistory) return
+        if (_state.value.closingHistory.isEmpty()) {
+            AppSnackbarController.show("No hay cierres para exportar.")
+            return
+        }
+        _state.update { it.copy(exportingClosingHistory = true) }
+    }
+
+    fun finishClosingHistoryExport(success: Boolean, errorMessage: String? = null) {
+        _state.update { it.copy(exportingClosingHistory = false) }
+        val message = when {
+            success -> "Reporte Excel exportado correctamente."
+            errorMessage != null -> errorMessage
+            else -> "No se pudo exportar el reporte."
+        }
+        AppSnackbarController.show(message)
     }
 
     fun acknowledgeClosingAlert() {

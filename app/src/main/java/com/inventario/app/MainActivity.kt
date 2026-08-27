@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
@@ -18,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -44,12 +46,15 @@ import com.inventario.app.ui.hub.HubViewModel
 import com.inventario.app.ui.hub.MainHubScreen
 import com.inventario.app.ui.login.LoginScreen
 import com.inventario.app.ui.login.LoginViewModel
+import com.inventario.app.ui.oilfilter.OilFilterFinderScreen
+import com.inventario.app.ui.oilfilter.OilFilterFinderViewModel
 import com.inventario.app.ui.reports.ReportsScreen
 import com.inventario.app.ui.reports.ReportsViewModel
 import com.inventario.app.ui.theme.AppAlert
 import com.inventario.app.ui.theme.AppAlertController
 import com.inventario.app.ui.theme.AppSnackbarController
 import com.inventario.app.ui.theme.InventarioTheme
+import com.inventario.app.ui.theme.LocalActiveBranchId
 import com.inventario.app.ui.users.UserManagementScreen
 import com.inventario.app.ui.users.UserManagementViewModel
 
@@ -58,6 +63,7 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
@@ -89,7 +95,8 @@ private enum class AppScreen {
     REPORTS,
     USERS,
     BATTERY_FINDER,
-    POWER_MAXX_BATTERY
+    POWER_MAXX_BATTERY,
+    OIL_FILTER_FINDER
 }
 
 @Composable
@@ -179,6 +186,7 @@ private fun InventarioRoot(app: InventarioApplication) {
                 factory = LoginViewModel.factory(
                     authRepository = app.authRepository,
                     sessionManager = app.sessionManager,
+                    branchManager = app.branchManager,
                     appContext = app,
                     cloudSyncStatus = app.cloudSyncStatus,
                     restartCloudSync = { app.restartCloudSync() }
@@ -197,7 +205,16 @@ private fun InventarioRoot(app: InventarioApplication) {
 
         val role = app.sessionManager.role() ?: UserRole.CONSULTA
         val username = app.sessionManager.username().orEmpty()
-        val subtitle = "$username · ${role.displayLabel()}"
+        val branchLabel = app.branchManager.getActiveBranch()?.label.orEmpty()
+        val subtitle = buildString {
+            append(username)
+            append(" · ")
+            append(role.displayLabel())
+            if (branchLabel.isNotBlank()) {
+                append(" · ")
+                append(branchLabel)
+            }
+        }
 
         val logoutAndNotify: () -> Unit = {
             logout()
@@ -209,16 +226,37 @@ private fun InventarioRoot(app: InventarioApplication) {
             factory = HubViewModel.factory(
                 inventoryRepository = app.inventoryRepository,
                 sessionManager = app.sessionManager,
-                bcvRateFetcher = app.bcvRateFetcher
+                branchManager = app.branchManager,
+                authRepository = app.authRepository,
+                bcvRateFetcher = app.bcvRateFetcher,
+                switchBranch = app::switchBranch,
+                onBranchSwitched = {
+                    loginSessionKey++
+                    currentScreen = AppScreen.HUB
+                    AppSnackbarController.show(
+                        "Sucursal activa: ${app.branchManager.getActiveBranch()?.label.orEmpty()}"
+                    )
+                }
             )
         )
         val hubState by hubVm.state.collectAsState()
+        val activeBranchId = app.sessionManager.activeBranchId().orEmpty()
 
+        CompositionLocalProvider(LocalActiveBranchId provides activeBranchId) {
         when (currentScreen) {
             AppScreen.HUB -> {
                 MainHubScreen(
                     username = hubState.username,
                     role = hubState.role,
+                    activeBranchLabel = hubState.activeBranchLabel,
+                    canSwitchBranch = hubState.canSwitchBranch,
+                    availableBranches = hubState.availableBranches,
+                    showBranchSwitchDialog = hubState.showBranchSwitchDialog,
+                    branchSwitchLoading = hubState.branchSwitchLoading,
+                    branchSwitchError = hubState.branchSwitchError,
+                    pendingReauthBranchId = hubState.pendingReauthBranchId,
+                    reauthPassword = hubState.reauthPassword,
+                    activeBranchId = activeBranchId,
                     bcvLabel = hubState.bcvLabel,
                     bcvRefreshing = hubState.bcvRefreshing,
                     cashClosingAlert = hubState.cashClosingAlert,
@@ -232,10 +270,16 @@ private fun InventarioRoot(app: InventarioApplication) {
                             HubDestination.USERS -> AppScreen.USERS
                             HubDestination.BATTERY_FINDER -> AppScreen.BATTERY_FINDER
                             HubDestination.POWER_MAXX_BATTERY -> AppScreen.POWER_MAXX_BATTERY
+                            HubDestination.OIL_FILTER_FINDER -> AppScreen.OIL_FILTER_FINDER
                         }
                     },
                     onRefreshBcv = hubVm::refreshBcv,
-                    onLogout = logoutAndNotify
+                    onLogout = logoutAndNotify,
+                    onOpenBranchSwitch = hubVm::openBranchSwitchDialog,
+                    onDismissBranchSwitch = hubVm::dismissBranchSwitchDialog,
+                    onBranchSelected = hubVm::requestBranchSwitch,
+                    onReauthPasswordChange = hubVm::onReauthPasswordChange,
+                    onConfirmBranchReauth = hubVm::confirmBranchReauth
                 )
             }
             AppScreen.INVENTORY -> {
@@ -344,13 +388,29 @@ private fun InventarioRoot(app: InventarioApplication) {
                     onLogout = logoutAndNotify
                 )
             }
+            AppScreen.OIL_FILTER_FINDER -> {
+                val oilFilterVm: OilFilterFinderViewModel = viewModel(
+                    key = "oil_filter_finder_$loginSessionKey",
+                    factory = OilFilterFinderViewModel.factory(
+                        app.oilFilterCatalogRepository,
+                        app.inventoryRepository
+                    )
+                )
+                OilFilterFinderScreen(
+                    viewModel = oilFilterVm,
+                    subtitle = subtitle,
+                    onBack = { currentScreen = AppScreen.HUB },
+                    onLogout = logoutAndNotify
+                )
+            }
             AppScreen.USERS -> if (role == UserRole.ADMIN) {
                 val usersVm: UserManagementViewModel = viewModel(
                     key = "users_$loginSessionKey",
                     factory = UserManagementViewModel.factory(
                         app.authRepository,
                         app.inventoryRepository.observeCloudEvents(),
-                        app.inventoryRepository
+                        app.inventoryRepository,
+                        app.branchManager.getActiveBranch()?.label.orEmpty()
                     )
                 )
                 UserManagementScreen(
@@ -364,6 +424,7 @@ private fun InventarioRoot(app: InventarioApplication) {
                     currentScreen = AppScreen.HUB
                 }
             }
+        }
         }
     }
 }

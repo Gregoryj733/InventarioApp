@@ -28,7 +28,7 @@ function init() {
   }
 }
 
-const TOPIC = "inventario_actualizado";
+const TOPIC = process.env.FIREBASE_TOPIC || "inventario_actualizado";
 
 async function sendInventoryUpdatedNotification({ imported, skipped } = {}) {
   if (!messaging) return;

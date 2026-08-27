@@ -7,29 +7,35 @@ URL prevista: `https://inventario-sync-totalcare.onrender.com`
 ## Guía rápida (Windows)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\deploy-render.ps1
+powershell -ExecutionPolicy Bypass -File scripts\setup-multi-sucursal-free.ps1
+powershell -ExecutionPolicy Bypass -File scripts\setup-multi-sucursal-free.ps1 -AssignUsers
 ```
 
 ## Pasos manuales
 
-### 1. Base de datos gratis (Neon)
+### 1. Publicar en Render (Blueprint)
 
-Render reinicia el contenedor y **no guarda archivos** en el plan free. Usa Postgres gratis en [neon.tech](https://neon.tech):
+1. Cuenta en [render.com](https://render.com) (plan **free**, sin tarjeta).
+2. **New** → **Blueprint** → conecta el repo InventarioApp.
+3. Render lee `render.yaml` y crea **dos** servicios web:
+   - `inventario-sync-totalcare` (Sucursal A)
+   - `inventario-sync-sucursal-b` (Sucursal B)
+4. Si ya tenías el blueprint, usa **Sync** para aplicar el segundo servicio.
 
-1. Crea cuenta y proyecto
-2. Copia la **Connection string** (`postgresql://...`)
+### 2. Base de datos gratis (Neon) — una cuenta, dos bases
 
-### 2. Publicar en Render
+Para **no duplicar costos** ni cuotas, usa **un solo proyecto Neon** (plan free) y crea **dos bases de datos** en el mismo proyecto, por ejemplo:
 
-1. Cuenta en [render.com](https://render.com)
-2. **New** → **Blueprint**
-3. Conecta el repositorio GitHub de InventarioApp
-4. Render lee `render.yaml` y crea el servicio `inventario-sync-totalcare`
-5. Cuando esté **Live**, abre el servicio → **Environment**
-6. Agrega `DATABASE_URL` = connection string de Neon
-7. Render redeploya automáticamente
+| Sucursal | Base en Neon | Variable en Render |
+|----------|--------------|-------------------|
+| A | `neondb` (o `inventario_a`) | `DATABASE_URL` del servicio `inventario-sync-totalcare` |
+| B | `inventario_b` (crear en Neon → Databases) | `DATABASE_URL` del servicio `inventario-sync-sucursal-b` |
 
-### 3. Variables de entorno en Render
+La connection string es la misma salvo el **nombre de la base** al final de la URL.
+
+Si Neon muestra cuota agotada, el servidor hace fallback a archivo (efímero en Render free). Crea un proyecto Neon nuevo o espera el reset mensual.
+
+### 3. Variables de entorno en Render (cada servicio)
 
 | Variable | Valor |
 |----------|-------|
@@ -37,6 +43,7 @@ Render reinicia el contenedor y **no guarda archivos** en el plan free. Usa Post
 | `DATABASE_URL` | Connection string de Neon (obligatorio para persistencia) |
 | `JWT_SECRET` | Cadena aleatoria larga para firmar los tokens de sesión (obligatorio) |
 | `FIREBASE_SERVICE_ACCOUNT` | JSON completo de la cuenta de servicio de Firebase, en una sola línea (opcional; sin esto no se envían notificaciones push) |
+| `FIREBASE_TOPIC` | Topic FCM por sucursal (p. ej. `inventario_sucursal_a`). Evita notificaciones cruzadas entre instancias. |
 | `KEEP_ALIVE_URL` | URL pública del propio servicio (opcional). En Render normalmente **no hace falta**: la plataforma expone `RENDER_EXTERNAL_URL` automáticamente y el servidor la usa como valor por defecto. |
 | `KEEP_ALIVE_INTERVAL_MS` | Intervalo entre pings de keep-alive en milisegundos (opcional, por defecto 240000 = 4 min) |
 
@@ -73,8 +80,22 @@ curl https://inventario-sync-totalcare.onrender.com/health
 
 ```json
 {
-  "baseUrl": "https://inventario-sync-totalcare.onrender.com",
-  "apiKey": "TcSync-7kM9pQ2xR4nW"
+  "branches": [
+    {
+      "id": "sucursal_a",
+      "label": "Sucursal A",
+      "baseUrl": "https://inventario-sync-totalcare.onrender.com",
+      "apiKey": "TcSync-7kM9pQ2xR4nW",
+      "firebaseTopic": "inventario_sucursal_a"
+    },
+    {
+      "id": "sucursal_b",
+      "label": "Sucursal B",
+      "baseUrl": "https://inventario-sync-sucursal-b.onrender.com",
+      "apiKey": "TcSync-7kM9pQ2xR4nW",
+      "firebaseTopic": "inventario_sucursal_b"
+    }
+  ]
 }
 ```
 
@@ -187,3 +208,47 @@ Con Postgres local:
 $env:DATABASE_URL = "postgresql://..."
 npm start
 ```
+
+## Dos sucursales (instancias separadas)
+
+Cada sucursal opera con su **propio** servicio Render y su **propia** base Postgres (Neon). No comparten datos.
+
+### Despliegue
+
+1. **Sucursal A** — servicio existente `inventario-sync-totalcare` (ya en `render.yaml`).
+2. **Sucursal B** — servicio `inventario-sync-sucursal-b` definido en `render.yaml`.
+3. En Render, asigna un `DATABASE_URL` **distinto** a cada servicio (dos proyectos Neon).
+4. Configura `FIREBASE_TOPIC` por instancia (ya en blueprint):
+   - Sucursal A: `inventario_sucursal_a`
+   - Sucursal B: `inventario_sucursal_b`
+5. Verifica ambas URLs:
+   ```powershell
+   curl https://inventario-sync-totalcare.onrender.com/health
+   curl https://inventario-sync-sucursal-b.onrender.com/health
+   ```
+
+### Usuarios semilla
+
+Al arrancar con base vacía, cada instancia crea automáticamente:
+
+| Usuario   | Contraseña | Rol        |
+|-----------|------------|------------|
+| admin     | admin      | ADMIN      |
+| consulta  | consulta   | CONSULTA   |
+| venta     | venta      | VENTAS     |
+| gerente   | gerente    | SUPERVISOR |
+
+Repite las mismas credenciales en **ambas** instancias para que Admin/Supervisor puedan operar en las dos sucursales desde la app.
+
+### Asignar sucursal a usuarios operativos
+
+En cada instancia, asigna el campo `sucursal` del usuario al **label** de esa tienda (debe coincidir con `sync_config.json` de la app):
+
+- Instancia A: usuarios locales con `sucursal` = `"Sucursal A"`
+- Instancia B: usuarios locales con `sucursal` = `"Sucursal B"`
+
+Los perfiles **Ventas** y **Consulta** solo pueden iniciar sesión en la sucursal asignada. **Supervisor** y **Admin** acceden a ambas desde el selector de la app.
+
+### App Android
+
+`app/src/main/assets/sync_config.json` define el array `branches` con `id`, `label`, `baseUrl`, `apiKey` y `firebaseTopic` por sucursal.

@@ -7,6 +7,7 @@
 build/
 app/build/
 sync-server/node_modules/
+/node_modules/
 /captures/
 .externalNativeBuild/
 .cxx/
@@ -17,6 +18,9 @@ sync-server/node_modules/
 app/release/
 app/debug/
 tools/render-cli/*.exe
+tools/node_modules/
+tools/catalog-preview.txt
+tools/catalog-full.txt
 *.keystore
 !debug.keystore
 *.jks

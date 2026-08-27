@@ -16,79 +16,101 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      # Respaldo: dispara redeploy en Render por API. Si RENDER_API_KEY falla (401),
-      # Render puede seguir desplegando por Auto-Deploy del repo; en ese caso haz
-      # Manual Deploy en el dashboard de Render.
-      - name: Trigger Render deploy
-        id: render_deploy
+      - name: Trigger Render deploy (all inventario-sync services)
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: |
-          set +e
-          http_code=$(curl -sS -o /tmp/render-deploy.json -w "%{http_code}" -X POST \
-            "https://api.render.com/v1/services/srv-d9o2qejncjis73b4p700/deploys" \
-            -H "Authorization: Bearer ${RENDER_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache":"do_not_clear"}')
-          echo "Render API HTTP status: $http_code"
-          cat /tmp/render-deploy.json || true
-          if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
-            echo "::warning::RENDER_API_KEY inválida o sin permisos ($http_code). Verifica el secret en GitHub o haz Manual Deploy en Render."
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::warning::RENDER_API_KEY no configurado; Render Auto-Deploy del repo sigue activo."
             exit 0
           fi
-          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-            echo "::error::Render deploy API falló con HTTP $http_code"
-            exit 1
-          fi
-          deploy_id=$(python3 -c "import json; print(json.load(open('/tmp/render-deploy.json'))['id'])")
-          echo "Deploy id: $deploy_id"
-          for i in $(seq 1 60); do
-            status=$(curl -fsS "https://api.render.com/v1/services/srv-d9o2qejncjis73b4p700/deploys/${deploy_id}" \
-              -H "Authorization: Bearer ${RENDER_API_KEY}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))")
-            echo "Render deploy status: $status (check $i/60)"
-            if [ "$status" = "live" ]; then
-              echo "Deploy succeeded."
-              exit 0
-            fi
-            if [ "$status" = "build_failed" ] || [ "$status" = "update_failed" ] || [ "$status" = "canceled" ]; then
-              echo "::error::Deploy failed with status: $status"
-              exit 1
-            fi
-            sleep 15
-          done
-          echo "::warning::Timed out waiting for Render deploy."
-          exit 0
 
-      - name: Verify portal version on production
+          SERVICES="inventario-sync-totalcare inventario-sync-sucursal-b"
+          curl -fsS "https://api.render.com/v1/services?limit=100" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Accept: application/json" > /tmp/render-services.json
+
+          python3 <<'PY'
+          import json
+          wanted = {"inventario-sync-totalcare", "inventario-sync-sucursal-b"}
+          data = json.load(open("/tmp/render-services.json"))
+          found = []
+          for item in data:
+              svc = item.get("service") or {}
+              name = svc.get("name")
+              if name in wanted:
+                  found.append((name, svc.get("id")))
+          if not found:
+              print("::warning::No se encontraron servicios inventario-sync en Render. Sincroniza render.yaml en Blueprints.")
+          json.dump(found, open("/tmp/render-targets.json", "w"))
+          for name, sid in found:
+              print(f"Target: {name} ({sid})")
+          PY
+
+          if [ ! -s /tmp/render-targets.json ] || [ "$(python3 -c 'import json; print(len(json.load(open("/tmp/render-targets.json"))))')" = "0" ]; then
+            exit 0
+          fi
+
+          python3 <<'PY'
+          import json, os, subprocess, time, sys
+          api_key = os.environ["RENDER_API_KEY"]
+          targets = json.load(open("/tmp/render-targets.json"))
+          failed = False
+          for name, sid in targets:
+              print(f"Deploying {name}...")
+              proc = subprocess.run([
+                  "curl", "-sS", "-o", "/tmp/render-deploy.json", "-w", "%{http_code}",
+                  "-X", "POST", f"https://api.render.com/v1/services/{sid}/deploys",
+                  "-H", f"Authorization: Bearer {api_key}",
+                  "-H", "Content-Type: application/json",
+                  "-d", '{"clearCache":"do_not_clear"}'
+              ], capture_output=True, text=True)
+              code = proc.stdout.strip()
+              print(f"HTTP {code}")
+              if proc.stderr:
+                  print(proc.stderr)
+              if code in ("401", "403"):
+                  print(f"::warning::RENDER_API_KEY sin permisos para {name}")
+                  continue
+              if not code.startswith("2"):
+                  print(f"::error::Deploy API falló para {name} (HTTP {code})")
+                  failed = True
+                  continue
+              deploy_id = json.load(open("/tmp/render-deploy.json"))["id"]
+              for i in range(1, 41):
+                  status_proc = subprocess.run([
+                      "curl", "-fsS",
+                      f"https://api.render.com/v1/services/{sid}/deploys/{deploy_id}",
+                      "-H", f"Authorization: Bearer {api_key}"
+                  ], capture_output=True, text=True)
+                  status = json.loads(status_proc.stdout).get("status", "unknown")
+                  print(f"  {name}: {status} ({i}/40)")
+                  if status == "live":
+                      break
+                  if status in ("build_failed", "update_failed", "canceled"):
+                      print(f"::error::{name} deploy {status}")
+                      failed = True
+                      break
+                  time.sleep(15)
+          sys.exit(1 if failed else 0)
+          PY
+
+      - name: Verify Sucursal A health
         run: |
           for i in $(seq 1 12); do
-            body=$(curl -fsS "https://inventario-sync-totalcare.onrender.com/portal/build.json" || true)
-            echo "build.json: $body"
-            echo "$body" | grep -q '"portalVersion":"19"' && exit 0
+            body=$(curl -fsS "https://inventario-sync-totalcare.onrender.com/health" || true)
+            echo "$body"
+            echo "$body" | grep -q '"ok":true' && exit 0
             sleep 15
           done
-          echo "::warning::Producción aún no muestra portal v19. Haz Manual Deploy en Render si Auto-Deploy no corrió."
+          echo "::warning::Sucursal A /health no respondió OK."
 
-      - name: Verify /execute route exists
-        env:
-          SYNC_API_KEY: ${{ secrets.SYNC_API_KEY }}
+      - name: Verify Sucursal B health (optional)
         run: |
-          if [ -z "$SYNC_API_KEY" ]; then
-            echo "::warning::Secret SYNC_API_KEY no configurado; se omite la verificación de /execute."
-            exit 0
-          fi
-          code=$(curl -sS -o /tmp/execute-probe.txt -w "%{http_code}" -X PATCH \
-            "https://inventario-sync-totalcare.onrender.com/v1/discount-tickets/PROBE/execute" \
-            -H "Content-Type: application/json" \
-            -H "X-Api-Key: ${SYNC_API_KEY}" \
-            -d '{"telefono_ejecucion":"00000000000"}' || true)
+          code=$(curl -sS -o /tmp/health-b.json -w "%{http_code}" "https://inventario-sync-sucursal-b.onrender.com/health" || true)
           echo "HTTP $code"
-          cat /tmp/execute-probe.txt || true
-          # Ruta existente → 401 (sin sesión) o 4xx JSON de negocio. HTML "Cannot PATCH" = no desplegado.
-          if grep -q "Cannot PATCH" /tmp/execute-probe.txt 2>/dev/null; then
-            echo "::error::Producción no tiene /v1/discount-tickets/:code/execute. Manual Deploy requerido."
-            exit 1
-          fi
+          cat /tmp/health-b.json || true
           if [ "$code" = "404" ]; then
-            echo "::warning::HTTP 404 en /execute (puede ser cupón inexistente o ruta ausente)."
+            echo "::warning::Sucursal B aún no existe. En Render: Blueprints -> Sync para crear inventario-sync-sucursal-b."
           fi

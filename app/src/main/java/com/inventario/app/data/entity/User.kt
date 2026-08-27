@@ -20,6 +20,7 @@ fun UserRole.displayLabel(): String = when (this) {
  * App móvil
  * - Menú Flujo Aprobación: ver y validar cierres (aprobar / rechazar / revertir).
  * - Historial de cierres: día actual + días anteriores (hasta 90 días).
+ * - Exportar historial de cierres a Excel desde Cierre de caja y Flujo Aprobación.
  * - Reiniciar contador de pedidos confirmados del día.
  * - Generar / anular cupones de descuento (cuando el flujo lo permita).
  * - Inventario, Activar cupón, Cierre de caja, validadores de batería.
@@ -38,12 +39,20 @@ fun UserRole.canReviewClosings(): Boolean =
 fun UserRole.canViewClosingHistory(): Boolean =
     this == UserRole.ADMIN || this == UserRole.SUPERVISOR
 
+/** Exportar historial de cierres a Excel (.xlsx) en Cierre de caja y Flujo Aprobación. */
+fun UserRole.canExportClosingHistory(): Boolean =
+    this == UserRole.ADMIN || this == UserRole.SUPERVISOR
+
 /** Reiniciar el contador de pedidos confirmados del día. */
 fun UserRole.canResetTodayOrders(): Boolean =
     this == UserRole.ADMIN || this == UserRole.SUPERVISOR
 
 /** Generar / gestionar códigos de descuento (app o portal). */
 fun UserRole.canManageDiscountTickets(): Boolean =
+    this == UserRole.ADMIN || this == UserRole.SUPERVISOR
+
+/** Cambiar entre sucursales (cada una con su propia instancia sync-server). */
+fun UserRole.canSwitchBranch(): Boolean =
     this == UserRole.ADMIN || this == UserRole.SUPERVISOR
 
 data class User(

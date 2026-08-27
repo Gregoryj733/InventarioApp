@@ -1,5 +1,7 @@
 package com.inventario.app.ui.cashclosing
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -45,8 +47,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -54,6 +58,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -93,6 +98,11 @@ import com.inventario.app.util.WhatsAppNotifier
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+private enum class CashClosingTab(val label: String) {
+    FORM("Cuadre diario"),
+    HISTORY("Historial")
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun CashClosingScreen(
@@ -101,8 +111,30 @@ fun CashClosingScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
-    val scrollState = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    val formScrollState = rememberScrollState()
+    val historyScrollState = rememberScrollState()
     var showPreview by remember { mutableStateOf(false) }
+    var selectedTabIndex by remember { mutableIntStateOf(CashClosingTab.FORM.ordinal) }
+    val showHistoryTab = state.canViewClosingHistory
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    ) { uri ->
+        if (uri == null) {
+            viewModel.finishClosingHistoryExport(success = false, errorMessage = "Exportación cancelada.")
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            val result = viewModel.exportClosingHistoryToUri(context.contentResolver, uri)
+            viewModel.finishClosingHistoryExport(
+                success = result.isSuccess,
+                errorMessage = result.exceptionOrNull()?.message
+            )
+        }
+    }
 
     if (showPreview) {
         CashClosingPreviewDialog(
@@ -173,84 +205,173 @@ fun CashClosingScreen(
         }
     ) { padding ->
         AppScreenBackground(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .imePadding()
-                .verticalScroll(scrollState)
-                .padding(horizontal = screenHorizontalPadding(), vertical = screenVerticalPadding())
-        ) {
-            CashClosingAlertBanner(
-                alert = state.closingAlert,
-                remainingAttempts = state.remainingAttempts,
-                onAcknowledge = viewModel::acknowledgeClosingAlert
-            )
-            if (state.closingAlert != null) {
-                Spacer(Modifier.height(10.dp))
-            }
-            if (state.canViewClosingHistory) {
-                ClosingHistorySection(state = state, viewModel = viewModel)
-                Spacer(Modifier.height(12.dp))
-            }
-            SectionCard(title = "Encabezado") {
-                KeyboardAwareTextField(
-                    value = state.branchName,
-                    onValueChange = viewModel::onBranchChange,
-                    label = "Sucursal / Local"
-                )
-                Spacer(Modifier.height(8.dp))
-                KeyboardAwareTextField(
-                    value = state.dateText,
-                    onValueChange = viewModel::onDateChange,
-                    label = "Fecha"
-                )
-                Spacer(Modifier.height(8.dp))
-                BcvRateHeader(
-                    label = state.bcvLabel,
-                    hasRate = state.bcvRate != null,
-                    refreshing = state.bcvRefreshing
-                )
-                Spacer(Modifier.height(8.dp))
-                KeyboardAwareTextField(
-                    value = state.rateText,
-                    onValueChange = viewModel::onRateChange,
-                    label = "Tasa BCV (Bs)",
-                    keyboardType = KeyboardType.Decimal
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Precargada desde BCV del día (bcv.org.ve). Sin internet se usa la última guardada. Editable.",
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(8.dp))
-                CurrencyWithEquivRow(
-                    inputLabel = "Monto USD",
-                    equivLabel = "Equiv. Bs",
-                    inputText = state.prevCashUsdText,
-                    equivText = viewModel.prevCashUsdEquivBsText(),
-                    onInputChange = viewModel::onPrevCashUsdChange
-                )
-                Spacer(Modifier.height(8.dp))
-                CurrencyWithEquivRow(
-                    inputLabel = "Monto Bs",
-                    equivLabel = "Equiv. USD",
-                    inputText = state.prevCashBsText,
-                    equivText = viewModel.prevCashBsEquivUsdText(),
-                    onInputChange = viewModel::onPrevCashBsChange
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Efectivo recibido del cierre del día anterior. Editable.",
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = screenHorizontalPadding(), vertical = screenVerticalPadding())
+                ) {
+                    CashClosingAlertBanner(
+                        alert = state.closingAlert,
+                        remainingAttempts = state.remainingAttempts,
+                        onAcknowledge = viewModel::acknowledgeClosingAlert
+                    )
+                }
 
-            Spacer(Modifier.height(12.dp))
+                if (showHistoryTab) {
+                    PrimaryTabRow(
+                        selectedTabIndex = selectedTabIndex,
+                        modifier = Modifier.fillMaxWidth(),
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = MaterialTheme.colorScheme.primary
+                    ) {
+                        CashClosingTab.entries.forEachIndexed { index, tab ->
+                            Tab(
+                                selected = selectedTabIndex == index,
+                                onClick = { selectedTabIndex = index },
+                                text = {
+                                    Text(
+                                        text = tab.label,
+                                        fontWeight = if (selectedTabIndex == index) {
+                                            FontWeight.SemiBold
+                                        } else {
+                                            FontWeight.Medium
+                                        }
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+
+                when {
+                    showHistoryTab && selectedTabIndex == CashClosingTab.HISTORY.ordinal -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .imePadding()
+                                .verticalScroll(historyScrollState)
+                                .padding(
+                                    horizontal = screenHorizontalPadding(),
+                                    vertical = screenVerticalPadding()
+                                )
+                        ) {
+                            ClosingHistorySection(
+                                presentation = ClosingHistoryPresentation(
+                                    todayDateText = state.dateText,
+                                    closings = state.closingHistory,
+                                    loading = state.loadingClosingHistory,
+                                    canExport = state.canExportClosingHistory,
+                                    exporting = state.exportingClosingHistory
+                                ),
+                                formatDateTime = viewModel::formatClosingDateTime,
+                                formatPrice = viewModel::formatPrice,
+                                onRefresh = viewModel::refreshClosingHistory,
+                                onExportExcel = {
+                                    viewModel.requestClosingHistoryExport()
+                                    exportLauncher.launch(viewModel.suggestedClosingExportFileName())
+                                }
+                            )
+                            Spacer(Modifier.height(24.dp))
+                        }
+                    }
+                    else -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .imePadding()
+                                .verticalScroll(formScrollState)
+                                .padding(
+                                    horizontal = screenHorizontalPadding(),
+                                    vertical = screenVerticalPadding()
+                                )
+                        ) {
+                            if (state.closingAlert != null) {
+                                Spacer(Modifier.height(10.dp))
+                            }
+                            CashClosingFormContent(
+                                state = state,
+                                viewModel = viewModel,
+                                onPreviewClick = {
+                                    if (viewModel.validateForClosing()) showPreview = true
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CashClosingFormContent(
+    state: CashClosingUiState,
+    viewModel: CashClosingViewModel,
+    onPreviewClick: () -> Unit
+) {
+    SectionCard(title = "Encabezado") {
+        KeyboardAwareTextField(
+            value = state.branchName,
+            onValueChange = viewModel::onBranchChange,
+            label = "Sucursal / Local"
+        )
+        Spacer(Modifier.height(8.dp))
+        KeyboardAwareTextField(
+            value = state.dateText,
+            onValueChange = viewModel::onDateChange,
+            label = "Fecha"
+        )
+        Spacer(Modifier.height(8.dp))
+        BcvRateHeader(
+            label = state.bcvLabel,
+            hasRate = state.bcvRate != null,
+            refreshing = state.bcvRefreshing
+        )
+        Spacer(Modifier.height(8.dp))
+        KeyboardAwareTextField(
+            value = state.rateText,
+            onValueChange = viewModel::onRateChange,
+            label = "Tasa BCV (Bs)",
+            keyboardType = KeyboardType.Decimal
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Precargada desde BCV del día (bcv.org.ve). Sin internet se usa la última guardada. Editable.",
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        CurrencyWithEquivRow(
+            inputLabel = "Monto USD",
+            equivLabel = "Equiv. Bs",
+            inputText = state.prevCashUsdText,
+            equivText = viewModel.prevCashUsdEquivBsText(),
+            onInputChange = viewModel::onPrevCashUsdChange
+        )
+        Spacer(Modifier.height(8.dp))
+        CurrencyWithEquivRow(
+            inputLabel = "Monto Bs",
+            equivLabel = "Equiv. USD",
+            inputText = state.prevCashBsText,
+            equivText = viewModel.prevCashBsEquivUsdText(),
+            onInputChange = viewModel::onPrevCashBsChange
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Efectivo recibido del cierre del día anterior. Editable.",
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+
+    Spacer(Modifier.height(12.dp))
 
             SectionCard(title = "Total ventas del día") {
                 if (state.loadingSales) {
@@ -477,147 +598,22 @@ fun CashClosingScreen(
             )
             Spacer(Modifier.height(8.dp))
 
-            Button(
-                onClick = {
-                    if (viewModel.validateForClosing()) showPreview = true
-                },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
-            ) {
-                Icon(Icons.Default.Preview, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Previsualizar cierre", fontWeight = FontWeight.SemiBold)
-            }
-
-            Spacer(Modifier.height(24.dp))
-        }
-        }
-    }
-}
-
-
-@Composable
-private fun ClosingHistorySection(
-    state: CashClosingUiState,
-    viewModel: CashClosingViewModel
-) {
-    val today = state.dateText
-    val todayClosings = state.closingHistory.filter { it.dateText == today }
-    val previousClosings = state.closingHistory.filter { it.dateText != today }
-
-    AccentSectionCard(title = "Historial de cierres") {
-        Text(
-            "Visible para Supervisor y Admin: cierre de hoy y días anteriores.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(8.dp))
-        if (state.loadingClosingHistory) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-            }
-            return@AccentSectionCard
-        }
-        if (state.closingHistory.isEmpty()) {
-            Text(
-                "Aún no hay cierres registrados en el servidor.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyMedium
-            )
-            return@AccentSectionCard
-        }
-        Text("Hoy ($today)", fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(6.dp))
-        if (todayClosings.isEmpty()) {
-            Text(
-                "Sin cierres del día actual.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        } else {
-            todayClosings.forEach { closing ->
-                ClosingHistoryRow(closing = closing, viewModel = viewModel)
-                Spacer(Modifier.height(6.dp))
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-        Text("Días anteriores", fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(6.dp))
-        if (previousClosings.isEmpty()) {
-            Text(
-                "Sin cierres de días anteriores.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        } else {
-            previousClosings.take(40).forEach { closing ->
-                ClosingHistoryRow(closing = closing, viewModel = viewModel)
-                Spacer(Modifier.height(6.dp))
-            }
-        }
-        OutlinedButton(
-            onClick = viewModel::refreshClosingHistory,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(10.dp)
-        ) {
-            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Actualizar historial")
-        }
-    }
-}
-
-@Composable
-private fun ClosingHistoryRow(
-    closing: com.inventario.app.data.entity.CashClosingRecord,
-    viewModel: CashClosingViewModel
-) {
-    val statusColor = when (closing.status) {
-        CashClosingStatus.PENDING -> BrandWarning
-        CashClosingStatus.APPROVED -> BrandSuccess
-        CashClosingStatus.REJECTED -> MaterialTheme.colorScheme.error
-        CashClosingStatus.REVERTED -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Surface(
+    Button(
+        onClick = onPreviewClick,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        shape = RoundedCornerShape(14.dp),
+        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary
+        )
     ) {
-        Column(modifier = Modifier.padding(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    viewModel.formatClosingDateTime(closing.closedAt),
-                    fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                StatusPill(
-                    text = viewModel.closingStatusLabel(closing.status),
-                    color = statusColor
-                )
-            }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "${closing.username} · ${closing.branchName.ifBlank { closing.userSucursal }.ifBlank { "Sin sucursal" }}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                "${viewModel.formatPrice(closing.grandTotalUsd)} · Diff ${viewModel.formatPrice(closing.differenceUsd)}",
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
+        Icon(Icons.Default.Preview, contentDescription = null)
+        Spacer(Modifier.width(8.dp))
+        Text("Previsualizar cierre", fontWeight = FontWeight.SemiBold)
     }
+
+    Spacer(Modifier.height(24.dp))
 }
+
 
 @Composable
 private fun CashClosingAlertBanner(

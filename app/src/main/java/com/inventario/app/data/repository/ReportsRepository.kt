@@ -26,12 +26,16 @@ class ReportsRepository(private var cloudSync: CloudSync) {
         cloudSync = sync
     }
 
+    suspend fun listClosingHistory(): List<CashClosingRecord> = withContext(Dispatchers.IO) {
+        cloudSync.get("/v1/cash-closings").optJSONArray("cashClosings")?.toCashClosingList().orEmpty()
+            .sortedByDescending { it.closedAt }
+    }
+
     suspend fun loadSummary(start: Long, end: Long, bcvRate: Double?): ReportsSummary =
         withContext(Dispatchers.IO) {
-            // Ventas sí se acotan al rango (crecen sin límite). Los cierres se
-            // traen completos: la cola de aprobación debe mostrar TODOS los
-            // PENDING (cuadrados y con diferencia), igual que en la definición
-            // original del módulo; aprobados/rechazados se filtran al período.
+            // Ventas y cierres se acotan al rango seleccionado (por defecto el día
+            // actual). Pendientes, con diferencia, aprobados y rechazados comparten
+            // el mismo filtro de período.
             val rangeQuery = mapOf("start" to start.toString(), "end" to end.toString())
             val sales = cloudSync.get("/v1/sales", rangeQuery).optJSONArray("sales")?.toSaleList().orEmpty()
             val totalUsd = sales.sumOf { it.totalUsd }
@@ -55,10 +59,10 @@ class ReportsRepository(private var cloudSync: CloudSync) {
                 totalSalesUsd = totalUsd,
                 totalSalesBs = totalBs,
                 orderCount = orderCount,
-                balancedPendingClosings = allClosings
+                balancedPendingClosings = periodClosings
                     .filter { it.status == CashClosingStatus.PENDING && !it.hasDifference }
                     .sortedByDescending { it.closedAt },
-                differencePendingClosings = allClosings
+                differencePendingClosings = periodClosings
                     .filter { it.status == CashClosingStatus.PENDING && it.hasDifference }
                     .sortedByDescending { it.closedAt },
                 approvedClosings = approvedClosings,

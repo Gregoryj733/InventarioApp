@@ -1,6 +1,11 @@
 package com.inventario.app.ui.reports
 
+import android.content.ContentResolver
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,19 +37,24 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SelectableDates
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -56,13 +66,19 @@ import com.inventario.app.data.entity.CashClosingSnapshotCodec
 import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.entity.PENDING_SUCURSAL_LABEL
 import com.inventario.app.data.entity.UserRole
+import com.inventario.app.data.entity.canExportClosingHistory
 import com.inventario.app.data.entity.canReviewClosings
+import com.inventario.app.data.entity.canViewClosingHistory
+import com.inventario.app.data.excel.CashClosingExcelExporter
+import com.inventario.app.data.excel.CashClosingHistoryExport
 import com.inventario.app.data.entity.displaySucursalOrPending
 import com.inventario.app.data.repository.ReportsRepository
 import com.inventario.app.data.repository.ReportsSummary
 import com.inventario.app.data.session.SessionManager
 import com.inventario.app.data.sync.CloudEvent
 import com.inventario.app.data.sync.toUserMessage
+import com.inventario.app.ui.cashclosing.ClosingHistoryPresentation
+import com.inventario.app.ui.cashclosing.ClosingHistorySection
 import com.inventario.app.ui.theme.AccentSectionCard
 import com.inventario.app.ui.theme.AppScreenBackground
 import com.inventario.app.ui.theme.BrandAppTopBar
@@ -88,6 +104,7 @@ import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.TimeUnit
@@ -97,6 +114,11 @@ enum class ClosingReviewAction {
     APPROVE,
     REJECT,
     REVERT
+}
+
+private enum class ReportsTab(val label: String) {
+    APPROVAL("Flujo aprobación"),
+    HISTORY("Historial")
 }
 
 /** Convierte los milisegundos UTC-medianoche que entrega el DatePicker de Material3
@@ -136,6 +158,8 @@ private fun selectableUtcRangeBounds(): Pair<Long, Long> {
 data class ReportsUiState(
     val startDateText: String = "",
     val endDateText: String = "",
+    val historyStartDateText: String = "",
+    val historyEndDateText: String = "",
     val loading: Boolean = true,
     val error: String? = null,
     val actionMessage: String? = null,
@@ -143,7 +167,13 @@ data class ReportsUiState(
     val summary: ReportsSummary? = null,
     val bcvLabel: String = "Tasa BCV: —",
     val canReviewClosings: Boolean = false,
-    val pendingClosingCount: Int = 0
+    val canViewClosingHistory: Boolean = false,
+    val canExportClosingHistory: Boolean = false,
+    val pendingClosingCount: Int = 0,
+    val todayDateText: String = "",
+    val closingHistory: List<CashClosingRecord> = emptyList(),
+    val loadingClosingHistory: Boolean = false,
+    val exportingClosingHistory: Boolean = false
 )
 
 class ReportsViewModel(
@@ -154,30 +184,42 @@ class ReportsViewModel(
     private val cloudEvents: SharedFlow<CloudEvent>? = null,
     private val onReviewCompleted: (dedupeKey: String, title: String, message: String) -> Unit = { _, _, _ -> }
 ) : ViewModel() {
-    private val _state = MutableStateFlow(ReportsUiState(canReviewClosings = userRole.canReviewClosings()))
-    val state: StateFlow<ReportsUiState> = _state.asStateFlow()
-
     private val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale("es", "VE"))
+    private val timeFormat = SimpleDateFormat("HH:mm", Locale("es", "VE"))
     private val moneyFormat = NumberFormat.getNumberInstance(Locale("es", "VE")).apply {
         minimumFractionDigits = 2
         maximumFractionDigits = 2
     }
 
+    private val _state = MutableStateFlow(
+        ReportsUiState(
+            canReviewClosings = userRole.canReviewClosings(),
+            canViewClosingHistory = userRole.canViewClosingHistory(),
+            canExportClosingHistory = userRole.canExportClosingHistory(),
+            todayDateText = SimpleDateFormat("dd/MM/yyyy", Locale("es", "VE")).format(Date())
+        )
+    )
+    val state: StateFlow<ReportsUiState> = _state.asStateFlow()
+
     init {
-        // Por defecto se carga el histórico completo permitido (90 días) para
-        // recaudación/aprobados/rechazados. Los PENDING se listan todos sin
-        // importar el rango (ver ReportsRepository.loadSummary).
-        val end = Calendar.getInstance()
-        val start = Calendar.getInstance().apply {
+        // Por defecto el flujo de aprobación muestra el día actual. Todos los
+        // segmentos (pendientes, diferencias, aprobados, rechazados) respetan
+        // el rango de fechas seleccionado.
+        val today = Calendar.getInstance()
+        val historyStart = Calendar.getInstance().apply {
             add(Calendar.DAY_OF_MONTH, -(ReportsRepository.MAX_RANGE_DAYS - 1))
         }
+        val todayText = dateFormat.format(today.time)
         _state.update {
             it.copy(
-                startDateText = dateFormat.format(start.time),
-                endDateText = dateFormat.format(end.time)
+                startDateText = todayText,
+                endDateText = todayText,
+                historyStartDateText = dateFormat.format(historyStart.time),
+                historyEndDateText = todayText
             )
         }
         load()
+        refreshClosingHistory()
         cloudEvents?.let { events ->
             viewModelScope.launch {
                 // Otro Admin/Supervisor aprobando, rechazando o revirtiendo un
@@ -186,6 +228,7 @@ class ReportsViewModel(
                 events.collect { event ->
                     if (event is CloudEvent.CashClosings) {
                         load()
+                        refreshClosingHistory()
                     }
                 }
             }
@@ -207,7 +250,7 @@ class ReportsViewModel(
         load()
     }
 
-    /** Atajo de calendario: "Hoy", "7 días", "30 días" o "90 días" hacia atrás. */
+    /** Atajo de calendario en Flujo aprobación: "Hoy", "7 días", etc. */
     fun selectQuickRange(daysBack: Int) {
         val end = Calendar.getInstance()
         val start = Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, -daysBack) }
@@ -220,6 +263,44 @@ class ReportsViewModel(
         }
         load()
     }
+
+    fun onHistoryStartDateChange(value: String) {
+        _state.update { it.copy(historyStartDateText = value) }
+    }
+
+    fun onHistoryEndDateChange(value: String) {
+        _state.update { it.copy(historyEndDateText = value) }
+    }
+
+    fun onHistoryDatePicked(isStart: Boolean, utcMidnightMillis: Long) {
+        val text = utcMidnightMillisToLocalDateText(utcMidnightMillis, dateFormat)
+        if (isStart) onHistoryStartDateChange(text) else onHistoryEndDateChange(text)
+    }
+
+    /** Atajo de calendario en Historial. */
+    fun selectHistoryQuickRange(daysBack: Int) {
+        val end = Calendar.getInstance()
+        val start = Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, -daysBack) }
+        _state.update {
+            it.copy(
+                historyStartDateText = dateFormat.format(start.time),
+                historyEndDateText = dateFormat.format(end.time)
+            )
+        }
+    }
+
+    fun filteredClosingHistory(): List<CashClosingRecord> {
+        val start = parseDate(_state.value.historyStartDateText) ?: return emptyList()
+        val endExclusive = parseDate(_state.value.historyEndDateText)?.let { dayEndExclusive(it) }
+            ?: return emptyList()
+        if (start >= endExclusive) return emptyList()
+        return _state.value.closingHistory.filter { closing ->
+            closing.closedAt >= start && closing.closedAt < endExclusive
+        }
+    }
+
+    fun historyPeriodLabel(): String =
+        "${_state.value.historyStartDateText} – ${_state.value.historyEndDateText}"
 
     fun clearActionFeedback() {
         _state.update { it.copy(actionMessage = null, actionError = null) }
@@ -305,6 +386,7 @@ class ReportsViewModel(
                 }
                 _state.update { it.copy(actionMessage = message) }
                 load()
+                refreshClosingHistory()
                 onReviewCompleted("review_${action.name}_$id", title, popupMessage)
             }.onFailure { err ->
                 val message = err.toUserMessage("No se pudo completar la acción.")
@@ -319,6 +401,55 @@ class ReportsViewModel(
     fun formatUsd(value: Double): String = "$${moneyFormat.format(value)}"
     fun formatBs(value: Double): String = "Bs ${moneyFormat.format(value)}"
     fun formatRate(value: Double): String = moneyFormat.format(value)
+
+    fun formatClosingDateTime(closedAt: Long): String =
+        "${dateFormat.format(Date(closedAt))} ${timeFormat.format(Date(closedAt))}"
+
+    fun formatClosingPrice(value: Double): String = "$${moneyFormat.format(value)}"
+
+    fun suggestedClosingExportFileName(): String = CashClosingExcelExporter.suggestedFileName()
+
+    fun refreshClosingHistory() {
+        if (!_state.value.canViewClosingHistory) return
+        viewModelScope.launch {
+            _state.update { it.copy(loadingClosingHistory = true) }
+            runCatching { reportsRepository.listClosingHistory() }
+                .onSuccess { list ->
+                    _state.update {
+                        it.copy(
+                            closingHistory = list,
+                            loadingClosingHistory = false,
+                            todayDateText = dateFormat.format(Date())
+                        )
+                    }
+                }
+                .onFailure {
+                    _state.update { it.copy(loadingClosingHistory = false) }
+                }
+        }
+    }
+
+    suspend fun exportClosingHistoryToUri(resolver: ContentResolver, uri: Uri): Result<Unit> =
+        CashClosingHistoryExport.writeToUri(resolver, uri, filteredClosingHistory())
+
+    fun requestClosingHistoryExport() {
+        if (!_state.value.canExportClosingHistory) return
+        if (filteredClosingHistory().isEmpty()) {
+            AppSnackbarController.show("No hay cierres para exportar en el período seleccionado.")
+            return
+        }
+        _state.update { it.copy(exportingClosingHistory = true) }
+    }
+
+    fun finishClosingHistoryExport(success: Boolean, errorMessage: String? = null) {
+        _state.update { it.copy(exportingClosingHistory = false) }
+        val message = when {
+            success -> "Reporte Excel exportado correctamente."
+            errorMessage != null -> errorMessage
+            else -> "No se pudo exportar el reporte."
+        }
+        AppSnackbarController.show(message)
+    }
 
     private fun parseDate(text: String): Long? = runCatching {
         dateFormat.parse(text.trim())?.time
@@ -351,6 +482,7 @@ class ReportsViewModel(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReportsScreen(
     viewModel: ReportsViewModel,
@@ -360,6 +492,30 @@ fun ReportsScreen(
     onRefreshBcv: () -> Unit
 ) {
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val approvalScrollState = rememberScrollState()
+    val historyScrollState = rememberScrollState()
+    var selectedTabIndex by remember { mutableIntStateOf(ReportsTab.APPROVAL.ordinal) }
+    val showHistoryTab = state.canViewClosingHistory
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    ) { uri ->
+        if (uri == null) {
+            viewModel.finishClosingHistoryExport(success = false, errorMessage = "Exportación cancelada.")
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            val result = viewModel.exportClosingHistoryToUri(context.contentResolver, uri)
+            viewModel.finishClosingHistoryExport(
+                success = result.isSuccess,
+                errorMessage = result.exceptionOrNull()?.message
+            )
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -377,75 +533,188 @@ fun ReportsScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = screenHorizontalPadding(), vertical = screenVerticalPadding())
             ) {
-                Text(
-                    text = "Flujo Aprobación",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "Pendientes de validar: todos. Recaudación e histórico: hasta " +
-                        "${ReportsRepository.MAX_RANGE_DAYS} días (por defecto el máximo).",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(12.dp))
-                DateRangeSelector(
-                    startDateText = state.startDateText,
-                    endDateText = state.endDateText,
-                    onStartPicked = { viewModel.onDatePicked(isStart = true, utcMidnightMillis = it) },
-                    onEndPicked = { viewModel.onDatePicked(isStart = false, utcMidnightMillis = it) }
-                )
-                Spacer(Modifier.height(8.dp))
-                QuickRangeChips(
-                    onSelectRange = { days ->
-                        viewModel.selectQuickRange(days)
-                    }
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = viewModel::load,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = screenHorizontalPadding(), vertical = screenVerticalPadding())
                 ) {
-                    Text("Consultar")
+                    Text(
+                        text = "Flujo Aprobación",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = if (showHistoryTab && selectedTabIndex == ReportsTab.HISTORY.ordinal) {
+                            "Filtra el historial por rango de fechas y exporta a Excel."
+                        } else {
+                            "Por defecto muestra cierres del día actual. " +
+                                "Usa las fechas o atajos para consultar otro período (hasta " +
+                                "${ReportsRepository.MAX_RANGE_DAYS} días)."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-                if (state.error != null) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(state.error!!, color = MaterialTheme.colorScheme.error)
-                }
-                if (state.actionMessage != null) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(state.actionMessage!!, color = BrandSuccess)
-                }
-                if (state.actionError != null) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(state.actionError!!, color = MaterialTheme.colorScheme.error)
-                }
-                if (state.loading) {
-                    Spacer(Modifier.height(24.dp))
-                    Row(
+
+                if (showHistoryTab) {
+                    PrimaryTabRow(
+                        selectedTabIndex = selectedTabIndex,
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = MaterialTheme.colorScheme.primary
                     ) {
-                        CircularProgressIndicator()
+                        ReportsTab.entries.forEachIndexed { index, tab ->
+                            Tab(
+                                selected = selectedTabIndex == index,
+                                onClick = { selectedTabIndex = index },
+                                text = {
+                                    Text(
+                                        text = tab.label,
+                                        fontWeight = if (selectedTabIndex == index) {
+                                            FontWeight.SemiBold
+                                        } else {
+                                            FontWeight.Medium
+                                        }
+                                    )
+                                }
+                            )
+                        }
                     }
-                } else {
-                    state.summary?.let { summary ->
-                        Spacer(Modifier.height(16.dp))
-                        ReportsContent(
-                            summary = summary,
-                            viewModel = viewModel,
-                            canReview = state.canReviewClosings,
-                            pendingCount = state.pendingClosingCount,
-                            periodLabel = "${state.startDateText} – ${state.endDateText}"
-                        )
+                }
+
+                when {
+                    showHistoryTab && selectedTabIndex == ReportsTab.HISTORY.ordinal -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .imePadding()
+                                .verticalScroll(historyScrollState)
+                                .padding(
+                                    horizontal = screenHorizontalPadding(),
+                                    vertical = screenVerticalPadding()
+                                )
+                        ) {
+                            ReportsHistoryContent(state = state, viewModel = viewModel) {
+                                viewModel.requestClosingHistoryExport()
+                                exportLauncher.launch(viewModel.suggestedClosingExportFileName())
+                            }
+                            Spacer(Modifier.height(24.dp))
+                        }
+                    }
+                    else -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .imePadding()
+                                .verticalScroll(approvalScrollState)
+                                .padding(
+                                    horizontal = screenHorizontalPadding(),
+                                    vertical = screenVerticalPadding()
+                                )
+                        ) {
+                            ReportsApprovalContent(state = state, viewModel = viewModel)
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ReportsHistoryContent(
+    state: ReportsUiState,
+    viewModel: ReportsViewModel,
+    onExportExcel: () -> Unit
+) {
+    val filteredClosings = viewModel.filteredClosingHistory()
+    DateRangeSelector(
+        startDateText = state.historyStartDateText,
+        endDateText = state.historyEndDateText,
+        onStartPicked = { viewModel.onHistoryDatePicked(isStart = true, utcMidnightMillis = it) },
+        onEndPicked = { viewModel.onHistoryDatePicked(isStart = false, utcMidnightMillis = it) }
+    )
+    Spacer(Modifier.height(8.dp))
+    QuickRangeChips(
+        onSelectRange = { days ->
+            viewModel.selectHistoryQuickRange(days)
+        }
+    )
+    Spacer(Modifier.height(12.dp))
+    ClosingHistorySection(
+        presentation = ClosingHistoryPresentation(
+            todayDateText = state.todayDateText,
+            closings = filteredClosings,
+            loading = state.loadingClosingHistory,
+            canExport = state.canExportClosingHistory,
+            exporting = state.exportingClosingHistory,
+            periodLabel = viewModel.historyPeriodLabel(),
+            groupByToday = false
+        ),
+        formatDateTime = viewModel::formatClosingDateTime,
+        formatPrice = viewModel::formatClosingPrice,
+        onRefresh = viewModel::refreshClosingHistory,
+        onExportExcel = onExportExcel
+    )
+}
+
+@Composable
+private fun ReportsApprovalContent(
+    state: ReportsUiState,
+    viewModel: ReportsViewModel
+) {
+    DateRangeSelector(
+        startDateText = state.startDateText,
+        endDateText = state.endDateText,
+        onStartPicked = { viewModel.onDatePicked(isStart = true, utcMidnightMillis = it) },
+        onEndPicked = { viewModel.onDatePicked(isStart = false, utcMidnightMillis = it) }
+    )
+    Spacer(Modifier.height(8.dp))
+    QuickRangeChips(
+        onSelectRange = { days ->
+            viewModel.selectQuickRange(days)
+        }
+    )
+    Spacer(Modifier.height(8.dp))
+    Button(
+        onClick = viewModel::load,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Text("Consultar")
+    }
+    if (state.error != null) {
+        Spacer(Modifier.height(8.dp))
+        Text(state.error!!, color = MaterialTheme.colorScheme.error)
+    }
+    if (state.actionMessage != null) {
+        Spacer(Modifier.height(8.dp))
+        Text(state.actionMessage!!, color = BrandSuccess)
+    }
+    if (state.actionError != null) {
+        Spacer(Modifier.height(8.dp))
+        Text(state.actionError!!, color = MaterialTheme.colorScheme.error)
+    }
+    if (state.loading) {
+        Spacer(Modifier.height(24.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            CircularProgressIndicator()
+        }
+    } else {
+        state.summary?.let { summary ->
+            Spacer(Modifier.height(16.dp))
+            ReportsContent(
+                summary = summary,
+                viewModel = viewModel,
+                canReview = state.canReviewClosings,
+                pendingCount = state.pendingClosingCount,
+                periodLabel = "${state.startDateText} – ${state.endDateText}"
+            )
         }
     }
 }
@@ -609,7 +878,10 @@ private fun ReportsContent(
         }
     ) {
         if (summary.balancedPendingClosings.isEmpty()) {
-            Text("Sin cierres cuadrados pendientes.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Sin cierres cuadrados pendientes en el período ($periodLabel).",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         } else {
             summary.balancedPendingClosings.forEach { closing ->
                 CashClosingDetailRow(
@@ -634,7 +906,10 @@ private fun ReportsContent(
         }
     ) {
         if (summary.differencePendingClosings.isEmpty()) {
-            Text("Sin cierres con diferencias pendientes.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Sin cierres con diferencias pendientes en el período ($periodLabel).",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         } else {
             summary.differencePendingClosings.forEach { closing ->
                 CashClosingDetailRow(
@@ -655,7 +930,10 @@ private fun ReportsContent(
         titleColor = BrandSuccess
     ) {
         if (summary.approvedClosings.isEmpty()) {
-            Text("Sin cierres aprobados en el período.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Sin cierres aprobados en el período ($periodLabel).",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         } else {
             summary.approvedClosings.forEach { closing ->
                 CashClosingDetailRow(
@@ -677,7 +955,10 @@ private fun ReportsContent(
         titleColor = BrandOutflow
     ) {
         if (summary.rejectedClosings.isEmpty()) {
-            Text("Sin cierres rechazados en el período.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Sin cierres rechazados en el período ($periodLabel).",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         } else {
             summary.rejectedClosings.forEach { closing ->
                 CashClosingDetailRow(

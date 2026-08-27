@@ -215,6 +215,8 @@ class InventoryRepository(
         appScope.launch { refreshConfirmedOrdersFlow() }
     }
 
+    fun hasPendingOfflineOrders(): Boolean = pendingOrders.isNotEmpty()
+
     fun observeAllProducts(): StateFlow<List<Product>> = productsFlow.asStateFlow()
 
     fun observeMeta(): StateFlow<AppMeta?> = metaFlow.asStateFlow()

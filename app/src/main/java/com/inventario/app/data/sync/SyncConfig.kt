@@ -1,13 +1,15 @@
 package com.inventario.app.data.sync
 
 import android.content.Context
+import com.inventario.app.data.branch.BranchCatalog
 import org.json.JSONArray
 import org.json.JSONObject
 
 data class SyncConfig(
     val baseUrl: String,
     val apiKey: String,
-    val fallbackUrls: List<String> = emptyList()
+    val fallbackUrls: List<String> = emptyList(),
+    val branchId: String? = null
 ) {
     val isConfigured: Boolean
         get() = baseUrl.isNotBlank() &&
@@ -17,23 +19,32 @@ data class SyncConfig(
 
     companion object {
         fun load(context: Context): SyncConfig? {
+            val catalog = BranchCatalog(context)
+            val activeBranchId = CloudConfigStore.loadActiveBranchId(context)
+            val branch = activeBranchId?.let(catalog::findById)
+                ?: catalog.defaultBranch
+            if (branch != null && branch.isConfigured) {
+                return branch.toSyncConfig(catalog.fallbackUrls).copy(branchId = branch.id)
+            }
             CloudConfigStore.load(context)?.let { stored ->
                 if (stored.isConfigured) return stored
             }
-            return loadFromAssets(context)
+            return loadLegacyFromAssets(context)
         }
 
-        fun loadAssetFallbacks(context: Context): List<String> = runCatching {
-            context.assets.open("sync_config.json").bufferedReader().use { reader ->
-                JSONObject(reader.readText())
-                    .optJSONArray("fallbackUrls")
-                    ?.toStringList()
-                    .orEmpty()
-            }
-        }.getOrDefault(emptyList())
+        fun loadForBranch(context: Context, branchId: String): SyncConfig? {
+            val catalog = BranchCatalog(context)
+            return catalog.findById(branchId)
+                ?.toSyncConfig(catalog.fallbackUrls)
+                ?.copy(branchId = branchId)
+                ?.takeIf { it.isConfigured }
+        }
 
-        private fun loadFromAssets(context: Context): SyncConfig? = runCatching {
-            context.assets.open("sync_config.json").bufferedReader().use { reader ->
+        fun loadAssetFallbacks(context: Context): List<String> =
+            BranchCatalog(context).fallbackUrls
+
+        private fun loadLegacyFromAssets(context: Context): SyncConfig? = runCatching {
+            context.assets.open(BranchCatalog.ASSET_NAME).bufferedReader().use { reader ->
                 val json = JSONObject(reader.readText())
                 SyncConfig(
                     baseUrl = json.optString("baseUrl", "").trim(),

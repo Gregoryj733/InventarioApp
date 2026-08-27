@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item>
-        <bitmap
-            android:gravity="center"
-            android:src="@drawable/logo_total_care" />
-    </item>
-</layer-list>
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_launcher_supra_foreground"
+    android:insetLeft="8%"
+    android:insetTop="18%"
+    android:insetRight="8%"
+    android:insetBottom="18%" />

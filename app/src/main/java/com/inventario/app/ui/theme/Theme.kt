@@ -11,14 +11,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 private val LightColors = lightColorScheme(
-    primary = BrandTeal,
+    primary = BrandRoyalBlue,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFE3EBF3),
-    onPrimaryContainer = BrandTealDark,
-    secondary = BrandTealLight,
+    primaryContainer = Color(0xFFDCE6F8),
+    onPrimaryContainer = BrandRoyalBlue,
+    secondary = BrandGold,
     onSecondary = Color.White,
-    secondaryContainer = BrandGoldLight,
-    onSecondaryContainer = BrandTealDark,
+    secondaryContainer = BrandGoldLight.copy(alpha = 0.35f),
+    onSecondaryContainer = BrandGoldDark,
     tertiary = BrandWarning,
     onTertiary = Color.White,
     tertiaryContainer = Color(0xFFFFE8C2),
@@ -31,7 +31,7 @@ private val LightColors = lightColorScheme(
     onSurface = BrandInk,
     surfaceVariant = Color(0xFFE8EEEF),
     onSurfaceVariant = Color(0xFF3D4A4E),
-    outline = BrandTeal.copy(alpha = 0.22f)
+    outline = BrandRoyalBlue.copy(alpha = 0.22f)
 )
 
 private val AppTypography = Typography(

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.FactCheck
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.OilBarrel
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.QrCodeScanner
@@ -39,6 +40,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.filled.Store
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import com.inventario.app.data.branch.BranchConfig
 import com.inventario.app.data.entity.CashClosingAlertType
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.displayLabel
@@ -58,7 +70,8 @@ enum class HubDestination {
     REPORTS,
     USERS,
     BATTERY_FINDER,
-    POWER_MAXX_BATTERY
+    POWER_MAXX_BATTERY,
+    OIL_FILTER_FINDER
 }
 
 data class HubMenuItem(
@@ -69,19 +82,42 @@ data class HubMenuItem(
     val showAlertBell: Boolean = false
 )
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MainHubScreen(
     username: String,
     role: UserRole,
+    activeBranchLabel: String = "",
+    canSwitchBranch: Boolean = false,
+    availableBranches: List<BranchConfig> = emptyList(),
+    showBranchSwitchDialog: Boolean = false,
+    branchSwitchLoading: Boolean = false,
+    branchSwitchError: String? = null,
+    pendingReauthBranchId: String? = null,
+    reauthPassword: String = "",
+    activeBranchId: String = "",
     bcvLabel: String,
     bcvRefreshing: Boolean,
     cashClosingAlert: CashClosingAlertType? = null,
     pendingReportsCount: Int = 0,
     onNavigate: (HubDestination) -> Unit,
     onRefreshBcv: () -> Unit,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    onOpenBranchSwitch: () -> Unit = {},
+    onDismissBranchSwitch: () -> Unit = {},
+    onBranchSelected: (String) -> Unit = {},
+    onReauthPasswordChange: (String) -> Unit = {},
+    onConfirmBranchReauth: () -> Unit = {}
 ) {
-    val subtitle = "$username · ${role.displayLabel()}"
+    val subtitle = buildString {
+        append(username)
+        append(" · ")
+        append(role.displayLabel())
+        if (activeBranchLabel.isNotBlank()) {
+            append(" · ")
+            append(activeBranchLabel)
+        }
+    }
     val items = buildList {
         add(
             HubMenuItem(
@@ -133,6 +169,14 @@ fun MainHubScreen(
                 icon = Icons.Default.BatteryChargingFull
             )
         )
+        add(
+            HubMenuItem(
+                destination = HubDestination.OIL_FILTER_FINDER,
+                title = "Validador\nFiltro Aceite",
+                subtitle = "Filtro WEB según el modelo",
+                icon = Icons.Default.OilBarrel
+            )
+        )
         // Consulta no participa en el flujo de aprobación de cierres de caja.
         if (role == UserRole.ADMIN || role == UserRole.SUPERVISOR) {
             add(
@@ -162,6 +206,81 @@ fun MainHubScreen(
     }
     val columns = 2
 
+    if (showBranchSwitchDialog) {
+        AlertDialog(
+            onDismissRequest = onDismissBranchSwitch,
+            title = {
+                Text(
+                    text = if (pendingReauthBranchId != null) {
+                        "Confirmar acceso"
+                    } else {
+                        "Cambiar sucursal"
+                    },
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (pendingReauthBranchId != null) {
+                        val branchLabel = availableBranches
+                            .firstOrNull { it.id == pendingReauthBranchId }
+                            ?.label
+                            .orEmpty()
+                        Text("Ingresa tu contraseña para acceder a $branchLabel.")
+                        OutlinedTextField(
+                            value = reauthPassword,
+                            onValueChange = onReauthPasswordChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Contraseña") },
+                            singleLine = true,
+                            enabled = !branchSwitchLoading
+                        )
+                    } else {
+                        Text("Selecciona la sucursal en la que deseas operar.")
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            availableBranches.forEach { branch ->
+                                FilterChip(
+                                    selected = branch.id == activeBranchId,
+                                    onClick = { onBranchSelected(branch.id) },
+                                    label = { Text(branch.label) },
+                                    enabled = !branchSwitchLoading
+                                )
+                            }
+                        }
+                    }
+                    if (branchSwitchError != null) {
+                        Text(
+                            text = branchSwitchError,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    if (branchSwitchLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    }
+                }
+            },
+            confirmButton = {
+                if (pendingReauthBranchId != null) {
+                    TextButton(
+                        onClick = onConfirmBranchReauth,
+                        enabled = !branchSwitchLoading
+                    ) {
+                        Text("Confirmar")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismissBranchSwitch, enabled = !branchSwitchLoading) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             BrandAppTopBar(
@@ -190,6 +309,21 @@ fun MainHubScreen(
                     label = bcvLabel,
                     refreshing = bcvRefreshing
                 )
+                if (canSwitchBranch && activeBranchLabel.isNotBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = onOpenBranchSwitch,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Store,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Cambiar sucursal · $activeBranchLabel")
+                    }
+                }
                 Spacer(Modifier.height(16.dp))
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(columns),

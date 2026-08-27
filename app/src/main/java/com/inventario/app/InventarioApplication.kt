@@ -4,17 +4,18 @@ import android.app.Application
 import android.util.Log
 import com.google.firebase.messaging.FirebaseMessaging
 import com.inventario.app.data.bcv.BcvRateFetcher
+import com.inventario.app.data.branch.BranchManager
 import com.inventario.app.data.repository.AuthRepository
 import com.inventario.app.data.acpower.AcPowerBatteryRepository
 import com.inventario.app.data.repository.BatteryFinderRepository
 import com.inventario.app.data.repository.InventoryRepository
+import com.inventario.app.data.repository.OilFilterCatalogRepository
 import com.inventario.app.data.repository.ReportsRepository
 import com.inventario.app.data.session.SessionManager
 import com.inventario.app.data.sync.CloudSync
 import com.inventario.app.data.sync.CloudSyncInfo
 import com.inventario.app.data.sync.NetworkMonitor
 import com.inventario.app.data.sync.SyncConfig
-import com.inventario.app.push.INVENTORY_UPDATED_TOPIC
 import com.inventario.app.push.NotificationHelper
 import com.inventario.app.util.AppNotifier
 import com.inventario.app.util.CashClosingSoundMonitor
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 class InventarioApplication : Application() {
     private val appScope = CoroutineScope(
@@ -40,6 +42,8 @@ class InventarioApplication : Application() {
 
     lateinit var sessionManager: SessionManager
         private set
+    lateinit var branchManager: BranchManager
+        private set
     lateinit var authRepository: AuthRepository
         private set
     lateinit var inventoryRepository: InventoryRepository
@@ -49,6 +53,8 @@ class InventarioApplication : Application() {
     lateinit var batteryFinderRepository: BatteryFinderRepository
         private set
     lateinit var acPowerBatteryRepository: AcPowerBatteryRepository
+        private set
+    lateinit var oilFilterCatalogRepository: OilFilterCatalogRepository
         private set
     val bcvRateFetcher = BcvRateFetcher()
     lateinit var cashClosingSoundMonitor: CashClosingSoundMonitor
@@ -60,6 +66,7 @@ class InventarioApplication : Application() {
 
     private lateinit var cloudSync: CloudSync
     private var networkMonitor: NetworkMonitor? = null
+    private var subscribedFirebaseTopic: String? = null
 
     val cloudSyncStatus: StateFlow<CloudSyncInfo>
         get() = cloudSync.status
@@ -78,6 +85,7 @@ class InventarioApplication : Application() {
         NotificationHelper.createChannel(this)
 
         sessionManager = SessionManager(this)
+        branchManager = BranchManager(this, sessionManager)
         cashClosingSoundMonitor = CashClosingSoundMonitor(this, sessionManager)
         confirmedOrderSoundMonitor = ConfirmedOrderSoundMonitor(this, sessionManager)
         appNotifier = AppNotifier(this, sessionManager)
@@ -89,10 +97,11 @@ class InventarioApplication : Application() {
         reportsRepository = ReportsRepository(cloudSync)
         batteryFinderRepository = BatteryFinderRepository(this, cloudSync)
         acPowerBatteryRepository = AcPowerBatteryRepository(this)
+        oilFilterCatalogRepository = OilFilterCatalogRepository(this)
 
         cloudSync.start(appScope)
         startNetworkMonitor(cloudSync)
-        subscribeToInventoryTopic()
+        subscribeToActiveBranchTopic()
         forwardSessionExpiredEvents(cloudSync)
     }
 
@@ -117,20 +126,30 @@ class InventarioApplication : Application() {
         }
     }
 
-    private fun subscribeToInventoryTopic() {
-        runCatching {
-            FirebaseMessaging.getInstance().subscribeToTopic(INVENTORY_UPDATED_TOPIC)
-        }.onFailure { error ->
-            Log.w(TAG, "No se pudo suscribir al topic de notificaciones", error)
+    fun subscribeToActiveBranchTopic() {
+        val topic = branchManager.firebaseTopicForActiveBranch()
+        if (topic == subscribedFirebaseTopic) return
+        appScope.launch {
+            runCatching {
+                subscribedFirebaseTopic?.let { old ->
+                    FirebaseMessaging.getInstance().unsubscribeFromTopic(old).await()
+                }
+                FirebaseMessaging.getInstance().subscribeToTopic(topic).await()
+                subscribedFirebaseTopic = topic
+            }.onFailure { error ->
+                Log.w(TAG, "No se pudo suscribir al topic de notificaciones: $topic", error)
+            }
         }
     }
 
     private fun buildCloudSync(): CloudSync {
-        val config = SyncConfig.load(this) ?: SyncConfig(baseUrl = "", apiKey = "")
+        val config = branchManager.syncConfigForActiveBranch()
+            ?: SyncConfig.load(this)
+            ?: SyncConfig(baseUrl = "", apiKey = "")
         return CloudSync(config)
     }
 
-    /** Reconstruye el cliente de nube tras cambiar la URL/clave desde la pantalla de configuración. */
+    /** Reconstruye el cliente de nube tras cambiar la URL/clave o la sucursal activa. */
     fun restartCloudSync(): StateFlow<CloudSyncInfo> {
         cloudSync.stop()
         val sync = buildCloudSync()
@@ -144,7 +163,21 @@ class InventarioApplication : Application() {
         networkMonitor?.stop()
         startNetworkMonitor(sync)
         forwardSessionExpiredEvents(sync)
+        subscribeToActiveBranchTopic()
         return sync.status
+    }
+
+    /**
+     * Cambia la sucursal activa, reconecta al sync-server correspondiente y
+     * limpia cachés en memoria. Devuelve false si hay pedidos offline pendientes.
+     */
+    fun switchBranch(branchId: String): Boolean {
+        if (inventoryRepository.hasPendingOfflineOrders()) return false
+        branchManager.activateBranch(branchId)
+        restartCloudSync()
+        cashClosingSoundMonitor.reset()
+        confirmedOrderSoundMonitor.reset()
+        return true
     }
 
     companion object {

@@ -17,8 +17,9 @@ object AppNotificationHelper {
         title: String,
         message: String
     ) {
-        if (sessionManager.lastPlayedSoundEventKey() == dedupeKey) return
-        sessionManager.markSoundEventPlayed(dedupeKey)
+        val scopedKey = "${sessionManager.activeBranchId().orEmpty()}_$dedupeKey"
+        if (sessionManager.lastPlayedSoundEventKey() == scopedKey) return
+        sessionManager.markSoundEventPlayed(scopedKey)
         CashClosingSoundNotifier.play(context)
         AppAlertController.show(title, message)
     }

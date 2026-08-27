@@ -85,7 +85,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.inventario.app.data.entity.Product
+import com.inventario.app.data.branch.branchDisplayName
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.canManageDiscountTickets
 import com.inventario.app.data.entity.canResetTodayOrders
@@ -94,7 +94,7 @@ import androidx.compose.material.icons.filled.Edit
 import com.inventario.app.data.order.OrderLine
 import com.inventario.app.ui.theme.AccentSectionCard
 import com.inventario.app.ui.theme.AppScreenBackground
-import com.inventario.app.ui.theme.BrandAppTopBar
+import com.inventario.app.ui.theme.LocalActiveBranchId
 import com.inventario.app.ui.theme.BrandSuccess
 import com.inventario.app.ui.theme.BrandWarning
 import com.inventario.app.ui.theme.ConfirmCheckDialog
@@ -1161,7 +1161,7 @@ private fun OrderReceiptDialog(
             Column(modifier = Modifier.fillMaxWidth()) {
                 ReportHeader(
                     title = "Boleta de pedido",
-                    subtitle = "Total Care Automotriz"
+                    subtitle = branchDisplayName(LocalActiveBranchId.current)
                 )
                 Spacer(Modifier.height(12.dp))
                 if (compact) {

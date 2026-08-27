@@ -15,6 +15,30 @@ services:
         value: "10000"
       - key: API_KEY
         value: TcSync-7kM9pQ2xR4nW
+      - key: FIREBASE_TOPIC
+        value: inventario_sucursal_a
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+
+  - type: web
+    name: inventario-sync-sucursal-b
+    runtime: docker
+    rootDir: sync-server
+    plan: free
+    region: ohio
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: API_KEY
+        value: TcSync-7kM9pQ2xR4nW
+      - key: FIREBASE_TOPIC
+        value: inventario_sucursal_b
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET

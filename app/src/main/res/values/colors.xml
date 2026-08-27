@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#1A1A1A</color>
-    <color name="brand_primary">#0F4C5C</color>
+    <color name="ic_launcher_background">#FFF7F2</color>
+    <color name="brand_royal_blue">#1E3A8A</color>
+    <color name="brand_teal">#1A3A5C</color>
+    <color name="brand_teal_dark">#0F2440</color>
+    <color name="brand_gray">#6B7280</color>
     <color name="brand_gold">#C9A227</color>
-    <color name="brand_sand">#F7F3EE</color>
+    <color name="brand_gold_dark">#9A7B1A</color>
+    <color name="brand_sand">#F4F6F8</color>
     <color name="whatsapp_green">#25D366</color>
 </resources>

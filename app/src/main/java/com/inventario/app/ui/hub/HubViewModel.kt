@@ -4,10 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.inventario.app.data.bcv.BcvRateFetcher
+import com.inventario.app.data.branch.BranchConfig
+import com.inventario.app.data.branch.BranchManager
 import com.inventario.app.data.entity.CashClosingAlertType
 import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.entity.UserRole
+import com.inventario.app.data.entity.canSwitchBranch
+import com.inventario.app.data.repository.AuthRepository
 import com.inventario.app.data.repository.InventoryRepository
+import com.inventario.app.data.repository.LoginResult
 import com.inventario.app.data.session.SessionManager
 import com.inventario.app.data.sync.CloudEvent
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +29,14 @@ import kotlin.math.round
 data class HubUiState(
     val username: String = "",
     val role: UserRole = UserRole.CONSULTA,
+    val activeBranchLabel: String = "",
+    val canSwitchBranch: Boolean = false,
+    val availableBranches: List<BranchConfig> = emptyList(),
+    val showBranchSwitchDialog: Boolean = false,
+    val branchSwitchLoading: Boolean = false,
+    val branchSwitchError: String? = null,
+    val pendingReauthBranchId: String? = null,
+    val reauthPassword: String = "",
     val bcvRate: Double? = null,
     val bcvLabel: String = "Tasa BCV: —",
     val bcvRefreshing: Boolean = false,
@@ -35,7 +48,11 @@ data class HubUiState(
 class HubViewModel(
     private val inventoryRepository: InventoryRepository,
     private val sessionManager: SessionManager,
-    private val bcvRateFetcher: BcvRateFetcher
+    private val branchManager: BranchManager,
+    private val authRepository: AuthRepository,
+    private val bcvRateFetcher: BcvRateFetcher,
+    private val switchBranch: (String) -> Boolean,
+    private val onBranchSwitched: () -> Unit
 ) : ViewModel() {
     private val _state = MutableStateFlow(HubUiState())
     val state: StateFlow<HubUiState> = _state.asStateFlow()
@@ -47,6 +64,7 @@ class HubViewModel(
     }
 
     init {
+        refreshBranchInfo()
         _state.update {
             it.copy(
                 username = sessionManager.username().orEmpty(),
@@ -75,15 +93,160 @@ class HubViewModel(
         refreshBcv()
         refreshClosingAlerts()
         viewModelScope.launch {
-            // El badge de "Flujo Aprobación" (cierres pendientes) y el aviso
-            // de aprobado/rechazado deben reflejar lo que hace CUALQUIER
-            // usuario (Admin o Supervisor) en tiempo real, sin depender de
-            // reabrir la pantalla.
             inventoryRepository.observeCloudEvents().collect { event ->
                 if (event is CloudEvent.CashClosings) {
                     refreshClosingAlerts()
                 }
             }
+        }
+    }
+
+    fun openBranchSwitchDialog() {
+        _state.update {
+            it.copy(
+                showBranchSwitchDialog = true,
+                branchSwitchError = null,
+                pendingReauthBranchId = null,
+                reauthPassword = ""
+            )
+        }
+    }
+
+    fun dismissBranchSwitchDialog() {
+        _state.update {
+            it.copy(
+                showBranchSwitchDialog = false,
+                branchSwitchError = null,
+                pendingReauthBranchId = null,
+                reauthPassword = "",
+                branchSwitchLoading = false
+            )
+        }
+    }
+
+    fun onReauthPasswordChange(value: String) {
+        _state.update { it.copy(reauthPassword = value, branchSwitchError = null) }
+    }
+
+    fun requestBranchSwitch(branchId: String) {
+        if (branchId == sessionManager.activeBranchId()) {
+            dismissBranchSwitchDialog()
+            return
+        }
+        if (inventoryRepository.hasPendingOfflineOrders()) {
+            _state.update {
+                it.copy(
+                    branchSwitchError = "Hay pedidos pendientes de sincronizar. " +
+                        "Espera la conexión o confírmalos antes de cambiar de sucursal."
+                )
+            }
+            return
+        }
+        if (branchManager.requiresReauth(branchId)) {
+            _state.update {
+                it.copy(
+                    pendingReauthBranchId = branchId,
+                    reauthPassword = "",
+                    branchSwitchError = null
+                )
+            }
+            return
+        }
+        performBranchSwitch(branchId, password = null)
+    }
+
+    fun confirmBranchReauth() {
+        val branchId = _state.value.pendingReauthBranchId ?: return
+        val password = _state.value.reauthPassword
+        if (password.isBlank()) {
+            _state.update { it.copy(branchSwitchError = "Ingresa tu contraseña.") }
+            return
+        }
+        performBranchSwitch(branchId, password)
+    }
+
+    private fun performBranchSwitch(branchId: String, password: String?) {
+        viewModelScope.launch {
+            _state.update { it.copy(branchSwitchLoading = true, branchSwitchError = null) }
+            if (password != null) {
+                branchManager.activateBranch(branchId)
+                switchBranch(branchId)
+                val username = sessionManager.username().orEmpty()
+                when (val result = authRepository.login(username, password)) {
+                    is LoginResult.Success -> {
+                        branchManager.saveBranchSession(
+                            branchId,
+                            sessionManager.token().orEmpty()
+                        )
+                    }
+                    LoginResult.InvalidCredentials -> {
+                        _state.update {
+                            it.copy(
+                                branchSwitchLoading = false,
+                                branchSwitchError = "Contraseña incorrecta."
+                            )
+                        }
+                        return@launch
+                    }
+                    LoginResult.Inactive -> {
+                        _state.update {
+                            it.copy(
+                                branchSwitchLoading = false,
+                                branchSwitchError = "Usuario desactivado en esta sucursal."
+                            )
+                        }
+                        return@launch
+                    }
+                    is LoginResult.Unavailable -> {
+                        _state.update {
+                            it.copy(
+                                branchSwitchLoading = false,
+                                branchSwitchError = result.message
+                            )
+                        }
+                        return@launch
+                    }
+                }
+            } else {
+                val switched = switchBranch(branchId)
+                if (!switched) {
+                    _state.update {
+                        it.copy(
+                            branchSwitchLoading = false,
+                            branchSwitchError = "No se pudo cambiar de sucursal. " +
+                                "Verifica que no haya pedidos pendientes."
+                        )
+                    }
+                    return@launch
+                }
+            }
+            refreshBranchInfo()
+            refreshClosingAlerts()
+            _state.update {
+                it.copy(
+                    branchSwitchLoading = false,
+                    showBranchSwitchDialog = false,
+                    pendingReauthBranchId = null,
+                    reauthPassword = "",
+                    branchSwitchError = null
+                )
+            }
+            onBranchSwitched()
+        }
+    }
+
+    private fun refreshBranchInfo() {
+        val role = sessionManager.role() ?: UserRole.CONSULTA
+        _state.update {
+            it.copy(
+                activeBranchLabel = branchManager.getActiveBranch()?.label.orEmpty(),
+                canSwitchBranch = role.canSwitchBranch() && branchManager.allBranches().size > 1,
+                availableBranches = if (role.canSwitchBranch()) {
+                    branchManager.allBranches()
+                } else {
+                    emptyList()
+                }
+            )
         }
     }
 
@@ -141,11 +304,23 @@ class HubViewModel(
         fun factory(
             inventoryRepository: InventoryRepository,
             sessionManager: SessionManager,
-            bcvRateFetcher: BcvRateFetcher
+            branchManager: BranchManager,
+            authRepository: AuthRepository,
+            bcvRateFetcher: BcvRateFetcher,
+            switchBranch: (String) -> Boolean,
+            onBranchSwitched: () -> Unit
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return HubViewModel(inventoryRepository, sessionManager, bcvRateFetcher) as T
+                return HubViewModel(
+                    inventoryRepository,
+                    sessionManager,
+                    branchManager,
+                    authRepository,
+                    bcvRateFetcher,
+                    switchBranch,
+                    onBranchSwitched
+                ) as T
             }
         }
     }
