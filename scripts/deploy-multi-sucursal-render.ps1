@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 
 $ServiceNames = @(
     "inventario-sync-totalcare",
-    "inventario-sync-sucursal-b"
+    "inventario-sync-supra-parts"
 )
 
 $apiKey = $env:RENDER_API_KEY

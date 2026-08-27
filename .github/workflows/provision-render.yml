@@ -1,0 +1,177 @@
+name: Provision Render Multi-Sucursal
+
+on:
+  workflow_dispatch:
+    inputs:
+      database_url_total_care:
+        description: "Neon connection string para Total Care (inventario-sync-totalcare)"
+        required: true
+        type: string
+      database_url_supra_parts:
+        description: "Neon connection string para Supra Parts (inventario-sync-supra-parts)"
+        required: true
+        type: string
+      assign_users:
+        description: "Asignar sucursal a usuarios Ventas/Consulta"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision Render services
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          DATABASE_URL_TOTAL_CARE: ${{ inputs.database_url_total_care }}
+          DATABASE_URL_SUPRA_PARTS: ${{ inputs.database_url_supra_parts }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::error::RENDER_API_KEY no configurado en GitHub Secrets"
+            exit 1
+          fi
+
+          JWT="${JWT_SECRET:-}"
+          if [ -z "$JWT" ]; then
+            JWT=$(python3 -c 'import secrets,base64; print(base64.b64encode(secrets.token_bytes(48)).decode())')
+            echo "::warning::JWT_SECRET no estaba en secrets; se generó uno para este run. Guárdalo en GitHub Secrets."
+            echo "JWT_SECRET=$JWT"
+          fi
+
+          api() {
+            local method="$1" path="$2" body="${3:-}"
+            if [ -n "$body" ]; then
+              curl -sS -X "$method" "https://api.render.com/v1$path" \
+                -H "Authorization: Bearer ${RENDER_API_KEY}" \
+                -H "Content-Type: application/json" \
+                -d "$body"
+            else
+              curl -sS -X "$method" "https://api.render.com/v1$path" \
+                -H "Authorization: Bearer ${RENDER_API_KEY}" \
+                -H "Accept: application/json"
+            fi
+          }
+
+          list_code=$(curl -sS -o /tmp/services.json -w "%{http_code}" \
+            "https://api.render.com/v1/services?limit=100" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Accept: application/json" || true)
+          if [ "$list_code" = "401" ] || [ "$list_code" = "403" ]; then
+            echo "::error::RENDER_API_KEY inválida (HTTP $list_code). Actualízala en GitHub Secrets."
+            exit 1
+          fi
+
+          python3 <<'PY'
+          import json, os, subprocess, time, urllib.parse
+
+          api_key = os.environ["RENDER_API_KEY"]
+          db_a = os.environ["DATABASE_URL_TOTAL_CARE"]
+          db_b = os.environ["DATABASE_URL_SUPRA_PARTS"]
+          jwt = os.environ.get("JWT_SECRET") or ""
+
+          def api(method, path, body=None):
+              cmd = [
+                  "curl", "-sS", "-X", method, f"https://api.render.com/v1{path}",
+                  "-H", f"Authorization: Bearer {api_key}",
+                  "-H", "Accept: application/json",
+              ]
+              if body is not None:
+                  cmd += ["-H", "Content-Type: application/json", "-d", json.dumps(body)]
+              out = subprocess.check_output(cmd, text=True)
+              return json.loads(out) if out.strip().startswith(("{", "[")) else out
+
+          services = [item.get("service") or {} for item in api("GET", "/services?limit=100")]
+          by_name = {s.get("name"): s for s in services if s.get("name")}
+          wanted = {
+              "inventario-sync-totalcare": db_a,
+              "inventario-sync-supra-parts": db_b,
+          }
+          missing = [n for n in wanted if n not in by_name]
+          if missing:
+              print(f"::warning::Servicios faltantes: {', '.join(missing)}. En Render: Blueprints -> Manual Sync.")
+              bps = api("GET", "/blueprints?limit=20")
+              for item in bps:
+                  bp = item.get("blueprint") or {}
+                  if "InventarioApp" in (bp.get("repo") or "") or "inventario" in (bp.get("name") or "").lower():
+                      bid = bp.get("id")
+                      if bid and not bp.get("autoSync"):
+                          api("PATCH", f"/blueprints/{bid}", {"autoSync": True})
+                          print(f"::warning::autoSync activado en blueprint {bp.get('name')}. Reintenta en unos minutos.")
+          for name, db_url in wanted.items():
+              svc = by_name.get(name)
+              if not svc:
+                  continue
+              sid = svc["id"]
+              for key, val in [("DATABASE_URL", db_url), ("JWT_SECRET", jwt)]:
+                  enc = urllib.parse.quote(key, safe="")
+                  api("PUT", f"/services/{sid}/env-vars/{enc}", {"value": val})
+                  print(f"Set {key} on {name}")
+              deploy = api("POST", f"/services/{sid}/deploys", {"clearCache": "do_not_clear"})
+              deploy_id = deploy.get("id")
+              print(f"Deploy {name}: {deploy_id}")
+              for i in range(1, 25):
+                  time.sleep(15)
+                  st = api("GET", f"/services/{sid}/deploys/{deploy_id}")
+                  status = st.get("status", "unknown")
+                  print(f"  {name}: {status} ({i}/24)")
+                  if status == "live":
+                      break
+                  if status in ("build_failed", "update_failed", "canceled"):
+                      print(f"::warning::{name} deploy {status}")
+                      break
+          PY
+
+      - name: Assign branch users
+        if: inputs.assign_users == true
+        run: |
+          API_KEY="TcSync-7kM9pQ2xR4nW"
+          assign() {
+            local base="$1" label="$2"
+            login=$(curl -fsS -X POST "$base/v1/auth/login" \
+              -H "X-Api-Key: $API_KEY" -H "Content-Type: application/json" \
+              -d '{"username":"admin","password":"admin"}')
+            token=$(python3 -c "import json,sys; print(json.load(sys.stdin)['token'])" <<<"$login")
+            users=$(curl -fsS "$base/v1/users" -H "X-Api-Key: $API_KEY" -H "Authorization: Bearer $token")
+            python3 - "$base" "$label" "$token" "$API_KEY" <<<"$users" <<'PY'
+          import json, sys, subprocess, urllib.request
+          users = json.load(sys.stdin)
+          base, label, token, api_key = sys.argv[1:5]
+          for u in users.get("users", []):
+              if u.get("role") in ("ADMIN", "SUPERVISOR"):
+                  continue
+              if (u.get("sucursal") or "") == label:
+                  continue
+              body = json.dumps({"sucursal": label}).encode()
+              req = urllib.request.Request(
+                  f"{base.rstrip('/')}/v1/users/{u['id']}",
+                  data=body,
+                  method="PATCH",
+                  headers={
+                      "X-Api-Key": api_key,
+                      "Authorization": f"Bearer {token}",
+                      "Content-Type": "application/json",
+                  },
+              )
+              urllib.request.urlopen(req, timeout=120)
+              print(f"  {u.get('username')} -> {label}")
+          PY
+          }
+          assign "https://inventario-sync-totalcare.onrender.com" "Total Care Automotriz" || true
+          assign "https://inventario-sync-supra-parts.onrender.com" "Supra Parts" || true
+
+      - name: Verify health
+        run: |
+          for url in \
+            "https://inventario-sync-totalcare.onrender.com/health" \
+            "https://inventario-sync-supra-parts.onrender.com/health"; do
+            echo "Checking $url"
+            curl -fsS "$url" || echo "::warning::$url no disponible aún"
+          done

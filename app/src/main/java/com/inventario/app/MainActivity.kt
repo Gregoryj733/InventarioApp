@@ -192,14 +192,17 @@ private fun InventarioRoot(app: InventarioApplication) {
                     restartCloudSync = { app.restartCloudSync() }
                 )
             )
-            LoginScreen(
-                viewModel = loginVm,
-                onLoggedIn = {
-                    loggedIn = true
-                    currentScreen = AppScreen.HUB
-                    AppSnackbarController.show("Sesión iniciada correctamente.")
-                }
-            )
+            val loginState by loginVm.state.collectAsState()
+            CompositionLocalProvider(LocalActiveBranchId provides loginState.selectedBranchId) {
+                LoginScreen(
+                    viewModel = loginVm,
+                    onLoggedIn = {
+                        loggedIn = true
+                        currentScreen = AppScreen.HUB
+                        AppSnackbarController.show("Sesión iniciada correctamente.")
+                    }
+                )
+            }
             return@Scaffold
         }
 

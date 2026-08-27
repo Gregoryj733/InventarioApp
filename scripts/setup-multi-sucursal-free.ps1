@@ -91,7 +91,7 @@ if (-not $allOk) {
     Write-Host "Pasos para crear la instancia faltante (sin costo):" -ForegroundColor Yellow
     Write-Host "  1. Sube render.yaml a GitHub (rama main)." -ForegroundColor Gray
     Write-Host "  2. Render Dashboard -> Blueprints -> Sync / Apply changes." -ForegroundColor Gray
-    Write-Host "     Se crea inventario-sync-sucursal-b automaticamente." -ForegroundColor Gray
+    Write-Host "     Se crea inventario-sync-supra-parts automaticamente." -ForegroundColor Gray
     Write-Host "  3. Neon (gratis): en el MISMO proyecto crea una 2da base, p.ej. inventario_b." -ForegroundColor Gray
     Write-Host "     Usa connection strings distintas (mismo host, distinto nombre de DB)." -ForegroundColor Gray
     Write-Host "  4. En cada servicio Render -> Environment:" -ForegroundColor Gray

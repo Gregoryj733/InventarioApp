@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.inventario.app.data.bcv.BcvRateFetcher
+import com.inventario.app.data.branch.BranchCatalog
 import com.inventario.app.data.cashea.CasheaCalculator
 import com.inventario.app.data.entity.ConfirmedOrderPreview
 import com.inventario.app.data.entity.DiscountTicket
@@ -889,8 +890,10 @@ class HomeViewModel(
 
     fun generatedTicketShareText(): String? {
         val ticket = _state.value.generatedTicket ?: return null
+        val branchLabel = BranchCatalog(appContext).labelFor(sessionManager.activeBranchId())
+            .ifBlank { "descuento" }
         return buildString {
-            appendLine("Cupón de descuento Total Care")
+            appendLine("Cupón de descuento $branchLabel")
             appendLine("Código: ${ticket.code}")
             appendLine("Descuento: ${formatQty(ticket.discountPercent)}%")
             ticket.expiresAt?.let { appendLine("Válido hasta: ${formatTicketDate(it)}") }

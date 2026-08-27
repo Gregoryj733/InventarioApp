@@ -42,7 +42,7 @@ jobs:
 
           python3 <<'PY'
           import json
-          wanted = {"inventario-sync-totalcare", "inventario-sync-sucursal-b"}
+          wanted = {"inventario-sync-totalcare", "inventario-sync-supra-parts"}
           data = json.load(open("/tmp/render-services.json"))
           found = []
           for item in data:
@@ -129,9 +129,9 @@ jobs:
 
       - name: Verify Sucursal B health (optional)
         run: |
-          code=$(curl -sS -o /tmp/health-b.json -w "%{http_code}" "https://inventario-sync-sucursal-b.onrender.com/health" || true)
+          code=$(curl -sS -o /tmp/health-b.json -w "%{http_code}" "https://inventario-sync-supra-parts.onrender.com/health" || true)
           echo "HTTP $code"
           cat /tmp/health-b.json || true
           if [ "$code" = "404" ]; then
-            echo "::warning::Sucursal B aún no existe. En Render: Blueprints -> Sync para crear inventario-sync-sucursal-b."
+            echo "::warning::Supra Parts aún no existe. En Render: Blueprints -> Sync para crear inventario-sync-supra-parts."
           fi

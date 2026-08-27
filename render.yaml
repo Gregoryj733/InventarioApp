@@ -1,5 +1,6 @@
 # Render Blueprint — plan gratuito
 # Dashboard: https://dashboard.render.com/blueprints
+# Cada servicio = una sucursal independiente (misma imagen sync-server, datos aislados).
 
 services:
   - type: web
@@ -25,7 +26,7 @@ services:
         sync: false
 
   - type: web
-    name: inventario-sync-sucursal-b
+    name: inventario-sync-supra-parts
     runtime: docker
     rootDir: sync-server
     plan: free
@@ -38,7 +39,7 @@ services:
       - key: API_KEY
         value: TcSync-7kM9pQ2xR4nW
       - key: FIREBASE_TOPIC
-        value: inventario_sucursal_b
+        value: inventario_supra_parts
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET

@@ -74,4 +74,8 @@ class BranchManager(
 
     fun firebaseTopicForActiveBranch(): String =
         getActiveBranch()?.firebaseTopic ?: BranchCatalog.DEFAULT_FIREBASE_TOPIC
+
+    fun labelFor(branchId: String?): String = catalog.labelFor(branchId)
+
+    fun configFor(branchId: String?): BranchConfig? = catalog.configFor(branchId)
 }

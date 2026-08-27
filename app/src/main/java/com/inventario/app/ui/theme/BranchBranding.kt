@@ -7,11 +7,13 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.inventario.app.R
+import com.inventario.app.data.branch.BranchTheme
 import com.inventario.app.data.branch.branchDisplayName
-import com.inventario.app.data.branch.normalizeBranchId
+import androidx.compose.ui.platform.LocalContext
 
 /** Sucursal activa para branding dinámico en toda la UI autenticada. */
 val LocalActiveBranchId = staticCompositionLocalOf { "total_care" }
@@ -22,14 +24,16 @@ fun BranchBrandLogoSplash(
     modifier: Modifier = Modifier,
     height: Dp = 96.dp
 ) {
-    when (normalizeBranchId(branchId)) {
-        "supra_parts" -> Image(
+    val context = LocalContext.current
+    val contentDescription = branchDisplayName(branchId, context)
+    when (BranchTheme.fromId(branchId)) {
+        BranchTheme.SUPRA_PARTS -> Image(
             painter = painterResource(R.drawable.logo_supra_parts),
-            contentDescription = branchDisplayName(branchId),
+            contentDescription = contentDescription,
             modifier = modifier.height(height),
             contentScale = ContentScale.Fit
         )
-        else -> BrandLogoSplash(modifier = modifier)
+        BranchTheme.TOTAL_CARE -> BrandLogoSplash(modifier = modifier)
     }
 }
 
@@ -39,13 +43,39 @@ fun BranchBrandLogoTopBar(
     height: Dp = 40.dp,
     forLightBackground: Boolean = false
 ) {
-    when (normalizeBranchId(branchId)) {
-        "supra_parts" -> Image(
+    val context = LocalContext.current
+    val contentDescription = branchDisplayName(branchId, context)
+    when (BranchTheme.fromId(branchId)) {
+        BranchTheme.SUPRA_PARTS -> Image(
             painter = painterResource(R.drawable.logo_supra_parts_icon),
-            contentDescription = branchDisplayName(branchId),
+            contentDescription = contentDescription,
             modifier = Modifier.height(height),
             contentScale = ContentScale.Fit
         )
-        else -> BrandLogo(height = height, forLightBackground = forLightBackground)
+        BranchTheme.TOTAL_CARE -> BrandLogo(height = height, forLightBackground = forLightBackground)
     }
+}
+
+@Composable
+fun BranchBrandTitle(
+    branchId: String?,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    androidx.compose.material3.Text(
+        text = branchDisplayName(branchId, context),
+        style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+        color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+        modifier = modifier
+    )
+}
+
+@Composable
+fun AppBrandTitle(modifier: Modifier = Modifier) {
+    androidx.compose.material3.Text(
+        text = stringResource(R.string.app_name),
+        style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier
+    )
 }

@@ -31,6 +31,14 @@ class BranchCatalog(context: Context) {
         return branches.firstOrNull { it.baseUrl.trimEnd('/') == normalized }
     }
 
+    fun labelFor(branchId: String?): String {
+        val normalized = normalizeBranchId(branchId)
+        return findById(normalized)?.label.orEmpty()
+    }
+
+    fun configFor(branchId: String?): BranchConfig? =
+        findById(normalizeBranchId(branchId))
+
     private fun loadBranches(): List<BranchConfig> {
         val fromArray = assetJson.optJSONArray("branches")?.toBranchList().orEmpty()
         if (fromArray.isNotEmpty()) return fromArray
@@ -72,12 +80,14 @@ private fun JSONObject.toBranchConfig(): BranchConfig? {
     val baseUrl = optString("baseUrl", "").trim()
     val apiKey = optString("apiKey", "").trim()
     val firebaseTopic = optString("firebaseTopic", BranchCatalog.DEFAULT_FIREBASE_TOPIC).trim()
+    val theme = optString("theme", id).trim().ifBlank { id }
     if (id.isBlank() || label.isBlank() || baseUrl.isBlank()) return null
     return BranchConfig(
         id = id,
         label = label,
         baseUrl = baseUrl,
         apiKey = apiKey,
-        firebaseTopic = firebaseTopic.ifBlank { BranchCatalog.DEFAULT_FIREBASE_TOPIC }
+        firebaseTopic = firebaseTopic.ifBlank { BranchCatalog.DEFAULT_FIREBASE_TOPIC },
+        theme = theme
     )
 }

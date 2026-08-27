@@ -7,7 +7,9 @@ data class BranchConfig(
     val label: String,
     val baseUrl: String,
     val apiKey: String,
-    val firebaseTopic: String
+    val firebaseTopic: String,
+    /** Identificador de branding (`total_care`, `supra_parts`, …). Por defecto = [id]. */
+    val theme: String = id
 ) {
     fun toSyncConfig(fallbackUrls: List<String> = emptyList()): SyncConfig =
         SyncConfig(

@@ -98,7 +98,9 @@ import androidx.compose.ui.unit.dp
 
 import com.inventario.app.ui.theme.AppScreenBackground
 
+import com.inventario.app.ui.theme.AppBrandTitle
 import com.inventario.app.ui.theme.BranchBrandLogoSplash
+import com.inventario.app.ui.theme.BranchBrandTitle
 
 import com.inventario.app.ui.theme.screenHorizontalPadding
 
@@ -154,6 +156,8 @@ fun LoginScreen(
 
         ) {
 
+            AppBrandTitle(modifier = Modifier.padding(bottom = 8.dp))
+
             BranchBrandLogoSplash(
 
                 branchId = state.selectedBranchId,
@@ -161,6 +165,13 @@ fun LoginScreen(
                 modifier = Modifier.padding(bottom = 4.dp)
 
             )
+
+            if (state.branches.size == 1) {
+                BranchBrandTitle(
+                    branchId = state.selectedBranchId,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+            }
 
             if (state.loading) {
 
