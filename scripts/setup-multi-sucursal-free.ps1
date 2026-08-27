@@ -77,8 +77,15 @@ $allOk = $true
 foreach ($b in $branches) {
     $h = Test-BranchHealth -BaseUrl $b.baseUrl
     if ($h.Ok) {
-        $backendNote = if ($h.Backend -eq "postgres") { "OK (Postgres)" } else { "AVISO: backend $($h.Backend) - configura DATABASE_URL en Render" }
-        Write-Host "  [OK] $($b.label): $backendNote" -ForegroundColor $(if ($h.Backend -eq "postgres") { "Green" } else { "Yellow" })
+        $backendNote = if ($h.Backend -eq "file") {
+            "OK (file — plan free, misma lógica en ambas sucursales)"
+        } elseif ($h.Backend -eq "postgres") {
+            "AVISO: backend postgres — para paridad free usa STORAGE_BACKEND=file y quita DATABASE_URL en Render"
+        } else {
+            "AVISO: backend $($h.Backend)"
+        }
+        $okBackend = $h.Backend -eq "file"
+        Write-Host "  [OK] $($b.label): $backendNote" -ForegroundColor $(if ($okBackend) { "Green" } else { "Yellow" })
     } else {
         $allOk = $false
         Write-Host "  [FALTA] $($b.label): no responde en $($b.baseUrl)" -ForegroundColor Red

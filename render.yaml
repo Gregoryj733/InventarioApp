@@ -18,8 +18,8 @@ services:
         value: TcSync-7kM9pQ2xR4nW
       - key: FIREBASE_TOPIC
         value: inventario_sucursal_a
-      - key: DATABASE_URL
-        sync: false
+      - key: STORAGE_BACKEND
+        value: file
       - key: JWT_SECRET
         sync: false
       - key: FIREBASE_SERVICE_ACCOUNT
@@ -40,8 +40,8 @@ services:
         value: TcSync-7kM9pQ2xR4nW
       - key: FIREBASE_TOPIC
         value: inventario_supra_parts
-      - key: DATABASE_URL
-        sync: false
+      - key: STORAGE_BACKEND
+        value: file
       - key: JWT_SECRET
         sync: false
       - key: FIREBASE_SERVICE_ACCOUNT

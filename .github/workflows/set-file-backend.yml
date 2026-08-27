@@ -1,0 +1,94 @@
+name: Set File Backend (Render)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: STORAGE_BACKEND=file en ambas sucursales
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::error::RENDER_API_KEY no configurado en GitHub Secrets"
+            exit 1
+          fi
+
+          list_code=$(curl -sS -o /tmp/render-services.json -w "%{http_code}" \
+            "https://api.render.com/v1/services?limit=100" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Accept: application/json")
+          if [ "${list_code}" = "401" ] || [ "${list_code}" = "403" ]; then
+            echo "::error::RENDER_API_KEY inválida (HTTP ${list_code}). Actualízala en GitHub Secrets."
+            exit 1
+          fi
+          if ! [[ "${list_code}" =~ ^2 ]]; then
+            echo "::error::No se pudo listar servicios Render (HTTP ${list_code})"
+            exit 1
+          fi
+
+          python3 <<'PY'
+          import json, os, subprocess, urllib.parse
+
+          api_key = os.environ["RENDER_API_KEY"]
+          wanted = {"inventario-sync-totalcare", "inventario-sync-supra-parts"}
+          data = json.load(open("/tmp/render-services.json"))
+          targets = []
+          for item in data:
+              svc = item.get("service") or {}
+              if svc.get("name") in wanted:
+                  targets.append((svc["name"], svc["id"]))
+
+          if len(targets) != 2:
+              found = [n for n, _ in targets]
+              raise SystemExit(f"::error::Servicios esperados no encontrados. Encontrados: {found}")
+
+          def api(method, path, body=None):
+              cmd = [
+                  "curl", "-sS", "-o", "/tmp/render-api-out.json", "-w", "%{http_code}",
+                  "-X", method, f"https://api.render.com/v1{path}",
+                  "-H", f"Authorization: Bearer {api_key}",
+                  "-H", "Accept: application/json",
+              ]
+              if body is not None:
+                  cmd += ["-H", "Content-Type: application/json", "-d", json.dumps(body)]
+              proc = subprocess.run(cmd, capture_output=True, text=True)
+              code = proc.stdout.strip()
+              if not code.startswith("2") and code not in ("404",):
+                  raise SystemExit(f"::error::{method} {path} -> HTTP {code}: {open('/tmp/render-api-out.json').read()[:300]}")
+              return code
+
+          for name, sid in targets:
+              print(f"Configurando {name} ({sid})...")
+              api("PUT", f"/services/{sid}/env-vars/STORAGE_BACKEND", {"value": "file"})
+              del_code = api("DELETE", f"/services/{sid}/env-vars/DATABASE_URL")
+              if del_code == "404":
+                  print("  DATABASE_URL no existía")
+              else:
+                  print("  DATABASE_URL eliminada")
+              deploy_code = api("POST", f"/services/{sid}/deploys", {"clearCache": "do_not_clear"})
+              print(f"  Deploy iniciado (HTTP {deploy_code})")
+          PY
+
+      - name: Verificar health (backend file)
+        run: |
+          for url in \
+            "https://inventario-sync-totalcare.onrender.com/health" \
+            "https://inventario-sync-supra-parts.onrender.com/health"; do
+            echo "Checking $url"
+            for i in $(seq 1 20); do
+              body=$(curl -fsS "$url" 2>/dev/null || true)
+              echo "$body"
+              if echo "$body" | grep -q '"backend":"file"'; then
+                echo "OK: file backend"
+                break
+              fi
+              sleep 15
+            done
+          done

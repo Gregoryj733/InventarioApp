@@ -1,4 +1,19 @@
 async function createStore() {
+  const forced = String(process.env.STORAGE_BACKEND || "")
+    .trim()
+    .toLowerCase();
+
+  if (forced === "file") {
+    const fileStore = require("./store-file");
+    fileStore.init();
+    console.log("Storage backend: file (STORAGE_BACKEND=file)");
+    return fileStore;
+  }
+
+  if (forced === "postgres" && !process.env.DATABASE_URL) {
+    throw new Error("STORAGE_BACKEND=postgres requiere DATABASE_URL");
+  }
+
   if (process.env.DATABASE_URL) {
     const pgStore = require("./store-pg");
     const maxAttempts = 5;
