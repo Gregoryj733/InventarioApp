@@ -1,0 +1,133 @@
+name: Provision Supra Parts Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      database_url_supra_parts:
+        description: "Neon connection string for Supra Parts"
+        required: true
+        type: string
+      set_jwt_on_total_care:
+        description: "Also set JWT_SECRET on inventario-sync-totalcare"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision Supra Parts on Render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          DATABASE_URL_SUPRA: ${{ inputs.database_url_supra_parts }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          SET_JWT_A: ${{ inputs.set_jwt_on_total_care }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::error::RENDER_API_KEY no configurado en GitHub Secrets"
+            exit 1
+          fi
+          JWT="${JWT_SECRET:-gq+q8D+VpXs5M2Gd5o15xobiS0B3x48hoi3foBxZSS7gXPyxyMKc+PtVJ2r8XlNR}"
+
+          api() {
+            local method="$1" path="$2" body="${3:-}"
+            if [ -n "$body" ]; then
+              curl -sS -X "$method" "https://api.render.com/v1$path" \
+                -H "Authorization: Bearer ${RENDER_API_KEY}" \
+                -H "Content-Type: application/json" \
+                -d "$body"
+            else
+              curl -sS -X "$method" "https://api.render.com/v1$path" \
+                -H "Authorization: Bearer ${RENDER_API_KEY}" \
+                -H "Accept: application/json"
+            fi
+          }
+
+          list_code=$(curl -sS -o /tmp/svc.json -w "%{http_code}" \
+            "https://api.render.com/v1/services?limit=100" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Accept: application/json")
+          if [ "$list_code" = "401" ] || [ "$list_code" = "403" ]; then
+            echo "::error::RENDER_API_KEY invalida (HTTP $list_code). Actualizala en GitHub Secrets."
+            exit 1
+          fi
+
+          python3 <<'PY'
+          import json, os, subprocess, time, urllib.parse
+
+          api_key = os.environ["RENDER_API_KEY"]
+          db_supra = os.environ["DATABASE_URL_SUPRA"]
+          jwt = os.environ.get("JWT_SECRET") or "gq+q8D+VpXs5M2Gd5o15xobiS0B3x48hoi3foBxZSS7gXPyxyMKc+PtVJ2r8XlNR"
+          set_jwt_a = os.environ.get("SET_JWT_A", "true").lower() == "true"
+
+          def api(method, path, body=None):
+              cmd = ["curl", "-sS", "-X", method, f"https://api.render.com/v1{path}",
+                     "-H", f"Authorization: Bearer {api_key}", "-H", "Accept: application/json"]
+              if body is not None:
+                  cmd += ["-H", "Content-Type: application/json", "-d", json.dumps(body)]
+              out = subprocess.check_output(cmd, text=True)
+              return json.loads(out) if out.strip().startswith(("{", "[")) else out
+
+          def set_env(sid, key, val):
+              enc = urllib.parse.quote(key, safe="")
+              api("PUT", f"/services/{sid}/env-vars/{enc}", {"value": val})
+              print(f"Set {key} on {sid}")
+
+          services = [x.get("service") or {} for x in api("GET", "/services?limit=100")]
+          by_name = {s.get("name"): s for s in services if s.get("name")}
+          svc_a = by_name.get("inventario-sync-totalcare")
+          svc_b = by_name.get("inventario-sync-supra-parts")
+
+          if not svc_a:
+              raise SystemExit("::error::No existe inventario-sync-totalcare")
+
+          if not svc_b:
+              print("::warning::inventario-sync-supra-parts no existe. Sincroniza Blueprint en Render.")
+              bps = api("GET", "/blueprints?limit=20")
+              for item in bps:
+                  bp = item.get("blueprint") or {}
+                  if "InventarioApp" in (bp.get("repo") or ""):
+                      if not bp.get("autoSync"):
+                          api("PATCH", f"/blueprints/{bp.get('id')}", {"autoSync": True})
+                          print("::warning::autoSync activado; espera 2-3 min y re-ejecuta workflow")
+              raise SystemExit(2)
+
+          set_env(svc_b["id"], "DATABASE_URL", db_supra)
+          set_env(svc_b["id"], "JWT_SECRET", jwt)
+          if set_jwt_a:
+              set_env(svc_a["id"], "JWT_SECRET", jwt)
+
+          for name in ("inventario-sync-supra-parts", "inventario-sync-totalcare"):
+              s = by_name.get(name)
+              if not s:
+                  continue
+              deploy = api("POST", f"/services/{s['id']}/deploys", {"clearCache": "do_not_clear"})
+              did = deploy.get("id")
+              print(f"Deploy {name}: {did}")
+              for i in range(1, 25):
+                  time.sleep(15)
+                  st = api("GET", f"/services/{s['id']}/deploys/{did}")
+                  status = st.get("status", "?")
+                  print(f"  {name}: {status} ({i}/24)")
+                  if status == "live":
+                      break
+                  if status in ("build_failed", "update_failed", "canceled"):
+                      print(f"::warning::{name} deploy {status}")
+                      break
+          PY
+
+      - name: Verify health
+        run: |
+          for url in \
+            "https://inventario-sync-totalcare.onrender.com/health" \
+            "https://inventario-sync-supra-parts.onrender.com/health"; do
+            echo "== $url"
+            curl -fsS "$url" || echo "::warning::$url not ready"
+          done
