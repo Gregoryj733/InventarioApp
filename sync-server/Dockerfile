@@ -12,6 +12,7 @@ COPY public ./public
 
 ENV DATA_DIR=/data
 ENV PORT=8787
+# Redeploy trigger 2026-08-27: apply STORAGE_BACKEND=file env on Supra Parts
 
 EXPOSE 8787
 
