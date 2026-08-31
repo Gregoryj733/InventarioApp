@@ -1,6 +1,13 @@
-# Render Blueprint — plan gratuito
+# Render Blueprint — plan gratuito (cero costo)
 # Dashboard: https://dashboard.render.com/blueprints
 # Cada servicio = una sucursal independiente (misma imagen sync-server, datos aislados).
+#
+# Reglas para mantener $0:
+# - plan: free (no cambiar a starter/standard)
+# - STORAGE_BACKEND=file (no DATABASE_URL / Neon en Render)
+# - No agregar tarjeta de pago en el workspace (evita cobros por bandwidth)
+# - No definir KEEP_ALIVE_URL ni monitores externos (UptimeRobot, etc.)
+# - No usar persistent disks ni Postgres de Render
 
 services:
   - type: web
@@ -20,6 +27,8 @@ services:
         value: inventario_sucursal_a
       - key: STORAGE_BACKEND
         value: file
+      - key: BRANCH_SUCURSAL
+        value: Total Care Automotriz
       - key: JWT_SECRET
         sync: false
       - key: FIREBASE_SERVICE_ACCOUNT
@@ -42,6 +51,8 @@ services:
         value: inventario_supra_parts
       - key: STORAGE_BACKEND
         value: file
+      - key: BRANCH_SUCURSAL
+        value: Supra Parts
       - key: JWT_SECRET
         sync: false
       - key: FIREBASE_SERVICE_ACCOUNT

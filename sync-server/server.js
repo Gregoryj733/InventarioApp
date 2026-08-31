@@ -12,16 +12,19 @@ const push = require("./push");
 
 const API_KEY = process.env.API_KEY || "inventario-sync-key";
 const PORT = Number(process.env.PORT || 8787);
+/** Label de sucursal de esta instancia (debe coincidir con sync_config.json → branches[].label). */
+const BRANCH_SUCURSAL = String(process.env.BRANCH_SUCURSAL || "").trim();
+/** Supervisor gerente: acceso multi-sucursal desde la app (sin restricción por label). */
+const GERENTE_SUCURSAL = "Principal";
 const MAX_CLOSINGS_PER_DAY = 5;
 // El plan free de Render "duerme" el servicio tras ~15 min sin tráfico
 // entrante y también suspende la base Postgres de Neon tras inactividad.
 // Cuando eso pasa, el WebSocket de TODOS los dispositivos conectados se
 // corta a la vez y la reconexión + "despertar" el servidor puede tardar
 // hasta un minuto, lo que se percibe como pedidos/inventario desfasados
-// entre celulares. Un ping periódico a /health (tráfico HTTP entrante real,
-// no una llamada interna) evita que el contenedor llegue a esos ~15 min de
-// inactividad y mantiene la conexión a la base de datos activa.
-const KEEP_ALIVE_URL = (process.env.KEEP_ALIVE_URL || process.env.RENDER_EXTERNAL_URL || "").trim();
+// entre celulares. KEEP_ALIVE_URL es opcional; sin ella el servicio duerme en
+// plan free tras 15 min (la app reintenta al usarla).
+const KEEP_ALIVE_URL = (process.env.KEEP_ALIVE_URL || "").trim();
 const KEEP_ALIVE_INTERVAL_MS = Number(process.env.KEEP_ALIVE_INTERVAL_MS) || 4 * 60 * 1000;
 // Roles que el módulo de Usuarios puede crear/editar/eliminar. ADMIN se
 // gestiona fuera de esta API (usuario semilla único).
@@ -395,6 +398,7 @@ async function seedDefaultUsers(store) {
       return { state, result: null };
     }
     const now = state.nextUserId;
+    const branchSucursal = BRANCH_SUCURSAL;
     const seeded = [
       {
         id: now,
@@ -402,7 +406,7 @@ async function seedDefaultUsers(store) {
         passwordHash: auth.hashPassword("consulta"),
         role: "CONSULTA",
         active: true,
-        sucursal: ""
+        sucursal: branchSucursal
       },
       {
         id: now + 1,
@@ -410,7 +414,7 @@ async function seedDefaultUsers(store) {
         passwordHash: auth.hashPassword("venta"),
         role: "VENTAS",
         active: true,
-        sucursal: ""
+        sucursal: branchSucursal
       },
       {
         id: now + 2,
@@ -428,26 +432,31 @@ async function seedDefaultUsers(store) {
   });
 }
 
-/** Asegura el usuario portal de ventas (venta/venta) con rol VENTAS en bases ya existentes. */
-async function ensureVentasPortalUser(store) {
-  const VENTAS_USERNAME = "venta";
+/** Asegura usuarios operativos por sucursal (consulta/venta) en bases ya existentes. */
+async function ensureOperationalBranchUser(store, { username, password, role }) {
+  const normalizedUsername = String(username).toLowerCase();
   await store.runTransaction(async (state) => {
     const users = state.users.map((u) => ({ ...u }));
     let nextUserId = state.nextUserId;
     let changed = false;
-    const index = users.findIndex((u) => String(u.username).toLowerCase() === VENTAS_USERNAME);
+    const index = users.findIndex((u) => String(u.username).toLowerCase() === normalizedUsername);
+    const targetSucursal = BRANCH_SUCURSAL;
     if (index >= 0) {
       const current = users[index];
       const updated = {
         ...current,
-        username: VENTAS_USERNAME,
-        role: "VENTAS",
-        active: true
+        username: normalizedUsername,
+        role,
+        active: true,
+        passwordHash: auth.hashPassword(password),
+        sucursal: targetSucursal || current.sucursal || ""
       };
       if (
         current.role !== updated.role ||
         current.username !== updated.username ||
-        !current.active
+        !current.active ||
+        current.passwordHash !== updated.passwordHash ||
+        (targetSucursal && current.sucursal !== updated.sucursal)
       ) {
         users[index] = updated;
         changed = true;
@@ -455,17 +464,34 @@ async function ensureVentasPortalUser(store) {
     } else {
       users.push({
         id: nextUserId,
-        username: VENTAS_USERNAME,
-        passwordHash: auth.hashPassword("venta"),
-        role: "VENTAS",
+        username: normalizedUsername,
+        passwordHash: auth.hashPassword(password),
+        role,
         active: true,
-        sucursal: ""
+        sucursal: targetSucursal
       });
       nextUserId += 1;
       changed = true;
     }
     if (!changed) return { state, result: null };
     return { state: { ...state, users, nextUserId }, result: null };
+  });
+}
+
+async function ensureConsultaBranchUser(store) {
+  return ensureOperationalBranchUser(store, {
+    username: "consulta",
+    password: "consulta",
+    role: "CONSULTA"
+  });
+}
+
+/** Asegura el usuario portal de ventas (venta/venta) con rol VENTAS en bases ya existentes. */
+async function ensureVentasPortalUser(store) {
+  return ensureOperationalBranchUser(store, {
+    username: "venta",
+    password: "venta",
+    role: "VENTAS"
   });
 }
 
@@ -488,7 +514,7 @@ async function ensureGerenteSupervisorUser(store) {
         role: "SUPERVISOR",
         active: true,
         passwordHash: auth.hashPassword(GERENTE_PASSWORD),
-        sucursal: current.sucursal || "Principal"
+        sucursal: GERENTE_SUCURSAL
       };
       if (
         current.role !== updated.role ||
@@ -507,7 +533,7 @@ async function ensureGerenteSupervisorUser(store) {
         passwordHash: auth.hashPassword(GERENTE_PASSWORD),
         role: "SUPERVISOR",
         active: true,
-        sucursal: "Principal"
+        sucursal: GERENTE_SUCURSAL
       });
       nextUserId += 1;
       changed = true;
@@ -548,18 +574,15 @@ async function seedBatteryFinderData(store) {
 }
 
 /**
- * Ping periódico a la propia URL pública (no localhost: tiene que ser
- * tráfico HTTP entrante "real" para que la plataforma no cuente al
- * servicio como inactivo) para evitar el sueño por inactividad del plan
- * free y mantener viva la conexión a la base de datos. Se desactiva solo
- * si no hay ninguna URL configurada (p. ej. desarrollo local con `npm
- * start`, donde no aplica).
+ * Ping periódico opcional a la propia URL pública. En plan free de Render solo
+ * debe activarse si aceptas consumir horas de instancia; con dos sucursales el
+ * keep-alive 24/7 agota el cupo mensual (~750 h) en ~16 días.
  */
 function startKeepAlive() {
   if (!KEEP_ALIVE_URL) {
     console.log(
-      "Keep-alive deshabilitado (define KEEP_ALIVE_URL o usa el RENDER_EXTERNAL_URL " +
-        "automático de Render para evitar que el plan free duerma el servicio)."
+      "Keep-alive deshabilitado (plan free: el servicio duerme tras 15 min sin " +
+        "tráfico; la app Android reintenta /health al usarla)."
     );
     return;
   }
@@ -582,6 +605,7 @@ async function start() {
   storeRef = store;
   push.init();
   await seedDefaultUsers(store);
+  await ensureConsultaBranchUser(store);
   await ensureVentasPortalUser(store);
   await ensureGerenteSupervisorUser(store);
   await seedBatteryFinderData(store);
@@ -856,16 +880,22 @@ async function start() {
           product.updatedAt = createdAt;
         }
 
+        const resolvedDiscountUsd = Math.max(0, Number(discountUsd) || 0);
+        const resolvedSubtotalUsd = Number(body.subtotalUsd);
+        const subtotalUsd = Number.isFinite(resolvedSubtotalUsd) && resolvedSubtotalUsd > 0
+          ? resolvedSubtotalUsd
+          : totalUsd + resolvedDiscountUsd;
         const sales = [
           ...state.sales,
           {
             syncId,
             createdAt,
             totalUsd,
+            subtotalUsd,
             bcvRate,
             discountTicketCode: discountTicketCode || null,
             discountPercent: appliedDiscountPercent,
-            discountUsd: discountTicketCode ? discountUsd : 0
+            discountUsd: resolvedDiscountUsd
           }
         ];
         let nextId = state.nextSaleLineItemId;
