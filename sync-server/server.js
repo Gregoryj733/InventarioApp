@@ -372,13 +372,21 @@ function filterDiscountTickets(tickets, query, now = Date.now()) {
   return result;
 }
 
+function resolveUserSucursal(user) {
+  const raw = String(user.sucursal || "").trim();
+  if ((user.role === "CONSULTA" || user.role === "VENTAS") && !raw && BRANCH_SUCURSAL) {
+    return BRANCH_SUCURSAL;
+  }
+  return raw;
+}
+
 function sanitizeUser(user) {
   return {
     id: user.id,
     username: user.username,
     role: user.role,
     active: user.active,
-    sucursal: user.sucursal || ""
+    sucursal: resolveUserSucursal(user)
   };
 }
 
