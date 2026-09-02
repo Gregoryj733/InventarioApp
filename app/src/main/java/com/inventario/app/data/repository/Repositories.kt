@@ -658,13 +658,11 @@ class InventoryRepository(
     fun currentConfirmedOrdersToday(): List<ConfirmedOrderPreview> =
         confirmedOrdersTodayFlow.value
 
-    private suspend fun mergedConfirmedOrdersToday(
-        serverAuthoritative: Boolean = true
-    ): MergedOrdersResult {
+    private suspend fun mergedConfirmedOrdersToday(): MergedOrdersResult {
         val (start, end) = todayBounds()
-        val fetch = fetchConfirmedOrdersWithStatus(null, null)
+        val fetch = fetchConfirmedOrdersWithStatus(start, end)
         val serverOrders = fetch.orders.filter { it.createdAt in start until end }
-        val localOrders = localOrdersForMerge(start, end, serverAuthoritative)
+        val localOrders = localOrdersForMerge(start, end)
         val merged = mergeConfirmedOrderPreviews(serverOrders, localOrders)
         return MergedOrdersResult(
             merged = merged,
@@ -675,12 +673,12 @@ class InventoryRepository(
     }
 
     private suspend fun resolveConfirmedOrdersMerged(fromBranchEvent: Boolean): MergedOrdersResult {
-        var result = mergedConfirmedOrdersToday(serverAuthoritative = true)
+        var result = mergedConfirmedOrdersToday()
         if (!fromBranchEvent) return result
 
         repeat(SALES_BRANCH_FETCH_RETRIES) {
             delay(SALES_BRANCH_FETCH_RETRY_MS)
-            val fresher = mergedConfirmedOrdersToday(serverAuthoritative = true)
+            val fresher = mergedConfirmedOrdersToday()
             if (!fresher.serverFetchSuccess) return@repeat
             if (fresher.serverOrderCount > result.serverOrderCount ||
                 fresher.merged.size > result.merged.size
@@ -705,10 +703,24 @@ class InventoryRepository(
         }
 
         val current = confirmedOrdersTodayFlow.value
-        if (result.merged.isEmpty() && current.isNotEmpty() && pendingOrders.isNotEmpty()) {
+        val (start, end) = todayBounds()
+        val localToday = loadLocalOrderPreviewsForToday(start, end)
+        val today = todayDayKey()
+        val storedDay = todayOrderPreviewsPrefs().getString("day", null)
+        if (storedDay != null && storedDay != today) {
+            todayOrderPreviewsPrefs().edit().clear().apply()
+            invalidateLocalOrderPreviewCache()
+            if (result.merged.isEmpty()) {
+                confirmedOrdersTodayFlow.value = emptyList()
+                return
+            }
+        }
+
+        if (result.merged.isEmpty() && (current.isNotEmpty() || localToday.isNotEmpty())) {
             Log.w(
                 TAG,
-                "Pedidos: servidor vacío con pedidos offline pendientes (en pantalla=${current.size})"
+                "Pedidos: servidor vacío; se mantiene caché local " +
+                    "(en pantalla=${current.size}, disco=${localToday.size})"
             )
             return
         }
@@ -1034,19 +1046,8 @@ class InventoryRepository(
         ConfirmedOrdersFetch(emptyList(), success = false)
     }
 
-    private fun localOrdersForMerge(
-        start: Long,
-        end: Long,
-        serverAuthoritative: Boolean
-    ): List<ConfirmedOrderPreview> {
-        val local = loadLocalOrderPreviewsForToday(start, end)
-        if (!serverAuthoritative) return local
-        val pendingIds = pendingOrderSyncIds()
-        return local.filter { it.syncId in pendingIds }
-    }
-
-    private fun pendingOrderSyncIds(): Set<String> =
-        pendingOrders.map { it.sale.syncId }.toSet()
+    private fun localOrdersForMerge(start: Long, end: Long): List<ConfirmedOrderPreview> =
+        loadLocalOrderPreviewsForToday(start, end)
 
     private fun restoreConfirmedOrdersFromDisk() {
         val (start, end) = todayBounds()
