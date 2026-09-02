@@ -1,20 +1,22 @@
 {
   "branches": [
     {
-      "id": "total_care",
-      "label": "Total Care Automotriz",
-      "theme": "total_care",
-      "baseUrl": "https://inventario-sync-totalcare.onrender.com",
-      "apiKey": "TcSync-7kM9pQ2xR4nW",
-      "firebaseTopic": "inventario_sucursal_a"
-    },
-    {
       "id": "supra_parts",
       "label": "Supra Parts",
+      "displayLabel": "S1 (Supra Parts)",
       "theme": "supra_parts",
       "baseUrl": "https://inventario-sync-supra-parts.onrender.com",
       "apiKey": "TcSync-7kM9pQ2xR4nW",
       "firebaseTopic": "inventario_supra_parts"
+    },
+    {
+      "id": "total_care",
+      "label": "Total Care Automotriz",
+      "displayLabel": "S2 (Total Care Automotriz)",
+      "theme": "total_care",
+      "baseUrl": "https://inventario-sync-totalcare.onrender.com",
+      "apiKey": "TcSync-7kM9pQ2xR4nW",
+      "firebaseTopic": "inventario_sucursal_a"
     }
   ],
   "fallbackUrls": [

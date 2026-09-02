@@ -13,6 +13,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -27,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import com.inventario.app.data.entity.CashClosingRecord
 import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.entity.displayLabel
+import com.inventario.app.data.entity.displaySalesDiscountUsd
+import com.inventario.app.data.entity.displaySalesGrossUsd
 import com.inventario.app.ui.theme.AccentSectionCard
 import com.inventario.app.ui.theme.BrandSuccess
 import com.inventario.app.ui.theme.BrandWarning
@@ -41,6 +46,71 @@ data class ClosingHistoryPresentation(
     val periodLabel: String? = null,
     val groupByToday: Boolean = true
 )
+
+@Composable
+fun ClosingExcelReminderBanner(
+    message: String,
+    onDownloadClick: () -> Unit,
+    exporting: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = BrandWarning.copy(alpha = 0.18f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = BrandWarning,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Recordatorio de respaldo",
+                        fontWeight = FontWeight.SemiBold,
+                        color = BrandWarning,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = onDownloadClick,
+                enabled = !exporting,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                if (exporting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.Download,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Spacer(Modifier.width(6.dp))
+                Text("Descargar Excel (.xlsx)")
+            }
+        }
+    }
+}
 
 @Composable
 fun ClosingHistorySection(
@@ -216,6 +286,17 @@ fun ClosingHistoryRow(
             Text(
                 "${formatPrice(closing.grandTotalUsd)} · Diff ${formatPrice(closing.differenceUsd)}",
                 style = MaterialTheme.typography.bodySmall
+            )
+            val discountUsd = closing.displaySalesDiscountUsd()
+            val salesText = if (discountUsd > 0.0) {
+                "Ventas netas ${formatPrice(closing.salesUsd)} · bruto ${formatPrice(closing.displaySalesGrossUsd())} · desc. -${formatPrice(discountUsd)}"
+            } else {
+                "Ventas ${formatPrice(closing.salesUsd)}"
+            }
+            Text(
+                salesText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }

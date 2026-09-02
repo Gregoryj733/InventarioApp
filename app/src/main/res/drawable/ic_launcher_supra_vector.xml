@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icono launcher: herramienta minimalista (legible en tamaño pequeño). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Llama -->
+    <path
+        android:fillColor="#F97316"
+        android:pathData="M54,18 C58,26 64,30 60,38 C56,34 52,30 54,18 Z" />
+    <!-- Cabeza de llave -->
+    <path
+        android:fillColor="#E8C84A"
+        android:pathData="M36,36 C36,28 42,22 50,22 L58,22 C66,22 72,28 72,36 C72,44 66,50 58,50 L50,50 C42,50 36,44 36,36 Z M44,36 C44,40 47,43 51,43 C55,43 58,40 58,36 C58,32 55,29 51,29 C47,29 44,32 44,36 Z" />
+    <!-- Mango -->
+    <path
+        android:fillColor="#C9A227"
+        android:pathData="M48,50 L44,82 C44,86 48,90 52,90 L56,90 C60,90 64,86 64,82 L60,50 Z" />
+</vector>

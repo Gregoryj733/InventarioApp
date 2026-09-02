@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.inventario.app.data.branch.BranchConfig
 import com.inventario.app.data.branch.BranchManager
 import com.inventario.app.data.entity.UserRole
+import com.inventario.app.data.entity.canSwitchBranch
+import com.inventario.app.data.entity.isBranchRestricted
 import com.inventario.app.data.repository.AuthRepository
 import com.inventario.app.data.repository.LoginResult
 import com.inventario.app.data.session.SessionManager
@@ -35,7 +37,8 @@ data class LoginUiState(
     val serverConfigMessage: String? = null,
     val activeServerUrl: String = "",
     val branches: List<BranchConfig> = emptyList(),
-    val selectedBranchId: String = ""
+    val selectedBranchId: String = "",
+    val bootstrapping: Boolean = true
 )
 
 class LoginViewModel(
@@ -44,7 +47,7 @@ class LoginViewModel(
     private val branchManager: BranchManager,
     private val appContext: Context,
     private val cloudSyncStatus: StateFlow<CloudSyncInfo>,
-    private val restartCloudSync: () -> Unit
+    private val restartCloudSync: (String?) -> Unit
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(LoginUiState())
@@ -52,21 +55,31 @@ class LoginViewModel(
     private var syncStatusJob: Job? = null
 
     init {
-        val branches = branchManager.allBranches()
-        val defaultBranchId = branchManager.getActiveBranch()?.id
-            ?: branches.firstOrNull()?.id
-            ?: ""
+        val role = sessionManager.role()
+        val sucursal = sessionManager.sucursal()
+        val branches = branchManager.branchesVisibleToUser(role, sucursal)
+        val defaultBranchId = when {
+            sessionManager.isLoggedIn() && role?.isBranchRestricted() == true ->
+                branches.firstOrNull()?.id
+                    ?: branchManager.getActiveBranch()?.id
+            sessionManager.isLoggedIn() ->
+                branchManager.getActiveBranch()?.id ?: branches.firstOrNull()?.id
+            else -> branches.firstOrNull()?.id
+        }.orEmpty()
         _state.update {
             it.copy(
                 branches = branches,
                 selectedBranchId = defaultBranchId,
-                loggedInRole = if (sessionManager.isLoggedIn()) sessionManager.role() else null
+                loggedInRole = if (sessionManager.isLoggedIn()) role else null
             )
         }
-        if (defaultBranchId.isNotBlank()) {
-            prepareBranchConnection(defaultBranchId)
+        viewModelScope.launch {
+            if (defaultBranchId.isNotBlank()) {
+                prepareBranchConnection(defaultBranchId)
+            }
+            refreshServerLabel()
+            _state.update { it.copy(bootstrapping = false) }
         }
-        refreshServerLabel()
     }
 
     fun onUsernameChange(value: String) = _state.update { it.copy(username = value, error = null) }
@@ -75,8 +88,10 @@ class LoginViewModel(
     fun onBranchSelected(branchId: String) {
         if (branchId == _state.value.selectedBranchId) return
         _state.update { it.copy(selectedBranchId = branchId, error = null) }
-        prepareBranchConnection(branchId)
-        refreshServerLabel()
+        viewModelScope.launch {
+            prepareBranchConnection(branchId)
+            refreshServerLabel()
+        }
     }
 
     fun toggleServerConfig() {
@@ -124,6 +139,7 @@ class LoginViewModel(
                 statusMessage = null
             )
         }
+        login()
     }
 
     fun login() {
@@ -137,15 +153,16 @@ class LoginViewModel(
             return
         }
         viewModelScope.launch {
-            prepareBranchConnection(current.selectedBranchId)
-            startSyncStatusWatch()
             _state.update {
                 it.copy(
                     loading = true,
                     error = null,
-                    statusMessage = "Conectando con el servidor…"
+                    statusMessage = "Preparando conexión…"
                 )
             }
+            startSyncStatusWatch()
+            prepareBranchConnection(current.selectedBranchId)
+            _state.update { it.copy(statusMessage = "Conectando con el servidor…") }
             when (val result = attemptLogin(current.username, current.password, triedFallback = false)) {
                 LoginResult.InvalidCredentials -> {
                     stopSyncStatusWatch()
@@ -179,27 +196,93 @@ class LoginViewModel(
                     val user = result.user
                     val branch = branchManager.allBranches()
                         .firstOrNull { it.id == current.selectedBranchId }
-                    if (branch == null || !branchManager.canAccessBranch(user.role, user.sucursal, branch)) {
+                    if (branch == null) {
                         sessionManager.clearTokenForBranch(current.selectedBranchId)
                         _state.update {
                             it.copy(
                                 loading = false,
                                 statusMessage = null,
-                                error = "No tienes acceso a ${branch?.label ?: "esta sucursal"}."
+                                error = "Sucursal no configurada. Contacta al administrador."
                             )
                         }
                         return@launch
                     }
-                    branchManager.saveBranchSession(current.selectedBranchId, sessionManager.token().orEmpty())
-                    sessionManager.saveSession(user.username, user.role, user.sucursal)
+                    if (!branchManager.canLoginToBranch(user.role, user.sucursal, branch)) {
+                        val userBranch = branchManager.branchForSucursal(user.sucursal)
+                        sessionManager.clearTokenForBranch(current.selectedBranchId)
+                        val visibleBranches = userBranch?.let { listOf(it) } ?: branchManager.allBranches()
+                        _state.update {
+                            it.copy(
+                                loading = false,
+                                statusMessage = null,
+                                branches = visibleBranches,
+                                selectedBranchId = userBranch?.id ?: it.selectedBranchId,
+                                error = if (userBranch != null) {
+                                    "Tu usuario pertenece a ${userBranch.chipLabel}. " +
+                                        "Selecciónala en el inicio de sesión."
+                                } else {
+                                    "No tienes acceso a ${branch.chipLabel}. " +
+                                        "Verifica la sucursal asignada a tu usuario."
+                                }
+                            )
+                        }
+                        return@launch
+                    }
+                    val effectiveSucursal = branchManager.effectiveSucursalForLogin(user.sucursal, branch)
+                    branchManager.saveBranchSession(current.selectedBranchId, result.token)
+                    sessionManager.saveSession(user.username, user.role, effectiveSucursal)
+                    if (user.role.isBranchRestricted()) {
+                        branchManager.enforceBranchIsolationForBranch(user.role, branch.id)
+                            ?: run {
+                                sessionManager.clear()
+                                _state.update {
+                                    it.copy(
+                                        loading = false,
+                                        statusMessage = null,
+                                        error = "No se pudo activar la sucursal. Inténtalo de nuevo."
+                                    )
+                                }
+                                return@launch
+                            }
+                    }
+                    // Reconectar con el JWT ya emitido: el restart previo al login
+                    // ocurrió sin token y dejaba pedidos del día vacíos en Admin/Supervisor.
+                    restartCloudSync(result.token)
                     _state.update {
                         it.copy(
                             loading = false,
                             statusMessage = null,
-                            loggedInRole = user.role
+                            loggedInRole = user.role,
+                            branches = branchManager.branchesVisibleToUser(user.role, effectiveSucursal),
+                            selectedBranchId = current.selectedBranchId
                         )
                     }
+                    if (user.role.canSwitchBranch()) {
+                        val username = current.username
+                        val password = current.password
+                        val primaryBranchId = current.selectedBranchId
+                        viewModelScope.launch {
+                            prefetchOtherBranchTokens(username, password, primaryBranchId)
+                        }
+                    }
                 }
+            }
+        }
+    }
+
+    private suspend fun prefetchOtherBranchTokens(
+        username: String,
+        password: String,
+        primaryBranchId: String
+    ) {
+        for (branch in branchManager.allBranches()) {
+            if (branch.id == primaryBranchId) continue
+            if (!sessionManager.tokenForBranch(branch.id).isNullOrBlank()) continue
+            val config = branchManager.syncConfigForBranch(branch.id) ?: continue
+            when (val result = authRepository.loginOnBranch(config, username, password)) {
+                is LoginResult.Success ->
+                    sessionManager.saveTokenForBranch(branch.id, result.token)
+                else -> Unit
             }
         }
     }
@@ -210,7 +293,9 @@ class LoginViewModel(
         triedFallback: Boolean
     ): LoginResult {
         when (val result = authRepository.login(username, password)) {
-            is LoginResult.Unavailable -> if (!triedFallback) {
+            is LoginResult.Unavailable -> if (!triedFallback && branchManager.allBranches().size <= 1) {
+                // Con varias sucursales cada una tiene su propia URL; no saltar a
+                // fallbackUrls globales (emulador/LAN) o se mezclan instancias.
                 _state.update { it.copy(statusMessage = "Buscando servidor alternativo…") }
                 val fallback = SyncServerResolver.findFallback(appContext) ?: return result
                 applyServerConfig(fallback, clearError = true)
@@ -227,15 +312,21 @@ class LoginViewModel(
     }
 
     private fun prepareBranchConnection(branchId: String) {
+        val alreadyConnected = sessionManager.activeBranchId() == branchId &&
+            SyncConfig.load(appContext)?.branchId == branchId
         branchManager.activateBranch(branchId)
         branchManager.syncConfigForBranch(branchId)?.let { config ->
-            applyServerConfig(config)
+            if (alreadyConnected) {
+                refreshServerLabel()
+            } else {
+                applyServerConfig(config)
+            }
         }
     }
 
     private fun applyServerConfig(config: SyncConfig, clearError: Boolean = false) {
         CloudConfigStore.save(appContext, config)
-        restartCloudSync()
+        restartCloudSync(null)
         refreshServerLabel()
         if (clearError) {
             _state.update { it.copy(error = null) }
@@ -278,7 +369,7 @@ class LoginViewModel(
             branchManager: BranchManager,
             appContext: Context,
             cloudSyncStatus: StateFlow<CloudSyncInfo>,
-            restartCloudSync: () -> Unit
+            restartCloudSync: (String?) -> Unit
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {

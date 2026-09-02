@@ -13,7 +13,7 @@ let pool;
 const ENTITY_KEYS = ["products", "meta", "sales", "cashClosings", "users", "batteryFinder", "discountTickets"];
 
 function defaultMeta() {
-  return { bcvRate: null, bcvFetchedAt: null, lastInventoryUpdateAt: null };
+  return { bcvRate: null, bcvFetchedAt: null, lastInventoryUpdateAt: null, lastSalesUpdateAt: null };
 }
 
 function defaultEntityValue(key) {
@@ -153,7 +153,10 @@ function stableStringify(value) {
 function stripSslModeParam(rawUrl) {
   try {
     const url = new URL(rawUrl);
+    // node-pg gestiona SSL vía `ssl: { rejectUnauthorized: false }`; Neon a veces
+    // incluye channel_binding=require en el string copiado y rompe la conexión.
     url.searchParams.delete("sslmode");
+    url.searchParams.delete("channel_binding");
     return url.toString();
   } catch (error) {
     return rawUrl;

@@ -1,6 +1,10 @@
 package com.inventario.app.ui.hub
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,26 +44,29 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import com.inventario.app.ui.theme.BranchSelector
+import com.inventario.app.ui.theme.screenHorizontalPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.filled.Store
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.rememberCoroutineScope
 import com.inventario.app.data.branch.BranchConfig
 import com.inventario.app.data.entity.CashClosingAlertType
+import com.inventario.app.data.entity.CLOSING_EXCEL_REMINDER_MESSAGE
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.displayLabel
+import com.inventario.app.ui.cashclosing.ClosingExcelReminderBanner
 import com.inventario.app.ui.theme.AppScreenBackground
-import com.inventario.app.ui.theme.BcvRateBanner
+import com.inventario.app.ui.theme.HubDailySnapshotCard
 import com.inventario.app.ui.theme.BrandAppTopBar
 import com.inventario.app.ui.theme.BrandWarning
 import com.inventario.app.ui.theme.screenHorizontalPadding
 import com.inventario.app.ui.theme.screenVerticalPadding
+import kotlinx.coroutines.launch
 
 private val HubCardHeight = 176.dp
 
@@ -82,7 +89,6 @@ data class HubMenuItem(
     val showAlertBell: Boolean = false
 )
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MainHubScreen(
     username: String,
@@ -94,12 +100,22 @@ fun MainHubScreen(
     branchSwitchLoading: Boolean = false,
     branchSwitchError: String? = null,
     pendingReauthBranchId: String? = null,
+    pendingBranchSwitchId: String? = null,
     reauthPassword: String = "",
     activeBranchId: String = "",
     bcvLabel: String,
     bcvRefreshing: Boolean,
+    showBranchKpis: Boolean = false,
+    branchSalesKpis: List<com.inventario.app.data.repository.BranchDailySalesKpi> = emptyList(),
+    branchKpisLoading: Boolean = false,
     cashClosingAlert: CashClosingAlertType? = null,
     pendingReportsCount: Int = 0,
+    showClosingExcelReminder: Boolean = false,
+    exportingClosingExcel: Boolean = false,
+    suggestedClosingExportFileName: () -> String = { "cierre_caja.xlsx" },
+    onPrepareClosingExcelExport: suspend () -> Boolean = { false },
+    onExportClosingExcelToUri: suspend (Uri) -> Result<Unit> = { Result.failure(IllegalStateException()) },
+    onFinishClosingExcelExport: (Boolean, String?) -> Unit = { _, _ -> },
     onNavigate: (HubDestination) -> Unit,
     onRefreshBcv: () -> Unit,
     onLogout: () -> Unit,
@@ -109,6 +125,25 @@ fun MainHubScreen(
     onReauthPasswordChange: (String) -> Unit = {},
     onConfirmBranchReauth: () -> Unit = {}
 ) {
+    val scope = rememberCoroutineScope()
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    ) { uri ->
+        if (uri == null) {
+            onFinishClosingExcelExport(false, "Exportación cancelada.")
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            val result = onExportClosingExcelToUri(uri)
+            onFinishClosingExcelExport(
+                result.isSuccess,
+                result.exceptionOrNull()?.message
+            )
+        }
+    }
+
     val subtitle = buildString {
         append(username)
         append(" · ")
@@ -208,7 +243,9 @@ fun MainHubScreen(
 
     if (showBranchSwitchDialog) {
         AlertDialog(
-            onDismissRequest = onDismissBranchSwitch,
+            onDismissRequest = {
+                if (!branchSwitchLoading) onDismissBranchSwitch()
+            },
             title = {
                 Text(
                     text = if (pendingReauthBranchId != null) {
@@ -224,7 +261,7 @@ fun MainHubScreen(
                     if (pendingReauthBranchId != null) {
                         val branchLabel = availableBranches
                             .firstOrNull { it.id == pendingReauthBranchId }
-                            ?.label
+                            ?.chipLabel
                             .orEmpty()
                         Text("Ingresa tu contraseña para acceder a $branchLabel.")
                         OutlinedTextField(
@@ -237,19 +274,13 @@ fun MainHubScreen(
                         )
                     } else {
                         Text("Selecciona la sucursal en la que deseas operar.")
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            availableBranches.forEach { branch ->
-                                FilterChip(
-                                    selected = branch.id == activeBranchId,
-                                    onClick = { onBranchSelected(branch.id) },
-                                    label = { Text(branch.label) },
-                                    enabled = !branchSwitchLoading
-                                )
-                            }
-                        }
+                        BranchSelector(
+                            branches = availableBranches,
+                            selectedBranchId = pendingBranchSwitchId ?: activeBranchId,
+                            onBranchSelected = onBranchSelected,
+                            enabled = !branchSwitchLoading,
+                            label = null
+                        )
                     }
                     if (branchSwitchError != null) {
                         Text(
@@ -259,7 +290,19 @@ fun MainHubScreen(
                         )
                     }
                     if (branchSwitchLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = "Cambiando sucursal…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             },
@@ -287,7 +330,7 @@ fun MainHubScreen(
                 subtitle = subtitle,
                 onRefreshBcv = onRefreshBcv,
                 onLogout = onLogout,
-                bcvRefreshing = bcvRefreshing
+                bcvRefreshing = bcvRefreshing && !branchSwitchLoading
             )
         }
     ) { padding ->
@@ -305,10 +348,27 @@ fun MainHubScreen(
                     color = MaterialTheme.colorScheme.primary
                 )
                 Spacer(Modifier.height(12.dp))
-                BcvRateBanner(
-                    label = bcvLabel,
-                    refreshing = bcvRefreshing
+                HubDailySnapshotCard(
+                    bcvLabel = bcvLabel,
+                    bcvRefreshing = bcvRefreshing && !branchSwitchLoading,
+                    branchKpis = branchSalesKpis,
+                    kpiLoading = branchKpisLoading && !branchSwitchLoading,
+                    showBranchKpis = showBranchKpis
                 )
+                if (showClosingExcelReminder) {
+                    Spacer(Modifier.height(10.dp))
+                    ClosingExcelReminderBanner(
+                        message = CLOSING_EXCEL_REMINDER_MESSAGE,
+                        exporting = exportingClosingExcel,
+                        onDownloadClick = {
+                            scope.launch {
+                                if (onPrepareClosingExcelExport()) {
+                                    exportLauncher.launch(suggestedClosingExportFileName())
+                                }
+                            }
+                        }
+                    )
+                }
                 if (canSwitchBranch && activeBranchLabel.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(

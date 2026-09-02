@@ -69,9 +69,12 @@ import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.canExportClosingHistory
 import com.inventario.app.data.entity.canReviewClosings
 import com.inventario.app.data.entity.canViewClosingHistory
+import com.inventario.app.data.entity.shouldReceiveClosingExcelReminder
 import com.inventario.app.data.excel.CashClosingExcelExporter
 import com.inventario.app.data.excel.CashClosingHistoryExport
 import com.inventario.app.data.entity.displaySucursalOrPending
+import com.inventario.app.data.entity.displaySalesDiscountUsd
+import com.inventario.app.data.entity.displaySalesGrossUsd
 import com.inventario.app.data.repository.ReportsRepository
 import com.inventario.app.data.repository.ReportsSummary
 import com.inventario.app.data.session.SessionManager
@@ -442,6 +445,12 @@ class ReportsViewModel(
     }
 
     fun finishClosingHistoryExport(success: Boolean, errorMessage: String? = null) {
+        if (success) {
+            val username = sessionManager.username().orEmpty()
+            if (shouldReceiveClosingExcelReminder(userRole, username)) {
+                sessionManager.markClosingExcelExportedToday(username)
+            }
+        }
         _state.update { it.copy(exportingClosingHistory = false) }
         val message = when {
             success -> "Reporte Excel exportado correctamente."
@@ -1101,6 +1110,19 @@ private fun CashClosingDetailRow(
             value = "Bs ${viewModel.formatRate(closing.rate)}",
             valueColor = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        val salesDiscount = closing.displaySalesDiscountUsd()
+        ReportKeyValueRow(
+            label = if (salesDiscount > 0) "Ventas netas" else "Ventas del día",
+            value = viewModel.formatUsd(closing.salesUsd),
+            valueColor = MaterialTheme.colorScheme.onSurface
+        )
+        if (salesDiscount > 0) {
+            ReportKeyValueRow(
+                label = "Bruto / descuentos",
+                value = "${viewModel.formatUsd(closing.displaySalesGrossUsd())} / -${viewModel.formatUsd(salesDiscount)}",
+                valueColor = BrandSuccess
+            )
+        }
         if (showDifference) {
             Text(
                 text = "Dif. ${viewModel.formatUsd(abs(closing.differenceUsd))} · " +
@@ -1347,6 +1369,18 @@ private fun CashClosingDetailDialog(
                         label = "Ventas del día",
                         value = "${viewModel.formatUsd(closing.salesUsd)} · ${viewModel.formatBs(closing.salesBs)}"
                     )
+                    val fallbackDiscount = closing.displaySalesDiscountUsd()
+                    if (fallbackDiscount > 0) {
+                        ReportKeyValueRow(
+                            label = "Ventas brutas",
+                            value = viewModel.formatUsd(closing.displaySalesGrossUsd())
+                        )
+                        ReportKeyValueRow(
+                            label = "Descuentos",
+                            value = "-${viewModel.formatUsd(fallbackDiscount)}",
+                            valueColor = BrandSuccess
+                        )
+                    }
                     ReportKeyValueRow(
                         label = "Cuadre total",
                         value = "${viewModel.formatUsd(closing.grandTotalUsd)} · ${viewModel.formatBs(closing.grandTotalBs)}"
@@ -1365,12 +1399,46 @@ private fun CashClosingDetailDialog(
                     Spacer(Modifier.height(12.dp))
                     ReportDivider(label = "Ventas del día")
                     Spacer(Modifier.height(6.dp))
+                    val salesDiscount = snapshot.salesDiscountUsd.takeIf { it > 0 }
+                        ?: closing.displaySalesDiscountUsd()
+                    val salesGross = snapshot.salesGrossUsd.takeIf { it > 0 }
+                        ?: closing.displaySalesGrossUsd()
+                    if (salesDiscount > 0) {
+                        ReportKeyValueRow(
+                            label = "Ventas brutas",
+                            value = "${viewModel.formatUsd(salesGross)} · ${viewModel.formatBs(salesGross * closing.rate)}"
+                        )
+                        ReportKeyValueRow(
+                            label = "Descuentos",
+                            value = "-${viewModel.formatUsd(salesDiscount)}",
+                            valueColor = BrandSuccess
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
                     ReportTotalBanner(
-                        label = "Total ventas",
+                        label = if (salesDiscount > 0) "Ventas netas" else "Total ventas",
                         usd = viewModel.formatUsd(snapshot.salesUsd),
                         bs = viewModel.formatBs(snapshot.salesBs),
                         highlight = false
                     )
+                    if (snapshot.confirmedOrders.isNotEmpty()) {
+                        Spacer(Modifier.height(12.dp))
+                        ReportDivider(label = "Pedidos confirmados")
+                        Spacer(Modifier.height(6.dp))
+                        snapshot.confirmedOrders.forEach { order ->
+                            val orderLabel = if (order.orderNumber > 0) {
+                                "Pedido Nº ${order.orderNumber}"
+                            } else {
+                                "Pedido"
+                            }
+                            val value = if (order.discountUsd > 0) {
+                                "${viewModel.formatUsd(order.totalUsd)} (bruto ${viewModel.formatUsd(order.subtotalUsd)}, desc. -${viewModel.formatUsd(order.discountUsd)})"
+                            } else {
+                                viewModel.formatUsd(order.totalUsd)
+                            }
+                            ReportKeyValueRow(label = orderLabel, value = value)
+                        }
+                    }
                     Spacer(Modifier.height(12.dp))
                     ReportDivider(label = "Puntos de venta (A)")
                     Spacer(Modifier.height(6.dp))

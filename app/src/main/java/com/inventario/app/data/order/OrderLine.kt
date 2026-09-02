@@ -1,10 +1,13 @@
 package com.inventario.app.data.order
 
 import com.inventario.app.data.cashea.CasheaCalculator
+import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.SaleLineItem
 
 data class OrderLine(
     val productId: Long,
+    /** Identificador estable en la nube; no cambia si el inventario se refresca. */
+    val productSyncId: String = "",
     val description: String,
     val unit: String,
     val unitPriceUsd: Double,
@@ -12,6 +15,11 @@ data class OrderLine(
     val casheaLevel: CasheaCalculator.CasheaLevel? = null
 ) {
     val totalUsd: Double = unitPriceUsd * quantity
+}
+
+fun OrderLine.matchesProduct(product: Product): Boolean {
+    if (productSyncId.isNotBlank() && productSyncId == product.syncId) return true
+    return productId == product.id
 }
 
 fun OrderLine.toSaleLineItem(saleSyncId: String, bcvRate: Double): SaleLineItem {

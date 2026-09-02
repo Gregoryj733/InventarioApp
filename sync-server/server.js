@@ -170,6 +170,35 @@ function publicError(message, statusCode = 400) {
   return error;
 }
 
+/** Misma normalización que ProductSearch en la app (acentos, mayúsculas). */
+function normalizeProductDescription(text) {
+  return String(text ?? "")
+    .normalize("NFD")
+    .replace(/\p{Mn}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Resuelve una línea de pedido contra el inventario del servidor.
+ * Tras reimportar Excel los syncId cambian; si el cliente aún manda el
+ * syncId viejo, se intenta emparejar por descripción normalizada.
+ */
+function resolveProductForOrderLine(products, line) {
+  const productSyncId = line?.productSyncId;
+  if (productSyncId) {
+    const bySyncId = products.find((item) => item.syncId === productSyncId);
+    if (bySyncId) return bySyncId;
+  }
+  const description = String(line?.description ?? "").trim();
+  if (!description) return null;
+  const normalized = normalizeProductDescription(description);
+  const matches = products.filter(
+    (item) => normalizeProductDescription(item.description) === normalized
+  );
+  return matches.length === 1 ? matches[0] : null;
+}
+
 /**
  * Filtra `items` por `[start, end)` sobre `field` cuando ambos vienen en la
  * query string. Si faltan (o son inválidos), devuelve `items` sin cambios
@@ -871,15 +900,15 @@ async function start() {
         const products = state.products.map((p) => ({ ...p }));
         const productBySyncId = new Map(products.map((p) => [p.syncId, p]));
         for (const line of lines) {
-          const productSyncId = line?.productSyncId;
           const quantity = Number(line?.quantity);
-          if (!productSyncId || !Number.isFinite(quantity) || quantity <= 0) {
+          if (!Number.isFinite(quantity) || quantity <= 0) {
             throw publicError("Línea de pedido inválida");
           }
-          const product = productBySyncId.get(productSyncId);
+          const product = resolveProductForOrderLine(products, line);
           if (!product) {
-            throw publicError(`Producto no encontrado: ${line.description || productSyncId}`);
+            throw publicError(`Producto no encontrado: ${line.description || line.productSyncId}`);
           }
+          productBySyncId.set(product.syncId, product);
           const newQty = Number(product.quantity) - quantity;
           if (newQty < 0) {
             throw publicError(`Stock insuficiente para "${product.description}"`);
@@ -914,7 +943,7 @@ async function start() {
         // hueco que luego se muestra como "Sin detalle de productos." en
         // cualquier dispositivo que consulte este pedido.
         const newLineItems = lines.map((line) => {
-          const product = productBySyncId.get(line.productSyncId);
+          const product = resolveProductForOrderLine(products, line);
           const quantity = Number(line.quantity) || 0;
           const unitPriceUsd = Number(line.unitPriceUsd) || product?.price || 0;
           const description = String(line.description || "").trim() || product?.description || "";
@@ -923,7 +952,7 @@ async function start() {
           return {
             id: nextId++,
             saleSyncId: syncId,
-            productSyncId: line.productSyncId || "",
+            productSyncId: product?.syncId || line.productSyncId || "",
             description,
             quantity,
             unit,
@@ -938,6 +967,7 @@ async function start() {
             ...state,
             products,
             inventoryRevision: createdAt,
+            meta: { ...state.meta, lastSalesUpdateAt: createdAt },
             sales,
             saleLineItems: [...state.saleLineItems, ...newLineItems],
             nextSaleLineItemId: nextId,
@@ -949,6 +979,7 @@ async function start() {
 
       realtime.broadcast("inventory", {});
       realtime.broadcast("sales", {});
+      push.sendSalesUpdatedNotification();
       if (discountTicketApplied) {
         realtime.broadcast("discountTickets", {});
       }
@@ -970,7 +1001,14 @@ async function start() {
     const sales = filterByRange(state.sales, "createdAt", req.query);
     const saleSyncIds = new Set(sales.map((s) => s.syncId));
     const lineItems = state.saleLineItems.filter((l) => saleSyncIds.has(l.saleSyncId));
-    res.json({ sales, lineItems });
+    res.json({
+      sales,
+      lineItems,
+      meta: {
+        lastSalesUpdateAt: state.meta?.lastSalesUpdateAt ?? null,
+        count: sales.length
+      }
+    });
   }));
 
   app.post(
@@ -1017,6 +1055,7 @@ async function start() {
         return {
           state: {
             ...state,
+            meta: { ...state.meta, lastSalesUpdateAt: createdAt },
             sales,
             saleLineItems: [...state.saleLineItems, ...newLineItems],
             nextSaleLineItemId: nextId

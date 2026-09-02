@@ -5,9 +5,11 @@ import android.util.Log
 import com.google.firebase.messaging.FirebaseMessaging
 import com.inventario.app.data.bcv.BcvRateFetcher
 import com.inventario.app.data.branch.BranchManager
+import com.inventario.app.data.entity.isBranchRestricted
 import com.inventario.app.data.repository.AuthRepository
 import com.inventario.app.data.acpower.AcPowerBatteryRepository
 import com.inventario.app.data.repository.BatteryFinderRepository
+import com.inventario.app.data.repository.BranchSalesKpiRepository
 import com.inventario.app.data.repository.InventoryRepository
 import com.inventario.app.data.repository.OilFilterCatalogRepository
 import com.inventario.app.data.repository.ReportsRepository
@@ -23,6 +25,7 @@ import com.inventario.app.util.ConfirmedOrderSoundMonitor
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -56,6 +59,8 @@ class InventarioApplication : Application() {
         private set
     lateinit var oilFilterCatalogRepository: OilFilterCatalogRepository
         private set
+    lateinit var branchSalesKpiRepository: BranchSalesKpiRepository
+        private set
     val bcvRateFetcher = BcvRateFetcher()
     lateinit var cashClosingSoundMonitor: CashClosingSoundMonitor
         private set
@@ -67,6 +72,7 @@ class InventarioApplication : Application() {
     private lateinit var cloudSync: CloudSync
     private var networkMonitor: NetworkMonitor? = null
     private var subscribedFirebaseTopic: String? = null
+    private var sessionExpiredForwardJob: Job? = null
 
     val cloudSyncStatus: StateFlow<CloudSyncInfo>
         get() = cloudSync.status
@@ -86,6 +92,11 @@ class InventarioApplication : Application() {
 
         sessionManager = SessionManager(this)
         branchManager = BranchManager(this, sessionManager)
+        sessionManager.role()?.let { role ->
+            if (role.isBranchRestricted()) {
+                branchManager.enforceBranchIsolation(role, sessionManager.sucursal())
+            }
+        }
         cashClosingSoundMonitor = CashClosingSoundMonitor(this, sessionManager)
         confirmedOrderSoundMonitor = ConfirmedOrderSoundMonitor(this, sessionManager)
         appNotifier = AppNotifier(this, sessionManager)
@@ -94,10 +105,16 @@ class InventarioApplication : Application() {
 
         authRepository = AuthRepository(cloudSync, sessionManager)
         inventoryRepository = InventoryRepository(context = this, cloudSync = cloudSync, appScope = appScope)
+        sessionManager.role()?.takeIf { it.isBranchRestricted() }?.let {
+            branchManager.getActiveBranch()?.id?.let { branchId ->
+                inventoryRepository.purgeOrderPreviewCachesForOtherBranches(branchId)
+            }
+        }
         reportsRepository = ReportsRepository(cloudSync)
         batteryFinderRepository = BatteryFinderRepository(this, cloudSync)
         acPowerBatteryRepository = AcPowerBatteryRepository(this)
         oilFilterCatalogRepository = OilFilterCatalogRepository(this)
+        branchSalesKpiRepository = BranchSalesKpiRepository(this, branchManager, sessionManager)
 
         cloudSync.start(appScope)
         startNetworkMonitor(cloudSync)
@@ -112,7 +129,8 @@ class InventarioApplication : Application() {
     }
 
     private fun forwardSessionExpiredEvents(sync: CloudSync) {
-        appScope.launch {
+        sessionExpiredForwardJob?.cancel()
+        sessionExpiredForwardJob = appScope.launch {
             sync.sessionExpired.collect { _sessionExpired.emit(Unit) }
         }
     }
@@ -150,11 +168,20 @@ class InventarioApplication : Application() {
     }
 
     /** Reconstruye el cliente de nube tras cambiar la URL/clave o la sucursal activa. */
-    fun restartCloudSync(): StateFlow<CloudSyncInfo> {
+    fun restartCloudSync(authToken: String? = null): StateFlow<CloudSyncInfo> {
+        val token = authToken?.takeIf { it.isNotBlank() } ?: sessionManager.token()
+        if (authToken != null) {
+            sessionManager.saveToken(authToken)
+        }
         cloudSync.stop()
         val sync = buildCloudSync()
-        sync.setAuthToken(sessionManager.token())
+        sync.setAuthToken(token)
         cloudSync = sync
+        sessionManager.role()?.takeIf { it.isBranchRestricted() }?.let {
+            branchManager.getActiveBranch()?.id?.let { branchId ->
+                inventoryRepository.purgeOrderPreviewCachesForOtherBranches(branchId)
+            }
+        }
         inventoryRepository.setCloudSync(sync)
         authRepository.setCloudSync(sync)
         reportsRepository.setCloudSync(sync)
@@ -167,14 +194,38 @@ class InventarioApplication : Application() {
         return sync.status
     }
 
+    /** Invocado por FCM cuando otro dispositivo confirma un pedido en la sucursal. */
+    fun scheduleConfirmedOrdersRefresh() {
+        appScope.launch {
+            runCatching { inventoryRepository.refreshConfirmedOrdersFromBranchEvent() }
+                .onFailure { error ->
+                    Log.w(TAG, "No se pudo refrescar pedidos tras notificación push", error)
+                }
+        }
+    }
+
+    /** Invocado por FCM cuando el Admin importa inventario en la sucursal. */
+    fun scheduleInventoryRefresh() {
+        appScope.launch {
+            runCatching { inventoryRepository.refreshInventoryFromBranchEvent() }
+                .onFailure { error ->
+                    Log.w(TAG, "No se pudo refrescar inventario tras notificación push", error)
+                }
+        }
+    }
+
     /**
      * Cambia la sucursal activa, reconecta al sync-server correspondiente y
      * limpia cachés en memoria. Devuelve false si hay pedidos offline pendientes.
      */
     fun switchBranch(branchId: String): Boolean {
+        val role = sessionManager.role() ?: return false
+        if (role.isBranchRestricted()) return false
+        val branch = branchManager.configFor(branchId) ?: return false
+        if (!branchManager.canAccessBranch(role, sessionManager.sucursal(), branch)) return false
         if (inventoryRepository.hasPendingOfflineOrders()) return false
         branchManager.activateBranch(branchId)
-        restartCloudSync()
+        restartCloudSync(sessionManager.tokenForBranch(branchId))
         cashClosingSoundMonitor.reset()
         confirmedOrderSoundMonitor.reset()
         return true

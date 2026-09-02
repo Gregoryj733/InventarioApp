@@ -41,6 +41,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.inventario.app.data.branch.BranchConfig
+import com.inventario.app.data.branch.sucursalMatchesBranch
 import com.inventario.app.data.entity.User
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.displayLabel
@@ -71,6 +73,7 @@ data class UserManagementUiState(
     val loading: Boolean = true,
     val error: String? = null,
     val message: String? = null,
+    val availableBranches: List<BranchConfig> = emptyList(),
     val showCreateDialog: Boolean = false,
     val newUsername: String = "",
     val newPassword: String = "",
@@ -93,9 +96,10 @@ class UserManagementViewModel(
     private val authRepository: AuthRepository,
     private val cloudEvents: SharedFlow<CloudEvent>? = null,
     private val inventoryRepository: InventoryRepository? = null,
+    private val availableBranches: List<BranchConfig> = emptyList(),
     private val defaultBranchLabel: String = ""
 ) : ViewModel() {
-    private val _state = MutableStateFlow(UserManagementUiState())
+    private val _state = MutableStateFlow(UserManagementUiState(availableBranches = availableBranches))
     val state: StateFlow<UserManagementUiState> = _state.asStateFlow()
 
     init {
@@ -224,6 +228,11 @@ class UserManagementViewModel(
 
     fun createUser() {
         val current = _state.value
+        val sucursalError = validateSucursal(current.newSucursal)
+        if (sucursalError != null) {
+            _state.update { it.copy(error = sucursalError) }
+            return
+        }
         viewModelScope.launch {
             _state.update { it.copy(creating = true, error = null) }
             authRepository.createManagedUser(
@@ -334,10 +343,14 @@ class UserManagementViewModel(
     }
 
     fun openAssignSucursalDialog(user: User) {
+        val resolvedLabel = availableBranches
+            .firstOrNull { sucursalMatchesBranch(user.sucursal, it) }
+            ?.label
+            ?: user.sucursal
         _state.update {
             it.copy(
                 assignSucursalUserId = user.id,
-                assignSucursalText = user.sucursal,
+                assignSucursalText = resolvedLabel,
                 error = null
             )
         }
@@ -356,6 +369,12 @@ class UserManagementViewModel(
     fun assignSucursal() {
         val userId = _state.value.assignSucursalUserId ?: return
         val branch = _state.value.assignSucursalText
+        val sucursalError = validateSucursal(branch)
+        if (sucursalError != null) {
+            _state.update { it.copy(error = sucursalError) }
+            AppSnackbarController.show(sucursalError)
+            return
+        }
         viewModelScope.launch {
             _state.update { it.copy(assigningSucursal = true, error = null) }
             authRepository.assignManagedUserSucursal(userId, branch)
@@ -384,11 +403,21 @@ class UserManagementViewModel(
         }
     }
 
+    private fun validateSucursal(sucursal: String): String? {
+        if (sucursal.isBlank()) return "Selecciona una sucursal."
+        if (availableBranches.isEmpty()) return null
+        if (availableBranches.none { sucursalMatchesBranch(sucursal, it) }) {
+            return "Sucursal no válida. Elige una de las opciones del catálogo."
+        }
+        return null
+    }
+
     companion object {
         fun factory(
             authRepository: AuthRepository,
             cloudEvents: SharedFlow<CloudEvent>? = null,
             inventoryRepository: InventoryRepository? = null,
+            availableBranches: List<BranchConfig> = emptyList(),
             defaultBranchLabel: String = ""
         ) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -397,6 +426,7 @@ class UserManagementViewModel(
                     authRepository,
                     cloudEvents,
                     inventoryRepository,
+                    availableBranches,
                     defaultBranchLabel
                 ) as T
             }
@@ -433,12 +463,10 @@ fun UserManagementScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedTextField(
-                        value = state.newSucursal,
-                        onValueChange = viewModel::onNewSucursalChange,
-                        label = { Text("Sucursal") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                    BranchSucursalSelector(
+                        branches = state.availableBranches,
+                        selectedLabel = state.newSucursal,
+                        onBranchSelected = viewModel::onNewSucursalChange
                     )
                     Text(
                         "Perfil",
@@ -515,12 +543,10 @@ fun UserManagementScreen(
             onDismissRequest = viewModel::dismissAssignSucursalDialog,
             title = { Text("Asignar sucursal", fontWeight = FontWeight.Bold) },
             text = {
-                OutlinedTextField(
-                    value = state.assignSucursalText,
-                    onValueChange = viewModel::onAssignSucursalTextChange,
-                    label = { Text("Sucursal") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                BranchSucursalSelector(
+                    branches = state.availableBranches,
+                    selectedLabel = state.assignSucursalText,
+                    onBranchSelected = viewModel::onAssignSucursalTextChange
                 )
             },
             confirmButton = {
@@ -600,6 +626,40 @@ fun UserManagementScreen(
                             onEditRole = { viewModel.openEditRoleDialog(user) }
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/** Selector de sucursal usando el `label` del servidor (no el display de UI). */
+@Composable
+private fun BranchSucursalSelector(
+    branches: List<BranchConfig>,
+    selectedLabel: String,
+    onBranchSelected: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "Sucursal",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (branches.isEmpty()) {
+            Text(
+                "No hay sucursales configuradas.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                branches.forEach { branch ->
+                    FilterChip(
+                        selected = branch.label == selectedLabel,
+                        onClick = { onBranchSelected(branch.label) },
+                        label = { Text(branch.chipLabel) }
+                    )
                 }
             }
         }

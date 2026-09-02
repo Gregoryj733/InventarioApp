@@ -56,6 +56,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -117,6 +118,10 @@ fun CashClosingScreen(
     var showPreview by remember { mutableStateOf(false) }
     var selectedTabIndex by remember { mutableIntStateOf(CashClosingTab.FORM.ordinal) }
     val showHistoryTab = state.canViewClosingHistory
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshSalesFromConfirmedOrders()
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument(
@@ -252,7 +257,8 @@ fun CashClosingScreen(
                     showHistoryTab && selectedTabIndex == CashClosingTab.HISTORY.ordinal -> {
                         Column(
                             modifier = Modifier
-                                .fillMaxSize()
+                                .weight(1f)
+                                .fillMaxWidth()
                                 .imePadding()
                                 .verticalScroll(historyScrollState)
                                 .padding(
@@ -282,7 +288,8 @@ fun CashClosingScreen(
                     else -> {
                         Column(
                             modifier = Modifier
-                                .fillMaxSize()
+                                .weight(1f)
+                                .fillMaxWidth()
                                 .imePadding()
                                 .verticalScroll(formScrollState)
                                 .padding(
@@ -314,6 +321,7 @@ private fun CashClosingFormContent(
     viewModel: CashClosingViewModel,
     onPreviewClick: () -> Unit
 ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
     SectionCard(title = "Encabezado") {
         KeyboardAwareTextField(
             value = state.branchName,
@@ -385,11 +393,26 @@ private fun CashClosingFormContent(
                     DailySalesMetaRow(
                         bcvLabel = state.bcvLabel,
                         orderCount = state.confirmedOrdersToday,
+                        grossUsd = state.salesGrossUsdToday,
+                        discountUsd = state.salesDiscountUsdToday,
+                        formatPrice = viewModel::formatPrice,
                         onReset = if (state.canResetTodayOrders) viewModel::resetTodayOrders else null,
                         onPreview = viewModel::openConfirmedOrdersPreview,
                         resetting = state.resettingOrders
                     )
                     Spacer(Modifier.height(10.dp))
+                    if (state.salesDiscountUsdToday > 0) {
+                        ReportKeyValueRow(
+                            label = "Ventas brutas (sin descuento)",
+                            value = viewModel.formatPrice(state.salesGrossUsdToday)
+                        )
+                        ReportKeyValueRow(
+                            label = "Descuentos aplicados hoy",
+                            value = "-${viewModel.formatPrice(state.salesDiscountUsdToday)}",
+                            valueColor = BrandSuccess
+                        )
+                        Spacer(Modifier.height(6.dp))
+                    }
                     DualCurrencyField(
                         usdLabel = "Total USD",
                         bsLabel = "Total Bs",
@@ -400,7 +423,7 @@ private fun CashClosingFormContent(
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Precargado desde pedidos confirmados hoy. Editable.",
+                        "Precargado desde pedidos confirmados hoy (neto después de descuentos). Editable.",
                         modifier = Modifier.fillMaxWidth(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -612,6 +635,7 @@ private fun CashClosingFormContent(
     }
 
     Spacer(Modifier.height(24.dp))
+    }
 }
 
 
@@ -776,8 +800,20 @@ private fun CashClosingPreviewDialog(
                 Spacer(Modifier.height(14.dp))
                 ReportDivider(label = "Ventas del día")
                 Spacer(Modifier.height(6.dp))
+                if (state.salesDiscountUsdToday > 0) {
+                    ReportKeyValueRow(
+                        label = "Ventas brutas",
+                        value = viewModel.formatPrice(state.salesGrossUsdToday)
+                    )
+                    ReportKeyValueRow(
+                        label = "Descuentos",
+                        value = "-${viewModel.formatPrice(state.salesDiscountUsdToday)}",
+                        valueColor = BrandSuccess
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
                 ReportTotalBanner(
-                    label = "Total ventas",
+                    label = if (state.salesDiscountUsdToday > 0) "Ventas netas" else "Total ventas",
                     usd = viewModel.formatPrice(viewModel.salesUsd()),
                     bs = viewModel.formatBs(viewModel.salesBs()),
                     highlight = false
@@ -1131,6 +1167,9 @@ private fun BcvRateHeader(
 private fun DailySalesMetaRow(
     bcvLabel: String,
     orderCount: Int,
+    grossUsd: Double = 0.0,
+    discountUsd: Double = 0.0,
+    formatPrice: (Double) -> String = { "$it" },
     onReset: (() -> Unit)? = null,
     onPreview: (() -> Unit)? = null,
     resetting: Boolean = false
@@ -1140,6 +1179,12 @@ private fun DailySalesMetaRow(
             icon = "💱",
             text = "Tasa BCV: ${bcvLabel.removePrefix("Tasa BCV: ")}"
         )
+        if (discountUsd > 0) {
+            ReportMetaChip(
+                icon = "🏷️",
+                text = "Descuentos hoy: -${formatPrice(discountUsd)} · Bruto: ${formatPrice(grossUsd)}"
+            )
+        }
         ConfirmedOrdersBanner(
             count = orderCount,
             onReset = onReset,
@@ -1580,6 +1625,20 @@ private fun SummaryCard(
             HorizontalDivider()
             Spacer(Modifier.height(8.dp))
             SummaryRow("Total ventas", viewModel.formatPrice(salesUsd), viewModel.formatBs(salesBs))
+            if (state.salesDiscountUsdToday > 0) {
+                SummaryRow(
+                    "Descuentos del día",
+                    "-${viewModel.formatPrice(state.salesDiscountUsdToday)}",
+                    viewModel.formatBsEquiv(state.salesDiscountUsdToday),
+                    valueColor = BrandSuccess
+                )
+                SummaryRow(
+                    "Ventas brutas",
+                    viewModel.formatPrice(state.salesGrossUsdToday),
+                    viewModel.formatBsEquiv(state.salesGrossUsdToday),
+                    bold = false
+                )
+            }
             SummaryRow("Puntos de venta (A)", viewModel.formatPrice(totalA), viewModel.formatBs(totalABs))
             SummaryRow("Pago móvil (B)", viewModel.formatPrice(totalB), viewModel.formatBs(totalBBs))
             SummaryRow("Efectivo (C)", viewModel.formatPrice(totalC), viewModel.formatBs(totalCBs))

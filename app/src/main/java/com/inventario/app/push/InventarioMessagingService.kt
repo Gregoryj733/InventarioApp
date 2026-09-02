@@ -2,21 +2,29 @@ package com.inventario.app.push
 
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import com.inventario.app.InventarioApplication
 
 /**
- * Recibe las notificaciones que el sync-server envía (vía Firebase Admin SDK)
- * al topic "inventario_actualizado" cada vez que el administrador carga un
- * nuevo Excel. La app ya se mantiene al día en tiempo real por WebSocket
- * mientras está abierta; este servicio cubre el caso de la app en segundo
- * plano o cerrada, mostrando el aviso en la bandeja del sistema.
+ * Recibe notificaciones del sync-server (vía Firebase Admin SDK):
+ * - Inventario actualizado (Excel importado)
+ * - Pedido confirmado en otro dispositivo de la misma sucursal
  */
 class InventarioMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
-        val title = message.notification?.title ?: "Inventario actualizado"
-        val body = message.notification?.body
-            ?: "El administrador actualizó el inventario. Abre la app para ver los cambios."
-        NotificationHelper.showInventoryUpdated(applicationContext, title, body)
+        when (message.data["type"].orEmpty()) {
+            "sales_updated" -> {
+                (application as? InventarioApplication)?.scheduleConfirmedOrdersRefresh()
+            }
+            "inventory_updated" -> {
+                (application as? InventarioApplication)?.scheduleInventoryRefresh()
+                val title = message.notification?.title ?: "Inventario actualizado"
+                val body = message.notification?.body
+                    ?: "El administrador actualizó el inventario. Los cambios ya están disponibles."
+                NotificationHelper.showInventoryUpdated(applicationContext, title, body)
+            }
+            else -> Unit
+        }
     }
 
     override fun onNewToken(token: String) {

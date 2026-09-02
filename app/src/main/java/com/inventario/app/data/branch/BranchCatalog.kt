@@ -36,6 +36,12 @@ class BranchCatalog(context: Context) {
         return findById(normalized)?.label.orEmpty()
     }
 
+    fun displayLabelFor(branchId: String?): String {
+        val normalized = normalizeBranchId(branchId)
+        val branch = findById(normalized) ?: return ""
+        return branch.chipLabel
+    }
+
     fun configFor(branchId: String?): BranchConfig? =
         findById(normalizeBranchId(branchId))
 
@@ -81,6 +87,7 @@ private fun JSONObject.toBranchConfig(): BranchConfig? {
     val apiKey = optString("apiKey", "").trim()
     val firebaseTopic = optString("firebaseTopic", BranchCatalog.DEFAULT_FIREBASE_TOPIC).trim()
     val theme = optString("theme", id).trim().ifBlank { id }
+    val displayLabel = optString("displayLabel", label).trim().ifBlank { label }
     if (id.isBlank() || label.isBlank() || baseUrl.isBlank()) return null
     return BranchConfig(
         id = id,
@@ -88,6 +95,7 @@ private fun JSONObject.toBranchConfig(): BranchConfig? {
         baseUrl = baseUrl,
         apiKey = apiKey,
         firebaseTopic = firebaseTopic.ifBlank { BranchCatalog.DEFAULT_FIREBASE_TOPIC },
-        theme = theme
+        theme = theme,
+        displayLabel = displayLabel
     )
 }

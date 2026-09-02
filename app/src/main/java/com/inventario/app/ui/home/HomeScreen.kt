@@ -1092,13 +1092,25 @@ private fun OrderSummaryCard(
 
                     val subtotalUsd = viewModel.orderTotalUsd()
                     val appliedTicket = state.appliedDiscountTicket
-                    if (appliedTicket != null) {
+                    val couponDiscount = viewModel.couponDiscountUsd()
+                    val manualDiscount = viewModel.manualDiscountUsd()
+                    val hasDiscount = viewModel.discountAmountUsd() > 0
+                    if (hasDiscount) {
                         ReportKeyValueRow(label = "Subtotal", value = viewModel.formatPrice(subtotalUsd))
-                        ReportKeyValueRow(
-                            label = "Descuento (-${viewModel.formatQty(appliedTicket.discountPercent)}%)",
-                            value = "-${viewModel.formatPrice(viewModel.discountAmountUsd())}",
-                            valueColor = BrandSuccess
-                        )
+                        if (couponDiscount > 0 && appliedTicket != null) {
+                            ReportKeyValueRow(
+                                label = "Cupón (-${viewModel.formatQty(appliedTicket.discountPercent)}%)",
+                                value = "-${viewModel.formatPrice(couponDiscount)}",
+                                valueColor = BrandSuccess
+                            )
+                        }
+                        if (manualDiscount > 0) {
+                            ReportKeyValueRow(
+                                label = "Descuento manual",
+                                value = "-${viewModel.formatPrice(manualDiscount)}",
+                                valueColor = BrandSuccess
+                            )
+                        }
                         Spacer(Modifier.height(4.dp))
                     }
                     val totalUsd = viewModel.orderTotalUsdAfterDiscount()
@@ -1110,10 +1122,12 @@ private fun OrderSummaryCard(
                     )
 
                     Spacer(Modifier.height(10.dp))
+                    ManualDiscountSection(state = state, viewModel = viewModel)
+                    Spacer(Modifier.height(10.dp))
                     DiscountTicketSection(state = state, viewModel = viewModel, onScanRequested = onScanTicket)
 
                     OrderCasheaPaymentSection(
-                        orderTotalUsd = subtotalUsd,
+                        orderTotalUsd = viewModel.orderTotalUsdAfterDiscount(),
                         bcvRate = state.bcvRate,
                         simulation = viewModel.orderCasheaSimulation(),
                         paymentChoice = viewModel.paymentChoiceForOrder(),
@@ -1152,6 +1166,9 @@ private fun OrderReceiptDialog(
 ) {
     val subtotalUsd = viewModel.orderTotalUsd()
     val appliedTicket = state.appliedDiscountTicket
+    val couponDiscount = viewModel.couponDiscountUsd()
+    val manualDiscount = viewModel.manualDiscountUsd()
+    val hasDiscount = viewModel.discountAmountUsd() > 0
     val totalUsd = viewModel.orderTotalUsdAfterDiscount()
     val totalBs = viewModel.orderTotalBsAfterDiscount()
     val compact = isCompactWidth()
@@ -1206,13 +1223,22 @@ private fun OrderReceiptDialog(
                 Spacer(Modifier.height(12.dp))
                 ReportDivider(label = "Totales")
                 Spacer(Modifier.height(8.dp))
-                if (appliedTicket != null) {
+                if (hasDiscount) {
                     ReportKeyValueRow(label = "Subtotal", value = viewModel.formatPrice(subtotalUsd))
-                    ReportKeyValueRow(
-                        label = "Ticket ${appliedTicket.code} (-${viewModel.formatQty(appliedTicket.discountPercent)}%)",
-                        value = "-${viewModel.formatPrice(viewModel.discountAmountUsd())}",
-                        valueColor = BrandSuccess
-                    )
+                    if (couponDiscount > 0 && appliedTicket != null) {
+                        ReportKeyValueRow(
+                            label = "Ticket ${appliedTicket.code} (-${viewModel.formatQty(appliedTicket.discountPercent)}%)",
+                            value = "-${viewModel.formatPrice(couponDiscount)}",
+                            valueColor = BrandSuccess
+                        )
+                    }
+                    if (manualDiscount > 0) {
+                        ReportKeyValueRow(
+                            label = "Descuento manual",
+                            value = "-${viewModel.formatPrice(manualDiscount)}",
+                            valueColor = BrandSuccess
+                        )
+                    }
                     Spacer(Modifier.height(4.dp))
                 }
                 ReportTotalBanner(

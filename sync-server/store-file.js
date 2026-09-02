@@ -10,7 +10,8 @@ function defaultState() {
     meta: {
       bcvRate: null,
       bcvFetchedAt: null,
-      lastInventoryUpdateAt: null
+      lastInventoryUpdateAt: null,
+      lastSalesUpdateAt: null
     },
     products: [],
     sales: [],

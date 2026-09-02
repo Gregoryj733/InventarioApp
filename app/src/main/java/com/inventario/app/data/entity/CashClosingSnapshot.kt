@@ -10,6 +10,9 @@ data class CashClosingSnapshot(
     val prevCashBs: Double = 0.0,
     val salesUsd: Double = 0.0,
     val salesBs: Double = 0.0,
+    val salesGrossUsd: Double = 0.0,
+    val salesDiscountUsd: Double = 0.0,
+    val confirmedOrders: List<SnapshotConfirmedOrder> = emptyList(),
     val posEntries: List<SnapshotPosEntry> = emptyList(),
     val mobileEntries: List<SnapshotMobileEntry> = emptyList(),
     val cashEntries: List<SnapshotCashEntry> = emptyList(),
@@ -23,6 +26,14 @@ data class CashClosingSnapshot(
     data class SnapshotMobileEntry(val ref: String, val usd: Double, val bs: Double)
     data class SnapshotCashEntry(val description: String, val usd: Double, val bs: Double)
     data class SnapshotExpenseEntry(val description: String, val usd: Double)
+    data class SnapshotConfirmedOrder(
+        val syncId: String,
+        val orderNumber: Int,
+        val createdAt: Long,
+        val subtotalUsd: Double,
+        val discountUsd: Double,
+        val totalUsd: Double
+    )
 }
 
 object CashClosingSnapshotCodec {
@@ -34,6 +45,8 @@ object CashClosingSnapshotCodec {
         root.put("prevCashBs", snapshot.prevCashBs)
         root.put("salesUsd", snapshot.salesUsd)
         root.put("salesBs", snapshot.salesBs)
+        root.put("salesGrossUsd", snapshot.salesGrossUsd)
+        root.put("salesDiscountUsd", snapshot.salesDiscountUsd)
         root.put("cashUsd", snapshot.cashUsd)
         root.put("cashBs", snapshot.cashBs)
         root.put("casheaUsd", snapshot.casheaUsd)
@@ -81,6 +94,20 @@ object CashClosingSnapshotCodec {
             )
         }
         root.put("expenseEntries", expenseArray)
+
+        val ordersArray = JSONArray()
+        snapshot.confirmedOrders.forEach { order ->
+            ordersArray.put(
+                JSONObject()
+                    .put("syncId", order.syncId)
+                    .put("orderNumber", order.orderNumber)
+                    .put("createdAt", order.createdAt)
+                    .put("subtotalUsd", order.subtotalUsd)
+                    .put("discountUsd", order.discountUsd)
+                    .put("totalUsd", order.totalUsd)
+            )
+        }
+        root.put("confirmedOrders", ordersArray)
 
         return root.toString()
     }
@@ -131,6 +158,20 @@ object CashClosingSnapshotCodec {
                 )
             }
         }
+        val confirmedOrders = mutableListOf<CashClosingSnapshot.SnapshotConfirmedOrder>()
+        root.optJSONArray("confirmedOrders")?.let { array ->
+            for (i in 0 until array.length()) {
+                val item = array.getJSONObject(i)
+                confirmedOrders += CashClosingSnapshot.SnapshotConfirmedOrder(
+                    syncId = item.optString("syncId", ""),
+                    orderNumber = item.optInt("orderNumber", 0),
+                    createdAt = item.optLong("createdAt", 0L),
+                    subtotalUsd = item.optDouble("subtotalUsd", 0.0),
+                    discountUsd = item.optDouble("discountUsd", 0.0),
+                    totalUsd = item.optDouble("totalUsd", 0.0)
+                )
+            }
+        }
         CashClosingSnapshot(
             branchName = root.optString("branchName", ""),
             userSucursal = root.optString("userSucursal", ""),
@@ -138,6 +179,9 @@ object CashClosingSnapshotCodec {
             prevCashBs = root.optDouble("prevCashBs", 0.0),
             salesUsd = root.optDouble("salesUsd", 0.0),
             salesBs = root.optDouble("salesBs", 0.0),
+            salesGrossUsd = root.optDouble("salesGrossUsd", 0.0),
+            salesDiscountUsd = root.optDouble("salesDiscountUsd", 0.0),
+            confirmedOrders = confirmedOrders,
             posEntries = posEntries,
             mobileEntries = mobileEntries,
             cashEntries = cashEntries,

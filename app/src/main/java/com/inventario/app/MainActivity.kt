@@ -31,6 +31,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.displayLabel
 import com.inventario.app.data.sync.CloudEvent
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import com.inventario.app.ui.batteryfinder.BatteryFinderScreen
 import com.inventario.app.ui.batteryfinder.BatteryFinderViewModel
 import com.inventario.app.ui.powermaxx.PowerMaxxBatteryScreen
@@ -53,6 +55,14 @@ import com.inventario.app.ui.reports.ReportsViewModel
 import com.inventario.app.ui.theme.AppAlert
 import com.inventario.app.ui.theme.AppAlertController
 import com.inventario.app.ui.theme.AppSnackbarController
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.inventario.app.ui.theme.AppScreenBackground
 import com.inventario.app.ui.theme.InventarioTheme
 import com.inventario.app.ui.theme.LocalActiveBranchId
 import com.inventario.app.ui.users.UserManagementScreen
@@ -61,16 +71,21 @@ import com.inventario.app.ui.users.UserManagementViewModel
 class MainActivity : ComponentActivity() {
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val splashReady = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        val splashScreen = installSplashScreen()
+        splashScreen.setKeepOnScreenCondition { !splashReady.value }
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
         val app = application as InventarioApplication
         setContent {
             InventarioTheme {
-                InventarioRoot(app)
+                InventarioRoot(
+                    app = app,
+                    onAppReady = { splashReady.value = true }
+                )
             }
         }
     }
@@ -100,13 +115,18 @@ private enum class AppScreen {
 }
 
 @Composable
-private fun InventarioRoot(app: InventarioApplication) {
+private fun InventarioRoot(
+    app: InventarioApplication,
+    onAppReady: () -> Unit = {}
+) {
     // El inicio de sesión persiste entre aperturas de la app (SessionManager
     // usa SharedPreferences); solo se vuelve a pedir si el usuario cierra
     // sesión explícitamente o si el servidor invalida la sesión (ver abajo).
     var loggedIn by remember { mutableStateOf(app.sessionManager.isLoggedIn()) }
     var loginSessionKey by remember { mutableIntStateOf(0) }
+    var branchSessionKey by remember { mutableIntStateOf(0) }
     var currentScreen by remember { mutableStateOf(AppScreen.HUB) }
+    val childVmKey = "${loginSessionKey}_$branchSessionKey"
 
     val snackbarHostState = remember { SnackbarHostState() }
     var currentAlert by remember { mutableStateOf<AppAlert?>(null) }
@@ -126,14 +146,14 @@ private fun InventarioRoot(app: InventarioApplication) {
         loggedIn = false
         currentScreen = AppScreen.HUB
         loginSessionKey++
+        branchSessionKey = 0
     }
 
-    // Si el servidor rechaza la sesión (token vencido o inválido) se cierra
-    // la sesión automáticamente y se vuelve a pedir inicio de sesión, en vez
-    // de dejar la app en un estado roto mostrando errores de sincronización.
-    LaunchedEffect(loggedIn) {
-        if (loggedIn) {
-            app.sessionExpired.collect {
+    // Si el servidor rechaza el JWT (vencido o inválido) se cierra la sesión.
+    // Un solo collector evita duplicados tras reinicios de CloudSync.
+    LaunchedEffect(Unit) {
+        app.sessionExpired.collect {
+            if (app.sessionManager.isLoggedIn()) {
                 logout()
                 AppSnackbarController.show("Tu sesión expiró. Inicia sesión nuevamente.")
             }
@@ -142,19 +162,23 @@ private fun InventarioRoot(app: InventarioApplication) {
 
     LaunchedEffect(loggedIn, loginSessionKey) {
         if (!loggedIn) return@LaunchedEffect
+        onAppReady()
         app.cashClosingSoundMonitor.reset()
         app.cashClosingSoundMonitor.refresh(app.inventoryRepository)
         app.confirmedOrderSoundMonitor.reset()
         app.confirmedOrderSoundMonitor.refresh(app.inventoryRepository)
-        app.inventoryRepository.observeCloudEvents().collect { event ->
-            when (event) {
-                is CloudEvent.CashClosings -> {
-                    app.cashClosingSoundMonitor.refresh(app.inventoryRepository)
-                }
-                is CloudEvent.Sales -> {
+        coroutineScope {
+            launch {
+                app.inventoryRepository.observeConfirmedOrdersToday().collect {
                     app.confirmedOrderSoundMonitor.refresh(app.inventoryRepository)
                 }
-                else -> Unit
+            }
+            launch {
+                app.inventoryRepository.observeCloudEvents().collect { event ->
+                    if (event is CloudEvent.CashClosings) {
+                        app.cashClosingSoundMonitor.refresh(app.inventoryRepository)
+                    }
+                }
             }
         }
     }
@@ -189,7 +213,7 @@ private fun InventarioRoot(app: InventarioApplication) {
                     branchManager = app.branchManager,
                     appContext = app,
                     cloudSyncStatus = app.cloudSyncStatus,
-                    restartCloudSync = { app.restartCloudSync() }
+                    restartCloudSync = { token -> app.restartCloudSync(token) }
                 )
             )
             val loginState by loginVm.state.collectAsState()
@@ -200,7 +224,8 @@ private fun InventarioRoot(app: InventarioApplication) {
                         loggedIn = true
                         currentScreen = AppScreen.HUB
                         AppSnackbarController.show("Sesión iniciada correctamente.")
-                    }
+                    },
+                    onBootstrapComplete = onAppReady
                 )
             }
             return@Scaffold
@@ -208,7 +233,7 @@ private fun InventarioRoot(app: InventarioApplication) {
 
         val role = app.sessionManager.role() ?: UserRole.CONSULTA
         val username = app.sessionManager.username().orEmpty()
-        val branchLabel = app.branchManager.getActiveBranch()?.label.orEmpty()
+        val branchLabel = app.branchManager.getActiveBranch()?.chipLabel.orEmpty()
         val subtitle = buildString {
             append(username)
             append(" · ")
@@ -231,19 +256,24 @@ private fun InventarioRoot(app: InventarioApplication) {
                 sessionManager = app.sessionManager,
                 branchManager = app.branchManager,
                 authRepository = app.authRepository,
+                branchSalesKpiRepository = app.branchSalesKpiRepository,
                 bcvRateFetcher = app.bcvRateFetcher,
                 switchBranch = app::switchBranch,
                 onBranchSwitched = {
-                    loginSessionKey++
-                    currentScreen = AppScreen.HUB
+                    branchSessionKey++
+                    if (currentScreen != AppScreen.HUB) {
+                        currentScreen = AppScreen.HUB
+                    }
                     AppSnackbarController.show(
-                        "Sucursal activa: ${app.branchManager.getActiveBranch()?.label.orEmpty()}"
+                        "Sucursal activa: ${app.branchManager.getActiveBranch()?.chipLabel.orEmpty()}"
                     )
                 }
             )
         )
         val hubState by hubVm.state.collectAsState()
-        val activeBranchId = app.sessionManager.activeBranchId().orEmpty()
+        val activeBranchId = hubState.activeBranchId.ifBlank {
+            app.sessionManager.activeBranchId().orEmpty()
+        }
 
         CompositionLocalProvider(LocalActiveBranchId provides activeBranchId) {
         when (currentScreen) {
@@ -258,12 +288,24 @@ private fun InventarioRoot(app: InventarioApplication) {
                     branchSwitchLoading = hubState.branchSwitchLoading,
                     branchSwitchError = hubState.branchSwitchError,
                     pendingReauthBranchId = hubState.pendingReauthBranchId,
+                    pendingBranchSwitchId = hubState.pendingBranchSwitchId,
                     reauthPassword = hubState.reauthPassword,
                     activeBranchId = activeBranchId,
                     bcvLabel = hubState.bcvLabel,
                     bcvRefreshing = hubState.bcvRefreshing,
+                    showBranchKpis = hubState.showBranchKpis,
+                    branchSalesKpis = hubState.branchSalesKpis,
+                    branchKpisLoading = hubState.branchKpisLoading,
                     cashClosingAlert = hubState.cashClosingAlert,
                     pendingReportsCount = hubState.pendingReportsCount,
+                    showClosingExcelReminder = hubState.showClosingExcelReminder,
+                    exportingClosingExcel = hubState.exportingClosingExcel,
+                    suggestedClosingExportFileName = hubVm::suggestedClosingExportFileName,
+                    onPrepareClosingExcelExport = hubVm::prepareClosingExcelExport,
+                    onExportClosingExcelToUri = { uri ->
+                        hubVm.exportClosingHistoryToUri(app.contentResolver, uri)
+                    },
+                    onFinishClosingExcelExport = hubVm::finishClosingExcelExport,
                     onNavigate = { destination ->
                         currentScreen = when (destination) {
                             HubDestination.INVENTORY -> AppScreen.INVENTORY
@@ -287,7 +329,7 @@ private fun InventarioRoot(app: InventarioApplication) {
             }
             AppScreen.INVENTORY -> {
                 val homeVm: HomeViewModel = viewModel(
-                    key = "home_$loginSessionKey",
+                    key = "home_$childVmKey",
                     factory = HomeViewModel.factory(
                         appContext = app.applicationContext,
                         inventoryRepository = app.inventoryRepository,
@@ -308,7 +350,7 @@ private fun InventarioRoot(app: InventarioApplication) {
             }
             AppScreen.COUPON_ACTIVATE -> {
                 val couponVm: CouponActivateViewModel = viewModel(
-                    key = "coupon_activate_$loginSessionKey",
+                    key = "coupon_activate_$childVmKey",
                     factory = CouponActivateViewModel.factory(app.inventoryRepository)
                 )
                 CouponActivateScreen(
@@ -320,7 +362,7 @@ private fun InventarioRoot(app: InventarioApplication) {
             }
             AppScreen.CASH_CLOSING -> {
                 val cashClosingVm: CashClosingViewModel = viewModel(
-                    key = "cash_closing_$loginSessionKey",
+                    key = "cash_closing_$childVmKey",
                     factory = CashClosingViewModel.factory(
                         inventoryRepository = app.inventoryRepository,
                         sessionManager = app.sessionManager,
@@ -338,7 +380,7 @@ private fun InventarioRoot(app: InventarioApplication) {
             }
             AppScreen.REPORTS -> {
                 val reportsVm: ReportsViewModel = viewModel(
-                    key = "reports_$loginSessionKey",
+                    key = "reports_$childVmKey",
                     factory = ReportsViewModel.factory(
                         reportsRepository = app.reportsRepository,
                         bcvRateProvider = { app.inventoryRepository.currentBcvRate() },
@@ -363,7 +405,7 @@ private fun InventarioRoot(app: InventarioApplication) {
             }
             AppScreen.BATTERY_FINDER -> {
                 val batteryFinderVm: BatteryFinderViewModel = viewModel(
-                    key = "battery_finder_$loginSessionKey",
+                    key = "battery_finder_$childVmKey",
                     factory = BatteryFinderViewModel.factory(
                         app.batteryFinderRepository,
                         app.inventoryRepository
@@ -378,7 +420,7 @@ private fun InventarioRoot(app: InventarioApplication) {
             }
             AppScreen.POWER_MAXX_BATTERY -> {
                 val powerMaxxVm: PowerMaxxBatteryViewModel = viewModel(
-                    key = "power_maxx_battery_$loginSessionKey",
+                    key = "power_maxx_battery_$childVmKey",
                     factory = PowerMaxxBatteryViewModel.factory(
                         app.acPowerBatteryRepository,
                         app.inventoryRepository
@@ -393,7 +435,7 @@ private fun InventarioRoot(app: InventarioApplication) {
             }
             AppScreen.OIL_FILTER_FINDER -> {
                 val oilFilterVm: OilFilterFinderViewModel = viewModel(
-                    key = "oil_filter_finder_$loginSessionKey",
+                    key = "oil_filter_finder_$childVmKey",
                     factory = OilFilterFinderViewModel.factory(
                         app.oilFilterCatalogRepository,
                         app.inventoryRepository
@@ -408,11 +450,12 @@ private fun InventarioRoot(app: InventarioApplication) {
             }
             AppScreen.USERS -> if (role == UserRole.ADMIN) {
                 val usersVm: UserManagementViewModel = viewModel(
-                    key = "users_$loginSessionKey",
+                    key = "users_$childVmKey",
                     factory = UserManagementViewModel.factory(
                         app.authRepository,
                         app.inventoryRepository.observeCloudEvents(),
                         app.inventoryRepository,
+                        app.branchManager.allBranches(),
                         app.branchManager.getActiveBranch()?.label.orEmpty()
                     )
                 )

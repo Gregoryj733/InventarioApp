@@ -23,6 +23,8 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -114,6 +116,9 @@ fun Throwable.isTransientNetworkFailure(): Boolean {
  * cada repositorio mantiene actualizada con los eventos de este canal.
  */
 class CloudSync(private val config: SyncConfig) {
+    /** Identificador de sucursal asociado a esta instancia de sync (si aplica). */
+    val branchId: String? get() = config.branchId
+
     private val _status = MutableStateFlow(CloudSyncInfo())
     val status: StateFlow<CloudSyncInfo> = _status.asStateFlow()
 
@@ -136,6 +141,8 @@ class CloudSync(private val config: SyncConfig) {
     @Volatile private var authToken: String? = null
     @Volatile private var networkAvailable: Boolean = true
     @Volatile private var intentionalStop = false
+    /** Evita cerrar sesión por 401 de peticiones en vuelo tras [stop]. */
+    @Volatile private var acceptSessionExpirySignals = true
     private var reconnectAttempts = 0
     private var syncScope: CoroutineScope? = null
     private var reconnectJob: Job? = null
@@ -148,6 +155,7 @@ class CloudSync(private val config: SyncConfig) {
     fun start(scope: CoroutineScope) {
         syncScope = scope
         intentionalStop = false
+        acceptSessionExpirySignals = true
         if (!config.isConfigured) {
             setStatus(CloudSyncStatus.ERROR, NOT_CONFIGURED_MESSAGE)
             return
@@ -179,6 +187,7 @@ class CloudSync(private val config: SyncConfig) {
 
     fun stop() {
         intentionalStop = true
+        acceptSessionExpirySignals = false
         reconnectJob?.cancel()
         webSocket?.close(1000, "app_stop")
         webSocket = null
@@ -372,6 +381,22 @@ class CloudSync(private val config: SyncConfig) {
         if (!config.isConfigured) throw ApiException(0, NOT_CONFIGURED_MESSAGE)
     }
 
+    /**
+     * Solo fuerza cierre de sesión cuando el servidor rechaza explícitamente el
+     * JWT (vencido o inválido). Un 401 "Sesión requerida" suele ser transitorio
+     * (reinicio de sync, petición sin token aún adjunto) y no debe desloguear.
+     */
+    private fun notifySessionExpiredIfNeeded(serverMessage: String?) {
+        if (!acceptSessionExpirySignals || intentionalStop) return
+        val message = serverMessage ?: return
+        val isJwtRejected = message.contains("inválida", ignoreCase = true) ||
+            message.contains("invalida", ignoreCase = true) ||
+            message.contains("expirada", ignoreCase = true)
+        if (isJwtRejected) {
+            _sessionExpired.tryEmit(Unit)
+        }
+    }
+
     private fun executeJson(request: Request): JSONObject {
         client.newCall(request).execute().use { response ->
             val bodyText = response.body?.string().orEmpty()
@@ -379,9 +404,7 @@ class CloudSync(private val config: SyncConfig) {
                 val serverMessage = runCatching {
                     JSONObject(bodyText).optString("error")
                 }.getOrNull()?.takeIf { it.isNotBlank() }
-                if (response.code == 401 && serverMessage?.contains("sesión", ignoreCase = true) == true) {
-                    _sessionExpired.tryEmit(Unit)
-                }
+                notifySessionExpiredIfNeeded(serverMessage)
                 throw ApiException(response.code, serverMessage ?: "HTTP ${response.code}")
             }
             if (bodyText.isBlank()) return JSONObject()
@@ -403,8 +426,14 @@ class CloudSync(private val config: SyncConfig) {
             base.startsWith("http://") -> "ws://" + base.removePrefix("http://")
             else -> base
         }
-        val apiKey = config.apiKey
-        return if (apiKey.isNotBlank()) "$wsBase/v1/ws?apiKey=$apiKey" else "$wsBase/v1/ws"
+        val params = mutableListOf<String>()
+        if (config.apiKey.isNotBlank()) {
+            params.add("apiKey=${URLEncoder.encode(config.apiKey, StandardCharsets.UTF_8)}")
+        }
+        authToken?.takeIf { it.isNotBlank() }?.let { token ->
+            params.add("token=${URLEncoder.encode(token, StandardCharsets.UTF_8)}")
+        }
+        return if (params.isEmpty()) "$wsBase/v1/ws" else "$wsBase/v1/ws?${params.joinToString("&")}"
     }
 
     private fun Request.Builder.withAuth(): Request.Builder {

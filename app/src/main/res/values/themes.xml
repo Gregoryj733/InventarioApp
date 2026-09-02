@@ -4,7 +4,7 @@
 
     <style name="Theme.InventarioApp.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/brand_sand</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_brand_logo_on_light</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_transparent</item>
         <item name="windowSplashScreenIconBackgroundColor">@android:color/transparent</item>
         <item name="postSplashScreenTheme">@style/Theme.InventarioApp</item>
     </style>

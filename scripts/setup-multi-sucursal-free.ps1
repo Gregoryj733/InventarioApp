@@ -53,11 +53,30 @@ function Set-BranchUserSucursales {
     }
     $users = (Invoke-RestMethod -Uri "$($BaseUrl.TrimEnd('/'))/v1/users" -Headers $headers -TimeoutSec 120).users
     foreach ($user in $users) {
-        if ($user.role -in @("ADMIN", "SUPERVISOR")) { continue }
+        $name = [string]$user.username
+        if ($user.role -eq "ADMIN") { continue }
+        if ($user.role -eq "SUPERVISOR") {
+            if ([string]$user.sucursal -ne "Principal") {
+                $patch = @{ sucursal = "Principal" } | ConvertTo-Json
+                Invoke-RestMethod -Method Patch -Uri "$($BaseUrl.TrimEnd('/'))/v1/users/$($user.id)" -Headers $headers -Body $patch -TimeoutSec 120 | Out-Null
+                Write-Host "  $name (SUPERVISOR) -> Principal" -ForegroundColor Green
+            }
+            continue
+        }
+        if ($name -in @("consulta", "venta")) {
+            $expectedRole = if ($name -eq "consulta") { "CONSULTA" } else { "VENTAS" }
+            $needsSucursal = [string]$user.sucursal -ne $BranchLabel
+            $needsRole = [string]$user.role -ne $expectedRole
+            if (-not $needsSucursal -and -not $needsRole) { continue }
+            $patch = @{ sucursal = $BranchLabel; role = $expectedRole } | ConvertTo-Json
+            Invoke-RestMethod -Method Patch -Uri "$($BaseUrl.TrimEnd('/'))/v1/users/$($user.id)" -Headers $headers -Body $patch -TimeoutSec 120 | Out-Null
+            Write-Host "  $name -> $expectedRole / $BranchLabel" -ForegroundColor Green
+            continue
+        }
         if ([string]$user.sucursal -eq $BranchLabel) { continue }
         $patch = @{ sucursal = $BranchLabel } | ConvertTo-Json
         Invoke-RestMethod -Method Patch -Uri "$($BaseUrl.TrimEnd('/'))/v1/users/$($user.id)" -Headers $headers -Body $patch -TimeoutSec 120 | Out-Null
-        Write-Host "  $($user.username) -> $BranchLabel" -ForegroundColor Green
+        Write-Host "  $name ($($user.role)) -> $BranchLabel" -ForegroundColor Green
     }
 }
 
@@ -78,9 +97,9 @@ foreach ($b in $branches) {
     $h = Test-BranchHealth -BaseUrl $b.baseUrl
     if ($h.Ok) {
         $backendNote = if ($h.Backend -eq "file") {
-            "OK (file — plan free, misma lógica en ambas sucursales)"
+            "OK (file - plan free, misma logica en ambas sucursales)"
         } elseif ($h.Backend -eq "postgres") {
-            "AVISO: backend postgres — para paridad free usa STORAGE_BACKEND=file y quita DATABASE_URL en Render"
+            "AVISO: backend postgres - para paridad free usa STORAGE_BACKEND=file y quita DATABASE_URL en Render"
         } else {
             "AVISO: backend $($h.Backend)"
         }

@@ -5,12 +5,7 @@ package com.inventario.app.ui.login
 import androidx.compose.foundation.layout.Arrangement
 
 import androidx.compose.foundation.layout.Box
-
 import androidx.compose.foundation.layout.Column
-
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-
-import androidx.compose.foundation.layout.FlowRow
 
 import androidx.compose.foundation.layout.Spacer
 
@@ -52,15 +47,15 @@ import androidx.compose.material3.CardDefaults
 
 import androidx.compose.material3.CircularProgressIndicator
 
-import androidx.compose.material3.FilterChip
-
 import androidx.compose.material3.Icon
 
 import androidx.compose.material3.IconButton
 
 import androidx.compose.material3.MaterialTheme
 
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 
 import androidx.compose.material3.Text
 
@@ -98,23 +93,24 @@ import androidx.compose.ui.unit.dp
 
 import com.inventario.app.ui.theme.AppScreenBackground
 
-import com.inventario.app.ui.theme.AppBrandTitle
 import com.inventario.app.ui.theme.BranchBrandLogoSplash
 import com.inventario.app.ui.theme.BranchBrandTitle
-
+import com.inventario.app.ui.theme.BranchSelector
+import com.inventario.app.ui.theme.BranchSelectorOption
+import com.inventario.app.ui.theme.branchAccentColor
+import com.inventario.app.ui.theme.splitBranchChipLabel
 import com.inventario.app.ui.theme.screenHorizontalPadding
 
 
 
-@OptIn(ExperimentalLayoutApi::class)
-
 @Composable
-
 fun LoginScreen(
 
     viewModel: LoginViewModel,
 
-    onLoggedIn: () -> Unit
+    onLoggedIn: () -> Unit,
+
+    onBootstrapComplete: () -> Unit = {}
 
 ) {
 
@@ -125,14 +121,30 @@ fun LoginScreen(
 
 
     LaunchedEffect(state.loggedInRole) {
-
         if (state.loggedInRole != null) onLoggedIn()
-
     }
 
-
+    LaunchedEffect(state.bootstrapping) {
+        if (!state.bootstrapping) onBootstrapComplete()
+    }
 
     AppScreenBackground(modifier = Modifier.fillMaxSize()) {
+
+    if (state.bootstrapping) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .systemBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(36.dp),
+                strokeWidth = 3.dp,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        return@AppScreenBackground
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
 
@@ -156,14 +168,10 @@ fun LoginScreen(
 
         ) {
 
-            AppBrandTitle(modifier = Modifier.padding(bottom = 8.dp))
-
             BranchBrandLogoSplash(
-
                 branchId = state.selectedBranchId,
-
-                modifier = Modifier.padding(bottom = 4.dp)
-
+                modifier = Modifier.padding(bottom = 8.dp),
+                height = 80.dp
             )
 
             if (state.branches.size == 1) {
@@ -234,71 +242,25 @@ fun LoginScreen(
 
 
                 if (state.branches.size > 1) {
-
-                    Text(
-
-                        text = "Sucursal",
-
-                        style = MaterialTheme.typography.labelLarge,
-
-                        modifier = Modifier
-
-                            .fillMaxWidth()
-
-                            .padding(bottom = 8.dp)
-
+                    BranchSelector(
+                        branches = state.branches,
+                        selectedBranchId = state.selectedBranchId,
+                        onBranchSelected = viewModel::onBranchSelected,
+                        enabled = !state.loading
                     )
-
-                    FlowRow(
-
-                        modifier = Modifier.fillMaxWidth(),
-
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-
-                    ) {
-
-                        state.branches.forEach { branch ->
-
-                            FilterChip(
-
-                                selected = branch.id == state.selectedBranchId,
-
-                                onClick = { viewModel.onBranchSelected(branch.id) },
-
-                                label = { Text(branch.label) },
-
-                                enabled = !state.loading
-
-                            )
-
-                        }
-
-                    }
-
                     Spacer(Modifier.height(16.dp))
-
                 } else if (state.branches.size == 1) {
-
-                    Text(
-
-                        text = state.branches.first().label,
-
-                        style = MaterialTheme.typography.titleSmall,
-
-                        color = MaterialTheme.colorScheme.primary,
-
-                        modifier = Modifier
-
-                            .fillMaxWidth()
-
-                            .padding(bottom = 12.dp),
-
-                        textAlign = TextAlign.Center
-
+                    val branch = state.branches.first()
+                    val (code, subtitle) = splitBranchChipLabel(branch.chipLabel)
+                    BranchSelectorOption(
+                        code = code,
+                        subtitle = subtitle,
+                        selected = true,
+                        onClick = {},
+                        enabled = false,
+                        accentColor = branchAccentColor(branch.id)
                     )
-
+                    Spacer(Modifier.height(12.dp))
                 }
 
 
@@ -314,6 +276,8 @@ fun LoginScreen(
                     label = { Text("Usuario") },
 
                     singleLine = true,
+
+                    enabled = !state.loading,
 
                     keyboardOptions = KeyboardOptions(
 
@@ -340,6 +304,8 @@ fun LoginScreen(
                     label = { Text("Contraseña") },
 
                     singleLine = true,
+
+                    enabled = !state.loading,
 
                     visualTransformation = if (passwordVisible) {
 
@@ -423,7 +389,56 @@ fun LoginScreen(
 
                 }
 
-
+                if (state.showServerConfig) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = "Configuración del servidor",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = state.serverUrl,
+                        onValueChange = viewModel::onServerUrlChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("URL del servidor") },
+                        singleLine = true,
+                        enabled = !state.loading,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = state.serverApiKey,
+                        onValueChange = viewModel::onServerApiKeyChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Clave API (opcional)") },
+                        singleLine = true,
+                        enabled = !state.loading,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    state.serverConfigMessage?.let { message ->
+                        Spacer(Modifier.height(6.dp))
+                        Text(message, color = MaterialTheme.colorScheme.error)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = viewModel::saveServerConfig,
+                        enabled = !state.loading,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Guardar y reintentar")
+                    }
+                } else if (state.error != null) {
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(
+                        onClick = viewModel::toggleServerConfig,
+                        enabled = !state.loading
+                    ) {
+                        Text("Configurar servidor manualmente")
+                    }
+                }
 
                 Spacer(Modifier.height(20.dp))
 

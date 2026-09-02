@@ -52,4 +52,19 @@ async function sendInventoryUpdatedNotification({ imported, skipped } = {}) {
   }
 }
 
-module.exports = { init, sendInventoryUpdatedNotification, TOPIC };
+async function sendSalesUpdatedNotification() {
+  if (!messaging) return;
+  try {
+    await messaging.send({
+      topic: TOPIC,
+      data: {
+        type: "sales_updated",
+        ts: String(Date.now())
+      }
+    });
+  } catch (error) {
+    console.error("Error enviando notificación de ventas", error.message);
+  }
+}
+
+module.exports = { init, sendInventoryUpdatedNotification, sendSalesUpdatedNotification, TOPIC };

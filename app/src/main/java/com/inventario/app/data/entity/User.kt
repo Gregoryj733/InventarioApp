@@ -1,5 +1,10 @@
 package com.inventario.app.data.entity
 
+import java.util.Calendar
+
+/** Usuario gerente en el servidor (rol SUPERVISOR, acceso multi-sucursal). */
+const val GERENTE_USERNAME = "gerente"
+
 enum class UserRole {
     CONSULTA,
     VENTAS,
@@ -55,6 +60,15 @@ fun UserRole.canManageDiscountTickets(): Boolean =
 fun UserRole.canSwitchBranch(): Boolean =
     this == UserRole.ADMIN || this == UserRole.SUPERVISOR
 
+/**
+ * Perfiles restringidos a una sola sucursal (sin cruce de pedidos ni datos).
+ * [UserRole.CONSULTA] y [UserRole.VENTAS] solo ven la instancia donde iniciaron sesión.
+ */
+fun UserRole.isBranchRestricted(): Boolean = !canSwitchBranch()
+
+/** Ventas del día en el menú principal (KPIs por sucursal). Solo Admin / Supervisor. */
+fun UserRole.canViewBranchSalesKpis(): Boolean = canSwitchBranch()
+
 data class User(
     val id: Long = 0,
     val username: String,
@@ -72,3 +86,31 @@ fun String?.displaySucursalOrPending(): String =
     this?.takeIf { it.isNotBlank() } ?: PENDING_SUCURSAL_LABEL
 
 fun User.sucursalPending(): Boolean = sucursal.isBlank()
+
+fun String?.isGerenteProfile(): Boolean =
+    this?.trim()?.equals(GERENTE_USERNAME, ignoreCase = true) == true
+
+/** Gerente o Admin: deben recibir el recordatorio de respaldo del Excel de cierres. */
+fun shouldReceiveClosingExcelReminder(role: UserRole?, username: String?): Boolean =
+    username.isGerenteProfile() || role == UserRole.ADMIN
+
+const val CLOSING_EXCEL_REMINDER_MESSAGE =
+    "El día de hoy, debe descargar el Excel de cierre de caja antes de que se borre el histórico. " +
+        "Por seguridad, la descarga se realiza dos veces por semana."
+
+/** Miércoles y sábado: recordatorio de descarga de Excel antes de limpiar histórico. */
+fun isClosingExcelReminderDay(): Boolean {
+    return when (Calendar.getInstance().get(Calendar.DAY_OF_WEEK)) {
+        Calendar.WEDNESDAY, Calendar.SATURDAY -> true
+        else -> false
+    }
+}
+
+fun shouldShowClosingExcelReminder(
+    role: UserRole?,
+    username: String,
+    hasExportedToday: Boolean
+): Boolean =
+    shouldReceiveClosingExcelReminder(role, username) &&
+        isClosingExcelReminderDay() &&
+        !hasExportedToday

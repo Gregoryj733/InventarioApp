@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LocalOffer
+import androidx.compose.material.icons.filled.Percent
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -47,6 +48,121 @@ import com.inventario.app.data.entity.displayStatusLabel
 import com.inventario.app.data.entity.DISCOUNT_TICKET_CONDITIONS
 import com.inventario.app.data.entity.DiscountTicket
 import com.inventario.app.ui.theme.BrandSuccess
+
+/**
+ * Descuento manual en USD: se muestra bajo demanda con «Aplicar descuento».
+ */
+@Composable
+fun ManualDiscountSection(
+    state: HomeUiState,
+    viewModel: HomeViewModel
+) {
+    val applied = state.appliedManualDiscountUsd
+    if (applied > 0 && !state.showManualDiscountSection) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            color = BrandSuccess.copy(alpha = 0.12f)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Percent, contentDescription = null, tint = BrandSuccess)
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Descuento manual",
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        "-${viewModel.formatPrice(applied)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = BrandSuccess
+                    )
+                }
+                IconButton(onClick = viewModel::removeManualDiscount) {
+                    Icon(Icons.Default.Close, contentDescription = "Quitar descuento")
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+
+    if (!state.showManualDiscountSection) {
+        if (applied <= 0) {
+            OutlinedButton(
+                onClick = viewModel::openManualDiscountSection,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(Icons.Default.Percent, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Aplicar descuento")
+            }
+        }
+        return
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "Descuento en dólares (USD)",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            "Ingresa el monto y confirma. Se recalcula el total al instante.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = state.manualDiscountUsdInput,
+            onValueChange = viewModel::onManualDiscountUsdInputChange,
+            label = { Text("Monto USD") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            prefix = { Text("$") },
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Decimal,
+                imeAction = ImeAction.Done
+            ),
+            keyboardActions = KeyboardActions(onDone = { viewModel.applyManualDiscount() })
+        )
+        if (state.manualDiscountError != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                state.manualDiscountError,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = viewModel::dismissManualDiscountSection,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text("Cancelar")
+            }
+            Button(
+                onClick = viewModel::applyManualDiscount,
+                enabled = state.manualDiscountUsdInput.isNotBlank(),
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text("Confirmar")
+            }
+        }
+    }
+}
 
 /**
  * Sección de canje de ticket dentro del carrito (`OrderSummaryCard`): entrada

@@ -227,27 +227,37 @@ Cada sucursal opera con su **propio** servicio Render y su **propia** base Postg
    curl https://inventario-sync-sucursal-b.onrender.com/health
    ```
 
-### Usuarios semilla
+### Usuarios por sucursal (instancias independientes)
 
-Al arrancar con base vacía, cada instancia crea automáticamente:
+Cada servicio Render tiene su **propia** base de usuarios. Los mismos nombres de login existen en ambas instancias, pero con `sucursal` distinta según `BRANCH_SUCURSAL` en Render:
 
-| Usuario   | Contraseña | Rol        |
-|-----------|------------|------------|
-| admin     | admin      | ADMIN      |
-| consulta  | consulta   | CONSULTA   |
-| venta     | venta      | VENTAS     |
-| gerente   | gerente    | SUPERVISOR |
+**Total Care** (`inventario-sync-totalcare`, `BRANCH_SUCURSAL=Total Care Automotriz`)
 
-Repite las mismas credenciales en **ambas** instancias para que Admin/Supervisor puedan operar en las dos sucursales desde la app.
+| Usuario  | Contraseña | Rol        | Sucursal              |
+|----------|------------|------------|------------------------|
+| consulta | consulta   | CONSULTA   | Total Care Automotriz  |
+| venta    | venta      | VENTAS     | Total Care Automotriz  |
+| gerente  | gerente    | SUPERVISOR | Principal              |
+| admin    | admin      | ADMIN      | (todas)                |
 
-### Asignar sucursal a usuarios operativos
+**Supra Parts** (`inventario-sync-supra-parts`, `BRANCH_SUCURSAL=Supra Parts`)
 
-En cada instancia, asigna el campo `sucursal` del usuario al **label** de esa tienda (debe coincidir con `sync_config.json` de la app):
+| Usuario  | Contraseña | Rol        | Sucursal    |
+|----------|------------|------------|-------------|
+| consulta | consulta   | CONSULTA   | Supra Parts |
+| venta    | venta      | VENTAS     | Supra Parts |
+| gerente  | gerente    | SUPERVISOR | Principal   |
+| admin    | admin      | ADMIN      | (todas)     |
 
-- Instancia A: usuarios locales con `sucursal` = `"Sucursal A"`
-- Instancia B: usuarios locales con `sucursal` = `"Sucursal B"`
+Al arrancar, el servidor asegura `consulta`, `venta` y `gerente` con estos valores (`ensureConsultaBranchUser`, `ensureVentasPortalUser`, `ensureGerenteSupervisorUser`).
 
-Los perfiles **Ventas** y **Consulta** solo pueden iniciar sesión en la sucursal asignada. **Supervisor** y **Admin** acceden a ambas desde el selector de la app.
+**Ventas** y **Consulta** solo inician sesión en su sucursal asignada. **Supervisor** (`gerente`) y **Admin** acceden a ambas desde el selector de la app.
+
+Para corregir asignaciones en servidores ya desplegados:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup-multi-sucursal-free.ps1 -AssignUsers
+```
 
 ### App Android
 

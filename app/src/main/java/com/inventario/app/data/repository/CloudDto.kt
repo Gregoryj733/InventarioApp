@@ -8,6 +8,8 @@ import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.ConfirmedOrderPreview
 import com.inventario.app.data.entity.SaleLineItem
 import com.inventario.app.data.entity.SaleRecord
+import com.inventario.app.data.entity.effectiveDiscountUsd
+import com.inventario.app.data.entity.effectiveSubtotalUsd
 import com.inventario.app.data.entity.User
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.stableProductId
@@ -57,6 +59,21 @@ internal fun JSONArray.toProductList(): List<Product> {
     return products.sortedBy { it.description }
 }
 
+internal fun Product.toJson(): JSONObject = JSONObject().apply {
+    put("syncId", syncId)
+    put("description", description)
+    put("quantity", quantity)
+    put("unit", unit)
+    put("price", price)
+    put("updatedAt", updatedAt)
+}
+
+internal fun List<Product>.toJsonArray(): JSONArray {
+    val array = JSONArray()
+    forEach { array.put(it.toJson()) }
+    return array
+}
+
 internal fun JSONArray.toSaleList(): List<SaleRecord> {
     val sales = mutableListOf<SaleRecord>()
     for (i in 0 until length()) {
@@ -64,12 +81,18 @@ internal fun JSONArray.toSaleList(): List<SaleRecord> {
         val syncId = json.optString("syncId").takeIf { it.isNotBlank() } ?: continue
         val createdAt = json.optLong("createdAt", 0L)
         if (createdAt <= 0L) continue
+        val totalUsd = json.optDouble("totalUsd", 0.0)
+        val discountUsd = json.optDouble("discountUsd", 0.0)
+        val subtotalUsd = json.optDouble("subtotalUsd", 0.0).takeIf { it > 0 }
+            ?: (totalUsd + discountUsd)
         sales.add(
             SaleRecord(
                 syncId = syncId,
                 createdAt = createdAt,
-                totalUsd = json.optDouble("totalUsd", 0.0),
-                bcvRate = json.optDouble("bcvRate", 0.0)
+                totalUsd = totalUsd,
+                bcvRate = json.optDouble("bcvRate", 0.0),
+                subtotalUsd = subtotalUsd,
+                discountUsd = discountUsd
             )
         )
     }
@@ -126,20 +149,35 @@ internal fun buildConfirmedOrderPreviews(
     return sales
         .sortedByDescending { it.createdAt }
         .map { sale ->
-            ConfirmedOrderPreview(
+            val lines = linesBySale[sale.syncId].orEmpty()
+            val preview = ConfirmedOrderPreview(
                 syncId = sale.syncId,
                 createdAt = sale.createdAt,
                 totalUsd = sale.totalUsd,
                 bcvRate = sale.bcvRate,
-                lines = linesBySale[sale.syncId].orEmpty()
+                lines = lines,
+                subtotalUsd = sale.subtotalUsd,
+                discountUsd = sale.discountUsd
             )
+            preview.withResolvedPricing()
         }
+}
+
+private fun ConfirmedOrderPreview.withResolvedPricing(): ConfirmedOrderPreview {
+    val resolvedDiscount = effectiveDiscountUsd()
+    if (resolvedDiscount <= 0) return this
+    return copy(
+        discountUsd = resolvedDiscount,
+        subtotalUsd = effectiveSubtotalUsd()
+    )
 }
 
 internal fun ConfirmedOrderPreview.toJsonObject(): JSONObject = JSONObject().apply {
     put("syncId", syncId)
     put("createdAt", createdAt)
     put("totalUsd", totalUsd)
+    put("subtotalUsd", subtotalUsd)
+    put("discountUsd", discountUsd)
     put("bcvRate", bcvRate)
     put(
         "lines",
@@ -169,14 +207,20 @@ internal fun JSONArray.toConfirmedOrderPreviewList(): List<ConfirmedOrderPreview
         val createdAt = json.optLong("createdAt", 0L)
         if (createdAt <= 0L) continue
         val lineItems = json.optJSONArray("lines")?.toSaleLineItemList().orEmpty()
+        val totalUsd = json.optDouble("totalUsd", 0.0)
+        val discountUsd = json.optDouble("discountUsd", 0.0)
+        val subtotalUsd = json.optDouble("subtotalUsd", 0.0).takeIf { it > 0 }
+            ?: (totalUsd + discountUsd)
         orders.add(
             ConfirmedOrderPreview(
                 syncId = syncId,
                 createdAt = createdAt,
-                totalUsd = json.optDouble("totalUsd", 0.0),
+                totalUsd = totalUsd,
                 bcvRate = json.optDouble("bcvRate", 0.0),
-                lines = lineItems
-            )
+                lines = lineItems,
+                subtotalUsd = subtotalUsd,
+                discountUsd = discountUsd
+            ).withResolvedPricing()
         )
     }
     return orders
@@ -189,14 +233,19 @@ internal fun mergeConfirmedOrderPreviews(
     if (localOrders.isEmpty()) return serverOrders
     val localBySyncId = localOrders.associateBy { it.syncId }
     val merged = serverOrders.map { order ->
-        if (order.lines.isNotEmpty()) {
-            order
-        } else {
-            localBySyncId[order.syncId]?.let { local -> order.copy(lines = local.lines) } ?: order
+        val local = localBySyncId[order.syncId]
+        when {
+            local == null -> order.withResolvedPricing()
+            order.lines.isNotEmpty() -> order.withResolvedPricing()
+            else -> order.copy(
+                lines = local.lines,
+                discountUsd = order.discountUsd.takeIf { it > 0 } ?: local.discountUsd,
+                subtotalUsd = order.subtotalUsd.takeIf { it > order.totalUsd } ?: local.subtotalUsd
+            ).withResolvedPricing()
         }
     }
     val serverIds = serverOrders.map { it.syncId }.toSet()
-    val localOnly = localOrders.filter { it.syncId !in serverIds }
+    val localOnly = localOrders.filter { it.syncId !in serverIds }.map { it.withResolvedPricing() }
     return (merged + localOnly).sortedByDescending { it.createdAt }
 }
 
@@ -207,6 +256,8 @@ internal fun JSONObject.toCashClosingRecord(): CashClosingRecord = CashClosingRe
     closedAt = optLong("closedAt"),
     rate = optDouble("rate", 0.0),
     salesUsd = optDouble("salesUsd", 0.0),
+    salesGrossUsd = optDouble("salesGrossUsd", optDouble("salesUsd", 0.0)),
+    salesDiscountUsd = optDouble("salesDiscountUsd", 0.0),
     salesBs = optDouble("salesBs", 0.0),
     grandTotalUsd = optDouble("grandTotalUsd", 0.0),
     grandTotalBs = optDouble("grandTotalBs", 0.0),
@@ -238,6 +289,8 @@ internal fun CashClosingRecord.toJsonBody(): JSONObject = JSONObject().apply {
     put("closedAt", closedAt)
     put("rate", rate)
     put("salesUsd", salesUsd)
+    put("salesGrossUsd", if (salesGrossUsd > 0.0) salesGrossUsd else salesUsd + salesDiscountUsd)
+    put("salesDiscountUsd", salesDiscountUsd)
     put("salesBs", salesBs)
     put("grandTotalUsd", grandTotalUsd)
     put("grandTotalBs", grandTotalBs)

@@ -4,6 +4,9 @@ import com.inventario.app.data.entity.CashClosingRecord
 import com.inventario.app.data.entity.CashClosingSnapshot
 import com.inventario.app.data.entity.CashClosingSnapshotCodec
 import com.inventario.app.data.entity.CashClosingStatus
+import com.inventario.app.data.entity.displaySalesDiscountUsd
+import com.inventario.app.data.entity.displaySalesGrossUsd
+import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -14,6 +17,11 @@ object CashClosingExcelExporter {
     private val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale("es", "VE"))
     private val timeFormat = SimpleDateFormat("HH:mm", Locale("es", "VE"))
     private val fileStampFormat = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US)
+    private val veDecimalFormat = NumberFormat.getNumberInstance(Locale("es", "VE")).apply {
+        minimumFractionDigits = 2
+        maximumFractionDigits = 2
+        isGroupingUsed = true
+    }
 
     data class PaymentBreakdown(
         val posUsd: Double,
@@ -54,7 +62,9 @@ object CashClosingExcelExporter {
             "Salidas / Gastos (USD)",
             "Total consolidado (USD)",
             "Total consolidado (Bs)",
-            "Ventas del día (USD)",
+            "Ventas brutas (USD)",
+            "Descuentos (USD)",
+            "Ventas netas (USD)",
             "Ventas del día (Bs)",
             "Diferencia (USD)",
             "Observaciones",
@@ -64,6 +74,8 @@ object CashClosingExcelExporter {
 
         val summaryRows = closings.map { closing ->
             val breakdown = paymentBreakdown(closing)
+            val grossUsd = closing.displaySalesGrossUsd()
+            val discountUsd = closing.displaySalesDiscountUsd()
             val reviewedAtText = if (closing.reviewedAt > 0L) {
                 "${dateFormat.format(Date(closing.reviewedAt))} ${timeFormat.format(Date(closing.reviewedAt))}"
             } else {
@@ -87,6 +99,8 @@ object CashClosingExcelExporter {
                 number(breakdown.expenseUsd),
                 number(closing.grandTotalUsd),
                 number(closing.grandTotalBs),
+                number(grossUsd),
+                number(discountUsd),
                 number(closing.salesUsd),
                 number(closing.salesBs),
                 number(closing.differenceUsd),
@@ -189,17 +203,102 @@ object CashClosingExcelExporter {
             }
         }
 
+        val orderHeaders = listOf(
+            "Fecha del cierre",
+            "Hora",
+            "Usuario",
+            "Sucursal",
+            "Nº pedido",
+            "Hora pedido",
+            "Subtotal (USD)",
+            "Descuento (USD)",
+            "Neto (USD)"
+        )
+
+        val orderRows = buildList {
+            closings.forEach { closing ->
+                val snapshot = CashClosingSnapshotCodec.decode(closing.detailSnapshot) ?: return@forEach
+                snapshot.confirmedOrders.forEach { order ->
+                    add(
+                        listOf(
+                            text(dateFormat.format(Date(closing.closedAt))),
+                            text(timeFormat.format(Date(closing.closedAt))),
+                            text(closing.username),
+                            text(closing.branchName.ifBlank { closing.userSucursal }.ifBlank { "Sin sucursal" }),
+                            text(order.orderNumber.takeIf { it > 0 }?.toString() ?: "—"),
+                            text(timeFormat.format(Date(order.createdAt))),
+                            number(order.subtotalUsd.takeIf { it > 0 } ?: order.totalUsd + order.discountUsd),
+                            number(order.discountUsd),
+                            number(order.totalUsd)
+                        )
+                    )
+                }
+            }
+        }
+
+        return SimpleXlsxWriter.write(
+            buildList {
+                add(
+                    SimpleXlsxWriter.Sheet(
+                        name = "Resumen",
+                        headers = summaryHeaders,
+                        rows = summaryRows
+                    )
+                )
+                add(
+                    SimpleXlsxWriter.Sheet(
+                        name = "Detalle medios de pago",
+                        headers = detailHeaders,
+                        rows = detailRows
+                    )
+                )
+                if (orderRows.isNotEmpty()) {
+                    add(
+                        SimpleXlsxWriter.Sheet(
+                            name = "Pedidos del día",
+                            headers = orderHeaders,
+                            rows = orderRows
+                        )
+                    )
+                }
+            }
+        )
+    }
+
+    /**
+     * Resumen simplificado para el perfil Gerente: una sola hoja con las columnas
+     * del reporte operativo (fecha, sucursal, tasa, ventas USD/Bs, observaciones).
+     */
+    fun exportGerenteSummary(closings: List<CashClosingRecord>): ByteArray {
+        require(closings.isNotEmpty()) { "No hay cierres para exportar." }
+        val headers = listOf(
+            "Fecha del cierre",
+            "Sucursal",
+            "Tasa BCV (Bs/USD)",
+            "Ventas del dia (USD)",
+            "Ventas del día (Bs)",
+            "Observaciones"
+        )
+        val rows = closings
+            .sortedByDescending { it.closedAt }
+            .map { closing ->
+                listOf(
+                    text(dateFormat.format(Date(closing.closedAt))),
+                    text(
+                        closing.branchName.ifBlank { closing.userSucursal }.ifBlank { "Sin sucursal" }
+                    ),
+                    text(formatVeDecimal(closing.rate)),
+                    text(formatVeDecimal(closing.salesUsd)),
+                    text(formatVeDecimal(closing.salesBs)),
+                    text(closing.observations.ifBlank { snapshotObservations(closing) })
+                )
+            }
         return SimpleXlsxWriter.write(
             listOf(
                 SimpleXlsxWriter.Sheet(
-                    name = "Resumen",
-                    headers = summaryHeaders,
-                    rows = summaryRows
-                ),
-                SimpleXlsxWriter.Sheet(
-                    name = "Detalle medios de pago",
-                    headers = detailHeaders,
-                    rows = detailRows
+                    name = "Cierres",
+                    headers = headers,
+                    rows = rows
                 )
             )
         )
@@ -294,6 +393,8 @@ object CashClosingExcelExporter {
         if (bs > 0.0) bs else if (usd > 0.0 && rate > 0.0) roundMoney(usd * rate) else 0.0
 
     private fun roundMoney(value: Double): Double = round(value * 100.0) / 100.0
+
+    private fun formatVeDecimal(value: Double): String = veDecimalFormat.format(value)
 
     private fun text(value: String): SimpleXlsxWriter.CellValue =
         SimpleXlsxWriter.CellValue.Text(value)

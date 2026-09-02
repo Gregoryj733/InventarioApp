@@ -1,0 +1,21 @@
+{
+  "name": "inventarioapp",
+  "version": "1.0.0",
+  "description": "App Android offline-first para consultar y actualizar inventario desde Excel (`product.xlsx`), con roles, buscador con autocompletado, fecha del día y tasa BCV.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gregoryj733/InventarioApp.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Gregoryj733/InventarioApp/issues"
+  },
+  "homepage": "https://github.com/Gregoryj733/InventarioApp#readme"
+}

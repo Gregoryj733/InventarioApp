@@ -1,37 +1,31 @@
 package com.inventario.app.ui.theme
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.inventario.app.R
 import com.inventario.app.data.branch.BranchTheme
 import com.inventario.app.data.branch.branchDisplayName
-import androidx.compose.ui.platform.LocalContext
-
 /** Sucursal activa para branding dinámico en toda la UI autenticada. */
-val LocalActiveBranchId = staticCompositionLocalOf { "total_care" }
+val LocalActiveBranchId = staticCompositionLocalOf { "supra_parts" }
 
 @Composable
 fun BranchBrandLogoSplash(
     branchId: String?,
     modifier: Modifier = Modifier,
-    height: Dp = 96.dp
+    height: Dp = 80.dp
 ) {
-    val context = LocalContext.current
-    val contentDescription = branchDisplayName(branchId, context)
     when (BranchTheme.fromId(branchId)) {
-        BranchTheme.SUPRA_PARTS -> Image(
-            painter = painterResource(R.drawable.logo_supra_parts),
-            contentDescription = contentDescription,
-            modifier = modifier.height(height),
-            contentScale = ContentScale.Fit
+        BranchTheme.SUPRA_PARTS -> SupraPartsLogoVector(
+            modifier = modifier,
+            height = height,
+            forLightBackground = true
         )
         BranchTheme.TOTAL_CARE -> BrandLogoSplash(modifier = modifier)
     }
@@ -43,14 +37,12 @@ fun BranchBrandLogoTopBar(
     height: Dp = 40.dp,
     forLightBackground: Boolean = false
 ) {
-    val context = LocalContext.current
-    val contentDescription = branchDisplayName(branchId, context)
     when (BranchTheme.fromId(branchId)) {
-        BranchTheme.SUPRA_PARTS -> Image(
-            painter = painterResource(R.drawable.logo_supra_parts_icon),
-            contentDescription = contentDescription,
-            modifier = Modifier.height(height),
-            contentScale = ContentScale.Fit
+        BranchTheme.SUPRA_PARTS -> SupraPartsToolIcon(
+            modifier = Modifier
+                .height(height)
+                .width(height * 0.82f),
+            forLightBackground = forLightBackground
         )
         BranchTheme.TOTAL_CARE -> BrandLogo(height = height, forLightBackground = forLightBackground)
     }

@@ -21,6 +21,7 @@ import com.inventario.app.data.entity.isExecutable
 import com.inventario.app.data.entity.isExecutedPendingSale
 import com.inventario.app.data.entity.isFullyConsumed
 import com.inventario.app.data.order.OrderLine
+import com.inventario.app.data.order.matchesProduct
 import com.inventario.app.data.order.ProductPaymentChoice
 import com.inventario.app.data.excel.ImportResult
 import com.inventario.app.data.repository.InventoryRepository
@@ -105,7 +106,12 @@ data class HomeUiState(
     val showGenerateTicketDialog: Boolean = false,
     val generatingTicket: Boolean = false,
     val generateTicketError: String? = null,
-    val generatedTicket: DiscountTicket? = null
+    val generatedTicket: DiscountTicket? = null,
+    // ---- Descuento manual en USD (carrito) ----
+    val showManualDiscountSection: Boolean = false,
+    val manualDiscountUsdInput: String = "",
+    val appliedManualDiscountUsd: Double = 0.0,
+    val manualDiscountError: String? = null
 )
 
 class HomeViewModel(
@@ -467,7 +473,7 @@ class HomeViewModel(
 
         val product = _state.value.selectedProduct
         val qty = cleaned.toDoubleOrNull()
-        val orderQty = orderQtyForProduct(product?.id)
+        val orderQty = orderQtyForProduct(product)
         val available = product?.quantity?.minus(orderQty) ?: 0.0
 
         val warning = when {
@@ -497,10 +503,10 @@ class HomeViewModel(
         }
     }
 
-    private fun orderQtyForProduct(productId: Long?): Double {
-        if (productId == null) return 0.0
+    private fun orderQtyForProduct(product: Product?): Double {
+        if (product == null) return 0.0
         return _state.value.orderLines
-            .filter { it.productId == productId }
+            .filter { it.matchesProduct(product) }
             .sumOf { it.quantity }
     }
 
@@ -523,7 +529,7 @@ class HomeViewModel(
         val qty = selectedQtyValue()
         return qty > 0 &&
             state.qtyWarning == null &&
-            qty <= product.quantity - orderQtyForProduct(product.id)
+            qty <= product.quantity - orderQtyForProduct(product)
     }
 
     private fun notifyPopup(title: String, message: String) {
@@ -540,13 +546,14 @@ class HomeViewModel(
         val qty = selectedQtyValue()
         val line = OrderLine(
             productId = product.id,
+            productSyncId = product.syncId,
             description = product.description,
             unit = product.unit,
             unitPriceUsd = product.price,
             quantity = qty,
             casheaLevel = null
         )
-        val existing = _state.value.orderLines.filter { it.productId != product.id }
+        val existing = _state.value.orderLines.filter { !it.matchesProduct(product) }
         _state.update {
             it.copy(
                 orderLines = existing + line,
@@ -562,7 +569,7 @@ class HomeViewModel(
     }
 
     fun isOrderCasheaEligible(): Boolean =
-        CasheaCalculator.isCasheaEligible(orderTotalUsd())
+        CasheaCalculator.isCasheaEligible(orderTotalUsdAfterDiscount())
 
     fun paymentChoiceForOrder(): ProductPaymentChoice? {
         if (!isOrderCasheaEligible()) return null
@@ -584,7 +591,7 @@ class HomeViewModel(
     fun orderCasheaDetail(): CasheaCalculator.CasheaLineDetail? {
         val choice = _state.value.orderPaymentChoice as? ProductPaymentChoice.Cashea ?: return null
         val rate = _state.value.bcvRate ?: return null
-        return CasheaCalculator.lineDetail(orderTotalUsd(), rate, choice.level)
+        return CasheaCalculator.lineDetail(orderTotalUsdAfterDiscount(), rate, choice.level)
     }
 
     fun orderCasheaLevelForSync(): CasheaCalculator.CasheaLevel? {
@@ -600,10 +607,19 @@ class HomeViewModel(
 
     private fun revalidateOrderCasheaEligibility() {
         _state.update { state ->
-            if (CasheaCalculator.isCasheaEligible(state.orderLines.sumOf { it.totalUsd })) {
-                state
+            val subtotal = state.orderLines.sumOf { it.totalUsd }
+            val cappedManual = state.appliedManualDiscountUsd.coerceAtMost(subtotal)
+            val coupon = state.appliedDiscountTicket?.let { subtotal * it.discountPercent / 100.0 } ?: 0.0
+            val afterDiscount = (subtotal - cappedManual - coupon).coerceAtLeast(0.0)
+            val withCappedManual = if (cappedManual != state.appliedManualDiscountUsd) {
+                state.copy(appliedManualDiscountUsd = cappedManual)
             } else {
-                state.copy(orderPaymentChoice = null)
+                state
+            }
+            if (CasheaCalculator.isCasheaEligible(afterDiscount)) {
+                withCappedManual
+            } else {
+                withCappedManual.copy(orderPaymentChoice = null)
             }
         }
     }
@@ -621,8 +637,8 @@ class HomeViewModel(
 
     fun editOrderLine(productId: Long) {
         val line = _state.value.orderLines.find { it.productId == productId } ?: return
-        val product = _state.value.allProducts.find { it.id == productId }
-            ?: _state.value.results.find { it.id == productId }
+        val product = _state.value.allProducts.find { line.matchesProduct(it) }
+            ?: _state.value.results.find { line.matchesProduct(it) }
             ?: return
         _state.update {
             it.copy(
@@ -647,7 +663,11 @@ class HomeViewModel(
                 orderPaymentChoice = null,
                 appliedDiscountTicket = null,
                 discountTicketCodeInput = "",
-                discountTicketError = null
+                discountTicketError = null,
+                showManualDiscountSection = false,
+                manualDiscountUsdInput = "",
+                appliedManualDiscountUsd = 0.0,
+                manualDiscountError = null
             )
         }
         AppSnackbarController.show("Pedido vaciado.")
@@ -660,13 +680,21 @@ class HomeViewModel(
         return orderTotalUsd() * rate
     }
 
-    /** Monto del descuento (USD) del ticket aplicado al carrito, si hay uno. */
-    fun discountAmountUsd(): Double {
+    /** Descuento por cupón (% sobre subtotal). */
+    fun couponDiscountUsd(): Double {
         val ticket = _state.value.appliedDiscountTicket ?: return 0.0
         return orderTotalUsd() * ticket.discountPercent / 100.0
     }
 
-    fun orderTotalUsdAfterDiscount(): Double = (orderTotalUsd() - discountAmountUsd()).coerceAtLeast(0.0)
+    /** Descuento manual en USD confirmado en el carrito. */
+    fun manualDiscountUsd(): Double = _state.value.appliedManualDiscountUsd
+
+    /** Suma de cupón + descuento manual, acotada al subtotal. */
+    fun discountAmountUsd(): Double =
+        (couponDiscountUsd() + manualDiscountUsd()).coerceAtMost(orderTotalUsd())
+
+    fun orderTotalUsdAfterDiscount(): Double =
+        (orderTotalUsd() - discountAmountUsd()).coerceAtLeast(0.0)
 
     fun orderTotalBsAfterDiscount(): Double? {
         val rate = _state.value.bcvRate ?: return null
@@ -674,6 +702,82 @@ class HomeViewModel(
     }
 
     fun formatTicketDate(millis: Long): String = dateFormat.format(Date(millis))
+
+    fun openManualDiscountSection() {
+        val applied = _state.value.appliedManualDiscountUsd
+        _state.update {
+            it.copy(
+                showManualDiscountSection = true,
+                manualDiscountUsdInput = if (applied > 0) formatQty(applied) else "",
+                manualDiscountError = null
+            )
+        }
+    }
+
+    fun dismissManualDiscountSection() {
+        _state.update {
+            it.copy(
+                showManualDiscountSection = false,
+                manualDiscountError = null
+            )
+        }
+    }
+
+    fun onManualDiscountUsdInputChange(value: String) {
+        val cleaned = value.filter { it.isDigit() || it == '.' || it == ',' }
+        _state.update { it.copy(manualDiscountUsdInput = cleaned, manualDiscountError = null) }
+    }
+
+    fun applyManualDiscount() {
+        val subtotal = orderTotalUsd()
+        val amount = parseUsdInput(_state.value.manualDiscountUsdInput)
+        when {
+            amount <= 0 -> {
+                _state.update { it.copy(manualDiscountError = "Ingresa un monto mayor a cero.") }
+                return
+            }
+            amount > subtotal -> {
+                _state.update {
+                    it.copy(manualDiscountError = "El descuento no puede superar ${formatPrice(subtotal)}.")
+                }
+                return
+            }
+        }
+        _state.update {
+            it.copy(
+                appliedManualDiscountUsd = amount,
+                showManualDiscountSection = false,
+                manualDiscountUsdInput = "",
+                manualDiscountError = null
+            )
+        }
+        revalidateOrderCasheaEligibility()
+        AppSnackbarController.show("Descuento de ${formatPrice(amount)} aplicado.")
+    }
+
+    fun removeManualDiscount() {
+        _state.update {
+            it.copy(
+                appliedManualDiscountUsd = 0.0,
+                showManualDiscountSection = false,
+                manualDiscountUsdInput = "",
+                manualDiscountError = null
+            )
+        }
+        revalidateOrderCasheaEligibility()
+        AppSnackbarController.show("Descuento manual quitado.")
+    }
+
+    private fun parseUsdInput(text: String): Double {
+        if (text.isBlank()) return 0.0
+        val trimmed = text.trim()
+        val normalized = when {
+            trimmed.contains(',') -> trimmed.replace(".", "").replace(',', '.')
+            trimmed.count { it == '.' } > 1 -> trimmed.replace(".", "")
+            else -> trimmed.replace(',', '.')
+        }
+        return normalized.toDoubleOrNull() ?: 0.0
+    }
 
     fun onDiscountTicketCodeChange(value: String) {
         _state.update { it.copy(discountTicketCodeInput = value.uppercase(), discountTicketError = null) }
@@ -917,6 +1021,8 @@ class HomeViewModel(
         val lines = state.orderLines
         val subtotalUsd = orderTotalUsd()
         val ticket = state.appliedDiscountTicket
+        val couponDiscount = couponDiscountUsd()
+        val manualDiscount = manualDiscountUsd()
         val discountUsd = discountAmountUsd()
         val totalUsd = orderTotalUsdAfterDiscount()
         val totalBs = orderTotalBsAfterDiscount()
@@ -946,12 +1052,17 @@ class HomeViewModel(
             }
             appendLine()
             appendLine("--- TOTALES ---")
-            if (ticket != null) {
+            if (discountUsd > 0) {
                 appendLine("Subtotal USD: ${formatPrice(subtotalUsd)}")
-                appendLine(
-                    "Descuento (cupón ${ticket.code} · -${formatQty(ticket.discountPercent)}%): " +
-                        "-${formatPrice(discountUsd)}"
-                )
+                if (couponDiscount > 0 && ticket != null) {
+                    appendLine(
+                        "Descuento cupón ${ticket.code} (-${formatQty(ticket.discountPercent)}%): " +
+                            "-${formatPrice(couponDiscount)}"
+                    )
+                }
+                if (manualDiscount > 0) {
+                    appendLine("Descuento manual: -${formatPrice(manualDiscount)}")
+                }
             }
             appendLine("*Total USD: ${formatPrice(totalUsd)}*")
             if (totalBs != null) {
@@ -985,10 +1096,12 @@ class HomeViewModel(
         viewModelScope.launch {
             _state.update { it.copy(orderProcessing = true, error = null) }
             val discountTicket = _state.value.appliedDiscountTicket
+            val manualDiscount = _state.value.appliedManualDiscountUsd
             val result = inventoryRepository.executeOrder(
                 lines = lines,
                 orderCasheaLevel = orderCasheaLevelForSync(),
-                discountTicket = discountTicket
+                discountTicket = discountTicket,
+                manualDiscountUsd = manualDiscount
             )
             result.onSuccess { syncId ->
                 val message = buildWhatsAppMessage()
@@ -1011,7 +1124,11 @@ class HomeViewModel(
                         orderPaymentChoice = null,
                         appliedDiscountTicket = null,
                         discountTicketCodeInput = "",
-                        discountTicketError = null
+                        discountTicketError = null,
+                        showManualDiscountSection = false,
+                        manualDiscountUsdInput = "",
+                        appliedManualDiscountUsd = 0.0,
+                        manualDiscountError = null
                     )
                 }
                 onOrderConfirmedSound(syncId)
@@ -1230,7 +1347,7 @@ class HomeViewModel(
 
     fun orderCasheaSimulation(): CasheaCalculator.CasheaSimulation? {
         val rate = _state.value.bcvRate ?: return null
-        val baseUsd = orderTotalUsd()
+        val baseUsd = orderTotalUsdAfterDiscount()
         if (!CasheaCalculator.isCasheaEligible(baseUsd)) return null
         return CasheaCalculator.simulate(
             baseUsd = baseUsd,
