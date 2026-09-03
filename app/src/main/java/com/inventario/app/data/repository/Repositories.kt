@@ -7,8 +7,8 @@ import com.inventario.app.data.branch.BranchCatalog
 import com.inventario.app.data.branch.normalizeBranchId
 import com.inventario.app.data.catalog.findProductInCatalog
 import com.inventario.app.data.catalog.inventoryCatalogChanged
-import com.inventario.app.data.catalog.looseCompactProductDescriptionKey
 import com.inventario.app.data.entity.AppMeta
+import com.inventario.app.data.entity.stableProductId
 import com.inventario.app.data.entity.CashClosingAlertType
 import com.inventario.app.data.entity.CashClosingRecord
 import com.inventario.app.data.entity.CashClosingStatus
@@ -588,24 +588,21 @@ class InventoryRepository(
         manualDiscountUsd: Double = 0.0
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val localSnapshot = productsFlow.value
-            awaitFreshCatalogForOrder()
-            val serverCatalog = productsFlow.value
+            val catalog = productsFlow.value
             val now = System.currentTimeMillis()
             val resolvedLines = lines.map { line ->
-                val product = resolveProductForServerOrder(line, serverCatalog, localSnapshot)
-                    ?: error("Producto no encontrado: ${line.description}")
-                val availableQty = availableQuantityForOrder(line, product, localSnapshot)
-                if (availableQty < line.quantity) {
+                val product = productForConfirmation(line, catalog)
+                val catalogMatch = resolveWithStaleIds(line, catalog)
+                if (catalogMatch != null && catalogMatch.quantity < line.quantity) {
                     error(
                         "Stock insuficiente para \"${line.description}\" " +
-                            "(disponible $availableQty, pedido ${line.quantity})."
+                            "(disponible ${catalogMatch.quantity}, pedido ${line.quantity})."
                     )
                 }
                 line.copy(
                     productId = product.id,
-                    productSyncId = product.syncId,
-                    description = product.description
+                    productSyncId = product.syncId.ifBlank { line.productSyncId },
+                    description = line.description.ifBlank { product.description }
                 )
             }
             val subtotalUsd = resolvedLines.sumOf { it.totalUsd }
@@ -668,7 +665,7 @@ class InventoryRepository(
 
             val pushResult = runCatching { pushOrder(pending) }
             pushResult.onFailure { error ->
-                if (error.isConnectivityIssue()) {
+                if (error.isConnectivityIssue() || error.isMissingCatalogProduct()) {
                     pendingOrders.addLast(pending)
                 } else {
                     revertLocalDeduction(resolvedLines, now)
@@ -966,7 +963,8 @@ class InventoryRepository(
             if (result.isSuccess) {
                 pendingOrders.removeFirst()
             } else {
-                if (result.exceptionOrNull()?.isConnectivityIssue() != true) {
+                val err = result.exceptionOrNull()
+                if (err?.isConnectivityIssue() != true && err?.isMissingCatalogProduct() != true) {
                     pendingOrders.removeFirst()
                 }
                 return
@@ -1006,23 +1004,23 @@ class InventoryRepository(
         persistProductsToDisk(productsFlow.value)
     }
 
-    private suspend fun awaitFreshCatalogForOrder(): List<Product> {
-        repeat(INVENTORY_ORDER_FETCH_RETRIES) { attempt ->
-            refreshInventoryState(force = true)
-            val products = productsFlow.value
-            if (products.isNotEmpty() || attempt == INVENTORY_ORDER_FETCH_RETRIES - 1) {
-                return products
-            }
-            delay(INVENTORY_ORDER_FETCH_RETRY_MS)
-        }
-        return productsFlow.value
-    }
-
     /**
-     * Resuelve un producto del pedido contra el inventario actual.
-     * Prioriza syncId; si el catálogo se refrescó tras agregar la línea, empareja
-     * por descripción normalizada (misma regla que el servidor).
+     * La boleta ya tiene el producto que el usuario agregó. Se intenta
+     * emparejar con el inventario visible; si el catálogo se refrescó en
+     * segundo plano, se confirma igual con los datos de la línea.
      */
+    private fun productForConfirmation(line: OrderLine, catalog: List<Product>): Product =
+        resolveWithStaleIds(line, catalog)
+            ?: Product(
+                id = line.productId.takeIf { it != 0L }
+                    ?: stableProductId(line.productSyncId.ifBlank { line.description }),
+                syncId = line.productSyncId,
+                description = line.description,
+                quantity = line.quantity,
+                unit = line.unit,
+                price = line.unitPriceUsd
+            )
+
     private fun resolveProductForOrder(line: OrderLine, products: List<Product>): Product? =
         findProductInCatalog(
             products = products,
@@ -1031,53 +1029,12 @@ class InventoryRepository(
             description = line.description
         )
 
-    /**
-     * Resuelve la línea contra el inventario del servidor (requerido para el push).
-     * Si el syncId local quedó obsoleto tras un refresh, reintenta solo por descripción.
-     */
-    private fun resolveProductForServerOrder(
-        line: OrderLine,
-        serverCatalog: List<Product>,
-        localSnapshot: List<Product>
-    ): Product? {
-        resolveWithStaleIds(line, serverCatalog)?.let { return it }
-
-        val localMatch = resolveWithStaleIds(line, localSnapshot) ?: return null
-
-        if (serverCatalog.isNotEmpty()) {
-            resolveWithStaleIds(
-                line.copy(
-                    productSyncId = "",
-                    productId = 0L,
-                    description = localMatch.description
-                ),
-                serverCatalog
-            )?.let { return it }
-        }
-        return localMatch
-    }
-
     private fun resolveWithStaleIds(line: OrderLine, catalog: List<Product>): Product? =
         resolveProductForOrder(line, catalog)
             ?: resolveProductForOrder(
                 line.copy(productSyncId = "", productId = 0L),
                 catalog
             )
-
-    private fun availableQuantityForOrder(
-        line: OrderLine,
-        resolved: Product,
-        localSnapshot: List<Product>
-    ): Double {
-        if (resolved.quantity >= line.quantity) return resolved.quantity
-        val localMatch = resolveWithStaleIds(line, localSnapshot) ?: return resolved.quantity
-        if (looseCompactProductDescriptionKey(localMatch.description) ==
-            looseCompactProductDescriptionKey(resolved.description)
-        ) {
-            return maxOf(resolved.quantity, localMatch.quantity)
-        }
-        return resolved.quantity
-    }
 
     private fun inventoryDiskKey(): String =
         "inventory_${normalizeBranchId(orderPreviewBranchId ?: cloudSync.branchId ?: "default")}"
@@ -1256,6 +1213,9 @@ class InventoryRepository(
         this is ApiException && (code == 0 || code in 500..599) ||
             this !is ApiException
 
+    private fun Throwable.isMissingCatalogProduct(): Boolean =
+        message.orEmpty().contains("Producto no encontrado", ignoreCase = true)
+
     private fun todayBounds(): Pair<Long, Long> {
         val startOfDay = ZonedDateTime.now(CARACAS_ZONE).toLocalDate().atStartOfDay(CARACAS_ZONE)
         val endOfDay = startOfDay.plusDays(1)
@@ -1380,8 +1340,6 @@ class InventoryRepository(
         private const val SALES_BRANCH_FETCH_RETRY_MS = 450L
         private const val INVENTORY_BRANCH_FETCH_RETRIES = 2
         private const val INVENTORY_BRANCH_FETCH_RETRY_MS = 450L
-        private const val INVENTORY_ORDER_FETCH_RETRIES = 2
-        private const val INVENTORY_ORDER_FETCH_RETRY_MS = 500L
         private const val LOCAL_INVENTORY_PROTECT_MS = 4_000L
         private const val BRANCH_INVENTORY_REFRESH_DEBOUNCE_MS = 1_500L
         private const val INVENTORY_CACHE_PREFS = "inventory_local_cache"

@@ -5,11 +5,15 @@ import java.text.Normalizer
 import java.util.Locale
 
 /** Misma normalización que `normalizeProductDescription` en sync-server/server.js. */
+private val UNICODE_DASHES = Regex("[\\u2010-\\u2015\\u2212\\uFE58\\uFE63\\uFF0D]")
+private val TOKEN_SPLIT = Regex("[\\s\\-_./+,]+")
+
 fun normalizeProductDescription(text: String): String =
     Normalizer.normalize(text, Normalizer.Form.NFD)
         .replace(Regex("\\p{Mn}+"), "")
         .replace(Regex("[\\u200B\\uFEFF]"), "")
         .replace(Regex("[＋⁺₊﹢]"), "+")
+        .replace(UNICODE_DASHES, "-")
         .lowercase(Locale.ROOT)
         .replace(Regex("\\s+"), " ")
         .replace(Regex("\\s*\\+\\s*"), "+")
@@ -23,11 +27,17 @@ private fun compactProductDescriptionKey(text: String): String =
 internal fun looseCompactProductDescriptionKey(text: String): String =
     normalizeProductDescription(text).replace(Regex("[\\s\\-.]+"), "")
 
+private fun descriptionTokens(text: String): List<String> =
+    normalizeProductDescription(text).split(TOKEN_SPLIT).filter { it.isNotBlank() }
+
 private fun descriptionsMatchByTokens(description: String, query: String): Boolean {
-    val tokens = normalizeProductDescription(query).split(Regex("\\s+")).filter { it.isNotBlank() }
+    val tokens = descriptionTokens(query)
     if (tokens.isEmpty()) return false
-    val normalizedDesc = normalizeProductDescription(description)
-    return tokens.all { token -> normalizedDesc.contains(token) }
+    val haystack = descriptionTokens(description).joinToString(" ")
+    val compactHay = looseCompactProductDescriptionKey(description)
+    return tokens.all { token ->
+        haystack.contains(token) || compactHay.contains(token.replace("-", ""))
+    }
 }
 
 /**

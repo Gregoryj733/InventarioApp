@@ -177,6 +177,7 @@ function normalizeProductDescription(text) {
     .replace(/\p{Mn}/gu, "")
     .replace(/[\u200B\uFEFF]/g, "")
     .replace(/[＋⁺₊﹢]/g, "+")
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, "-")
     .toLowerCase()
     .replace(/\s+/g, " ")
     .replace(/\s*\+\s*/g, "+")
@@ -191,6 +192,10 @@ function looseCompactProductDescriptionKey(text) {
   return normalizeProductDescription(text).replace(/[\s\-.]+/g, "");
 }
 
+function descriptionTokens(text) {
+  return normalizeProductDescription(text).split(/[\s\-_./+,]+/).filter(Boolean);
+}
+
 function pickBestDescriptionMatch(candidates, description) {
   return [...candidates].sort((a, b) => {
     const aExact = a.description.toLowerCase() === description.toLowerCase() ? 1 : 0;
@@ -201,10 +206,13 @@ function pickBestDescriptionMatch(candidates, description) {
 }
 
 function descriptionsMatchByTokens(description, query) {
-  const tokens = normalizeProductDescription(query).split(/\s+/).filter(Boolean);
+  const tokens = descriptionTokens(query);
   if (!tokens.length) return false;
-  const normalizedDesc = normalizeProductDescription(description);
-  return tokens.every((token) => normalizedDesc.includes(token));
+  const haystack = descriptionTokens(description).join(" ");
+  const compactHay = looseCompactProductDescriptionKey(description);
+  return tokens.every(
+    (token) => haystack.includes(token) || compactHay.includes(token.replace(/-/g, ""))
+  );
 }
 
 /**
@@ -984,16 +992,15 @@ async function start() {
             throw publicError("Línea de pedido inválida");
           }
           const product = resolveProductForOrderLine(products, line);
-          if (!product) {
-            throw publicError(`Producto no encontrado: ${line.description || line.productSyncId}`);
+          if (product) {
+            productBySyncId.set(product.syncId, product);
+            const newQty = Number(product.quantity) - quantity;
+            if (newQty < 0) {
+              throw publicError(`Stock insuficiente para "${product.description}"`);
+            }
+            product.quantity = newQty;
+            product.updatedAt = createdAt;
           }
-          productBySyncId.set(product.syncId, product);
-          const newQty = Number(product.quantity) - quantity;
-          if (newQty < 0) {
-            throw publicError(`Stock insuficiente para "${product.description}"`);
-          }
-          product.quantity = newQty;
-          product.updatedAt = createdAt;
         }
 
         const resolvedDiscountUsd = Math.max(0, Number(discountUsd) || 0);
