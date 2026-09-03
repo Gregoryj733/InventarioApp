@@ -119,6 +119,16 @@ fun MainHubScreen(
     onNavigate: (HubDestination) -> Unit,
     onRefreshBcv: () -> Unit,
     onLogout: () -> Unit,
+    showBcvAdminDialog: Boolean = false,
+    bcvAdminRateText: String = "",
+    bcvAdminSaving: Boolean = false,
+    bcvAdminError: String? = null,
+    bcvManualOverride: Boolean = false,
+    onOpenBcvAdminDialog: (() -> Unit)? = null,
+    onDismissBcvAdminDialog: () -> Unit = {},
+    onBcvAdminRateChange: (String) -> Unit = {},
+    onSaveManualBcvRate: () -> Unit = {},
+    onRestoreAutomaticBcv: () -> Unit = {},
     onOpenBranchSwitch: () -> Unit = {},
     onDismissBranchSwitch: () -> Unit = {},
     onBranchSelected: (String) -> Unit = {},
@@ -324,6 +334,78 @@ fun MainHubScreen(
         )
     }
 
+    if (showBcvAdminDialog) {
+        AlertDialog(
+            onDismissRequest = onDismissBcvAdminDialog,
+            title = { Text("Tasa BCV (administrador)") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "La tasa automática se mantiene fija hasta las 7:00 p.m. " +
+                            "(hora de Caracas) y luego se actualiza desde bcv.org.ve.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (bcvManualOverride) {
+                        Text(
+                            text = "Modo manual activo: el sistema no actualizará la tasa automáticamente.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = BrandWarning
+                        )
+                    }
+                    OutlinedTextField(
+                        value = bcvAdminRateText,
+                        onValueChange = onBcvAdminRateChange,
+                        label = { Text("Tasa Bs/USD") },
+                        singleLine = true,
+                        enabled = !bcvAdminSaving,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    bcvAdminError?.let { error ->
+                        Text(
+                            text = error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = onSaveManualBcvRate,
+                    enabled = !bcvAdminSaving
+                ) {
+                    if (bcvAdminSaving) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Guardar manual")
+                    }
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (bcvManualOverride) {
+                        TextButton(
+                            onClick = onRestoreAutomaticBcv,
+                            enabled = !bcvAdminSaving
+                        ) {
+                            Text("Automático")
+                        }
+                    }
+                    TextButton(
+                        onClick = onDismissBcvAdminDialog,
+                        enabled = !bcvAdminSaving
+                    ) {
+                        Text("Cancelar")
+                    }
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             BrandAppTopBar(
@@ -353,7 +435,8 @@ fun MainHubScreen(
                     bcvRefreshing = bcvRefreshing && !branchSwitchLoading,
                     branchKpis = branchSalesKpis,
                     kpiLoading = branchKpisLoading && !branchSwitchLoading,
-                    showBranchKpis = showBranchKpis
+                    showBranchKpis = showBranchKpis,
+                    onEditBcv = onOpenBcvAdminDialog
                 )
                 if (showClosingExcelReminder) {
                     Spacer(Modifier.height(10.dp))

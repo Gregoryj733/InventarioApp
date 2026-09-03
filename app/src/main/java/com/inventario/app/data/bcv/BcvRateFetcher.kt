@@ -6,7 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.time.Instant
-import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.util.concurrent.TimeUnit
 
@@ -152,12 +152,29 @@ class BcvRateFetcher(
 
         private val CARACAS_ZONE = ZoneId.of("America/Caracas")
 
-        /** true si la tasa guardada es de un día anterior (hora de Caracas). */
-        fun isStale(fetchedAt: Long?): Boolean {
+        /** Hora (Caracas) a partir de la cual se puede volver a consultar la fuente oficial el mismo día. */
+        const val DAILY_RATE_UPDATE_HOUR = 19
+
+        /**
+         * Indica si el sistema debe consultar automáticamente la tasa oficial (bcv.org.ve).
+         *
+         * - La tasa del día permanece fija hasta las 7:00 p.m. (hora de Caracas).
+         * - Después de las 7:00 p.m. se actualiza si la tasa vigente es anterior a ese horario.
+         * - Si el admin activó un ajuste manual, no se actualiza automáticamente.
+         */
+        fun shouldAutoRefresh(fetchedAt: Long?, manualOverride: Boolean): Boolean {
+            if (manualOverride) return false
             if (fetchedAt == null) return true
-            val fetchedDay = Instant.ofEpochMilli(fetchedAt).atZone(CARACAS_ZONE).toLocalDate()
-            val today = LocalDate.now(CARACAS_ZONE)
-            return fetchedDay.isBefore(today)
+
+            val now = Instant.now().atZone(CARACAS_ZONE)
+            val fetched = Instant.ofEpochMilli(fetchedAt).atZone(CARACAS_ZONE)
+            val today = now.toLocalDate()
+            val updateTime = LocalTime.of(DAILY_RATE_UPDATE_HOUR, 0)
+
+            if (fetched.toLocalDate().isBefore(today)) return true
+            if (now.toLocalTime().isBefore(updateTime)) return false
+
+            return fetched.toLocalTime().isBefore(updateTime)
         }
     }
 }

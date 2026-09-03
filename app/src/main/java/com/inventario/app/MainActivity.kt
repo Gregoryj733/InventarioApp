@@ -320,6 +320,20 @@ private fun InventarioRoot(
                     },
                     onRefreshBcv = hubVm::refreshBcv,
                     onLogout = logoutAndNotify,
+                    showBcvAdminDialog = hubState.showBcvAdminDialog,
+                    bcvAdminRateText = hubState.bcvAdminRateText,
+                    bcvAdminSaving = hubState.bcvAdminSaving,
+                    bcvAdminError = hubState.bcvAdminError,
+                    bcvManualOverride = hubState.bcvManualOverride,
+                    onOpenBcvAdminDialog = if (hubState.role == UserRole.ADMIN) {
+                        hubVm::openBcvAdminDialog
+                    } else {
+                        null
+                    },
+                    onDismissBcvAdminDialog = hubVm::dismissBcvAdminDialog,
+                    onBcvAdminRateChange = hubVm::onBcvAdminRateChange,
+                    onSaveManualBcvRate = hubVm::saveManualBcvRate,
+                    onRestoreAutomaticBcv = hubVm::restoreAutomaticBcv,
                     onOpenBranchSwitch = hubVm::openBranchSwitchDialog,
                     onDismissBranchSwitch = hubVm::dismissBranchSwitchDialog,
                     onBranchSelected = hubVm::requestBranchSwitch,

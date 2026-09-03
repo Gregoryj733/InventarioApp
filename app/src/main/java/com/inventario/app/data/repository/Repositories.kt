@@ -477,23 +477,41 @@ class InventoryRepository(
 
     suspend fun findProduct(id: Long): Product? = productsFlow.value.find { it.id == id }
 
-    suspend fun saveBcvRate(rate: Double) = withContext(Dispatchers.IO) {
+    suspend fun saveBcvRate(rate: Double, manualOverride: Boolean = false) = withContext(Dispatchers.IO) {
         runCatching {
             val response = cloudSync.putJson(
                 "/v1/meta",
                 JSONObject().apply {
                     put("bcvRate", rate)
                     put("bcvFetchedAt", System.currentTimeMillis())
+                    put("bcvManualOverride", manualOverride)
                 }
             )
             metaFlow.update { current ->
                 (current ?: AppMeta()).copy(
                     bcvRate = response.optDoubleOrNull("bcvRate") ?: rate,
-                    bcvFetchedAt = response.optLongOrNull("bcvFetchedAt")
+                    bcvFetchedAt = response.optLongOrNull("bcvFetchedAt"),
+                    bcvManualOverride = response.optBoolean("bcvManualOverride", manualOverride)
                 )
             }
         }
     }
+
+    suspend fun restoreAutomaticBcv() = withContext(Dispatchers.IO) {
+        runCatching {
+            val response = cloudSync.putJson(
+                "/v1/meta",
+                JSONObject().apply { put("bcvManualOverride", false) }
+            )
+            metaFlow.update { current ->
+                (current ?: AppMeta()).copy(
+                    bcvManualOverride = response.optBoolean("bcvManualOverride", false)
+                )
+            }
+        }
+    }
+
+    fun currentMeta(): AppMeta? = metaFlow.value
 
     suspend fun currentBcvRate(): Double? = metaFlow.value?.bcvRate
 
@@ -1072,6 +1090,7 @@ class InventoryRepository(
             metaFlow.value = AppMeta(
                 bcvRate = metaJson?.optDoubleOrNull("bcvRate"),
                 bcvFetchedAt = metaJson?.optLongOrNull("bcvFetchedAt"),
+                bcvManualOverride = metaJson?.optBoolean("bcvManualOverride", false) ?: false,
                 lastInventoryUpdateAt = metaJson?.optLongOrNull("lastInventoryUpdateAt"),
                 discountPercent = metaJson?.optDoubleOrNull("discountPercent")
             )

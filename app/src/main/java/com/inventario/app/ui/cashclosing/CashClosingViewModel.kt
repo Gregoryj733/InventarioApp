@@ -155,7 +155,11 @@ class CashClosingViewModel(
                 inventoryRepository.observeMeta().collect { meta ->
                     val rate = meta?.bcvRate?.let(::roundRate)
                     onBcvRateAvailable(rate, forceRateText = false)
-                    if (BcvRateFetcher.isStale(meta?.bcvFetchedAt)) {
+                    if (BcvRateFetcher.shouldAutoRefresh(
+                            meta?.bcvFetchedAt,
+                            meta?.bcvManualOverride == true
+                        )
+                    ) {
                         refreshBcv()
                     }
                 }
@@ -185,7 +189,12 @@ class CashClosingViewModel(
                 }
             }
         }
-        refreshBcv()
+        viewModelScope.launch {
+            val meta = inventoryRepository.currentMeta()
+            if (BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, meta?.bcvManualOverride == true)) {
+                refreshBcv()
+            }
+        }
         refreshClosingStatus()
         refreshClosingHistory()
     }
@@ -392,6 +401,10 @@ class CashClosingViewModel(
 
     fun refreshBcv() {
         viewModelScope.launch {
+            val meta = inventoryRepository.currentMeta()
+            if (!BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, meta?.bcvManualOverride == true)) {
+                return@launch
+            }
             _state.update {
                 it.copy(
                     bcvRefreshing = true,
@@ -401,7 +414,7 @@ class CashClosingViewModel(
             val result = bcvRateFetcher.fetchUsdRate()
             result.onSuccess { rate ->
                 val rounded = roundRate(rate)
-                inventoryRepository.saveBcvRate(rounded)
+                inventoryRepository.saveBcvRate(rounded, manualOverride = false)
                 onBcvRateAvailable(rounded, forceRateText = true)
                 _state.update { it.copy(bcvRefreshing = false) }
             }.onFailure {

@@ -152,17 +152,14 @@ class HomeViewModel(
         viewModelScope.launch {
             inventoryRepository.observeMeta().collect { meta ->
                 val rate = meta?.bcvRate?.let(::roundBcvRate)
+                val manual = meta?.bcvManualOverride == true
                 _state.update { state ->
                     state.copy(
                         bcvRate = rate,
-                        bcvLabel = if (rate != null) {
-                            "Tasa BCV: Bs ${bcvRateFormat.format(rate)}"
-                        } else {
-                            "Tasa BCV: sin datos"
-                        }
+                        bcvLabel = formatBcvLabel(rate, manual)
                     )
                 }
-                if (BcvRateFetcher.isStale(meta?.bcvFetchedAt)) {
+                if (BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, manual)) {
                     refreshBcv()
                 }
             }
@@ -192,7 +189,12 @@ class HomeViewModel(
             }
         }
         subscribeCloudSync()
-        refreshBcv()
+        viewModelScope.launch {
+            val meta = inventoryRepository.currentMeta()
+            if (BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, meta?.bcvManualOverride == true)) {
+                refreshBcv()
+            }
+        }
     }
 
     fun resetTodayOrders() {
@@ -1148,6 +1150,10 @@ class HomeViewModel(
 
     fun refreshBcv() {
         viewModelScope.launch {
+            val meta = inventoryRepository.currentMeta()
+            if (!BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, meta?.bcvManualOverride == true)) {
+                return@launch
+            }
             _state.update {
                 it.copy(
                     bcvRefreshing = true,
@@ -1157,12 +1163,12 @@ class HomeViewModel(
             val result = bcvRateFetcher.fetchUsdRate()
             result.onSuccess { rate ->
                 val rounded = roundBcvRate(rate)
-                inventoryRepository.saveBcvRate(rounded)
+                inventoryRepository.saveBcvRate(rounded, manualOverride = false)
                 _state.update {
                     it.copy(
                         bcvRefreshing = false,
                         bcvRate = rounded,
-                        bcvLabel = "Tasa BCV: Bs ${bcvRateFormat.format(rounded)}"
+                        bcvLabel = formatBcvLabel(rounded, manual = false)
                     )
                 }
             }.onFailure {
@@ -1320,6 +1326,12 @@ class HomeViewModel(
 
     private fun roundBcvRate(rate: Double): Double =
         kotlin.math.round(rate * 100) / 100.0
+
+    private fun formatBcvLabel(rate: Double?, manual: Boolean): String {
+        if (rate == null) return "Tasa BCV: sin datos"
+        val base = "Tasa BCV: Bs ${bcvRateFormat.format(rate)}"
+        return if (manual) "$base (manual)" else base
+    }
 
     fun formatPrice(value: Double): String = "$${moneyFormat.format(value)}"
 

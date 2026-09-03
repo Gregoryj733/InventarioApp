@@ -56,7 +56,12 @@ data class HubUiState(
     val reauthPassword: String = "",
     val bcvRate: Double? = null,
     val bcvLabel: String = "Tasa BCV: —",
+    val bcvManualOverride: Boolean = false,
     val bcvRefreshing: Boolean = false,
+    val showBcvAdminDialog: Boolean = false,
+    val bcvAdminRateText: String = "",
+    val bcvAdminSaving: Boolean = false,
+    val bcvAdminError: String? = null,
     val currentDate: String = "",
     val cashClosingAlert: CashClosingAlertType? = null,
     val pendingReportsCount: Int = 0,
@@ -99,22 +104,27 @@ class HubViewModel(
         viewModelScope.launch {
             inventoryRepository.observeMeta().collect { meta ->
                 val rate = meta?.bcvRate?.let(::roundBcvRate)
+                val manual = meta?.bcvManualOverride == true
                 _state.update { state ->
                     state.copy(
                         bcvRate = rate,
-                        bcvLabel = if (rate != null) {
-                            "Tasa BCV: Bs ${bcvRateFormat.format(rate)}"
-                        } else {
-                            "Tasa BCV: sin datos"
-                        }
+                        bcvManualOverride = manual,
+                        bcvLabel = formatBcvLabel(rate, manual)
                     )
                 }
-                if (BcvRateFetcher.isStale(meta?.bcvFetchedAt) && !_state.value.branchSwitchLoading) {
+                if (BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, manual) &&
+                    !_state.value.branchSwitchLoading
+                ) {
                     refreshBcv()
                 }
             }
         }
-        refreshBcv()
+        viewModelScope.launch {
+            val meta = inventoryRepository.currentMeta()
+            if (BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, meta?.bcvManualOverride == true)) {
+                refreshBcv()
+            }
+        }
         refreshClosingAlerts()
         viewModelScope.launch {
             inventoryRepository.observeCloudEvents().collect { event ->
@@ -339,7 +349,16 @@ class HubViewModel(
         }
         coroutineScope {
             val closingAlerts = async { loadClosingAlertsIntoState() }
-            val bcv = async { refreshBcvInternal(showIndicator = false) }
+            val bcv = async {
+                val meta = inventoryRepository.currentMeta()
+                if (BcvRateFetcher.shouldAutoRefresh(
+                        meta?.bcvFetchedAt,
+                        meta?.bcvManualOverride == true
+                    )
+                ) {
+                    refreshBcvInternal(showIndicator = false)
+                }
+            }
             val kpis = async { loadBranchSalesKpis(showLoading = false) }
             closingAlerts.await()
             bcv.await()
@@ -461,7 +480,103 @@ class HubViewModel(
 
     fun refreshBcv() {
         viewModelScope.launch {
+            val meta = inventoryRepository.currentMeta()
+            if (!BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, meta?.bcvManualOverride == true)) {
+                return@launch
+            }
             refreshBcvInternal(showIndicator = !_state.value.branchSwitchLoading)
+        }
+    }
+
+    fun openBcvAdminDialog() {
+        if (_state.value.role != UserRole.ADMIN) return
+        val current = _state.value.bcvRate
+        _state.update {
+            it.copy(
+                showBcvAdminDialog = true,
+                bcvAdminRateText = current?.let { rate -> bcvRateFormat.format(rate) }.orEmpty(),
+                bcvAdminError = null
+            )
+        }
+    }
+
+    fun dismissBcvAdminDialog() {
+        _state.update {
+            it.copy(
+                showBcvAdminDialog = false,
+                bcvAdminError = null,
+                bcvAdminSaving = false
+            )
+        }
+    }
+
+    fun onBcvAdminRateChange(value: String) {
+        _state.update { it.copy(bcvAdminRateText = value, bcvAdminError = null) }
+    }
+
+    fun saveManualBcvRate() {
+        if (_state.value.role != UserRole.ADMIN) return
+        viewModelScope.launch {
+            val parsed = parseBcvInput(_state.value.bcvAdminRateText)
+            if (parsed == null || parsed <= 0) {
+                _state.update { it.copy(bcvAdminError = "Ingresa una tasa válida mayor a cero.") }
+                return@launch
+            }
+            val rounded = roundBcvRate(parsed)
+            _state.update { it.copy(bcvAdminSaving = true, bcvAdminError = null) }
+            inventoryRepository.saveBcvRate(rounded, manualOverride = true)
+                .onSuccess {
+                    _state.update {
+                        it.copy(
+                            bcvAdminSaving = false,
+                            showBcvAdminDialog = false,
+                            bcvRate = rounded,
+                            bcvManualOverride = true,
+                            bcvLabel = formatBcvLabel(rounded, manual = true)
+                        )
+                    }
+                    if (_state.value.showBranchKpis) refreshBranchSalesKpis(showLoading = false)
+                    AppSnackbarController.show("Tasa BCV ajustada manualmente.")
+                }
+                .onFailure { err ->
+                    _state.update {
+                        it.copy(
+                            bcvAdminSaving = false,
+                            bcvAdminError = err.toUserMessage("No se pudo guardar la tasa.")
+                        )
+                    }
+                }
+        }
+    }
+
+    fun restoreAutomaticBcv() {
+        if (_state.value.role != UserRole.ADMIN) return
+        viewModelScope.launch {
+            _state.update { it.copy(bcvAdminSaving = true, bcvAdminError = null) }
+            inventoryRepository.restoreAutomaticBcv()
+                .onSuccess {
+                    val meta = inventoryRepository.currentMeta()
+                    _state.update {
+                        it.copy(
+                            bcvAdminSaving = false,
+                            showBcvAdminDialog = false,
+                            bcvManualOverride = false,
+                            bcvLabel = formatBcvLabel(meta?.bcvRate?.let(::roundBcvRate), manual = false)
+                        )
+                    }
+                    AppSnackbarController.show("Modo automático BCV restaurado.")
+                    if (BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, manualOverride = false)) {
+                        refreshBcvInternal(showIndicator = false)
+                    }
+                }
+                .onFailure { err ->
+                    _state.update {
+                        it.copy(
+                            bcvAdminSaving = false,
+                            bcvAdminError = err.toUserMessage("No se pudo restaurar el modo automático.")
+                        )
+                    }
+                }
         }
     }
 
@@ -474,12 +589,13 @@ class HubViewModel(
         bcvRateFetcher.fetchUsdRate()
             .onSuccess { rate ->
                 val rounded = roundBcvRate(rate)
-                inventoryRepository.saveBcvRate(rounded)
+                inventoryRepository.saveBcvRate(rounded, manualOverride = false)
                 _state.update {
                     it.copy(
                         bcvRefreshing = false,
                         bcvRate = rounded,
-                        bcvLabel = "Tasa BCV: Bs ${bcvRateFormat.format(rounded)}"
+                        bcvManualOverride = false,
+                        bcvLabel = formatBcvLabel(rounded, manual = false)
                     )
                 }
                 if (_state.value.showBranchKpis) refreshBranchSalesKpis(showLoading = false)
@@ -490,6 +606,19 @@ class HubViewModel(
     }
 
     private fun roundBcvRate(rate: Double): Double = round(rate * 100) / 100.0
+
+    private fun formatBcvLabel(rate: Double?, manual: Boolean): String {
+        if (rate == null) return "Tasa BCV: sin datos"
+        val base = "Tasa BCV: Bs ${bcvRateFormat.format(rate)}"
+        return if (manual) "$base (manual)" else base
+    }
+
+    private fun parseBcvInput(raw: String): Double? {
+        val cleaned = raw.trim()
+            .replace(" ", "")
+            .replace(',', '.')
+        return cleaned.toDoubleOrNull()
+    }
 
     companion object {
         fun factory(

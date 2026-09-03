@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -167,6 +169,7 @@ fun HubDailySnapshotCard(
     branchKpis: List<BranchDailySalesKpi>,
     kpiLoading: Boolean,
     showBranchKpis: Boolean,
+    onEditBcv: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val hasRate = bcvLabel.isNotBlank() && !bcvLabel.endsWith("—")
@@ -235,6 +238,15 @@ fun HubDailySnapshotCard(
                         strokeWidth = 2.dp,
                         color = MaterialTheme.colorScheme.primary
                     )
+                } else if (onEditBcv != null) {
+                    IconButton(onClick = onEditBcv, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Ajustar tasa BCV",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 
