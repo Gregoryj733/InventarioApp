@@ -658,9 +658,16 @@ class InventoryRepository(
     fun currentConfirmedOrdersToday(): List<ConfirmedOrderPreview> =
         confirmedOrdersTodayFlow.value
 
-    private suspend fun mergedConfirmedOrdersToday(): MergedOrdersResult {
+    private suspend fun mergedConfirmedOrdersToday(fullServerFetch: Boolean = false): MergedOrdersResult {
         val (start, end) = todayBounds()
-        val fetch = fetchConfirmedOrdersWithStatus(start, end)
+        // En eventos de sucursal (WebSocket/FCM) se consulta el historial completo
+        // y se filtra en cliente: evita perder pedidos de otros usuarios por
+        // desfases de rango en el filtro del servidor.
+        val fetch = if (fullServerFetch) {
+            fetchConfirmedOrdersWithStatus(null, null)
+        } else {
+            fetchConfirmedOrdersWithStatus(start, end)
+        }
         val serverOrders = fetch.orders.filter { it.createdAt in start until end }
         val localOrders = localOrdersForMerge(start, end)
         val merged = mergeConfirmedOrderPreviews(serverOrders, localOrders)
@@ -673,12 +680,12 @@ class InventoryRepository(
     }
 
     private suspend fun resolveConfirmedOrdersMerged(fromBranchEvent: Boolean): MergedOrdersResult {
-        var result = mergedConfirmedOrdersToday()
+        var result = mergedConfirmedOrdersToday(fullServerFetch = fromBranchEvent)
         if (!fromBranchEvent) return result
 
         repeat(SALES_BRANCH_FETCH_RETRIES) {
             delay(SALES_BRANCH_FETCH_RETRY_MS)
-            val fresher = mergedConfirmedOrdersToday()
+            val fresher = mergedConfirmedOrdersToday(fullServerFetch = true)
             if (!fresher.serverFetchSuccess) return@repeat
             if (fresher.serverOrderCount > result.serverOrderCount ||
                 fresher.merged.size > result.merged.size
@@ -716,16 +723,23 @@ class InventoryRepository(
             }
         }
 
-        if (result.merged.isEmpty() && (current.isNotEmpty() || localToday.isNotEmpty())) {
-            Log.w(
-                TAG,
-                "Pedidos: servidor vacío; se mantiene caché local " +
-                    "(en pantalla=${current.size}, disco=${localToday.size})"
-            )
-            return
+        // Servidor sin ventas en el rango: conservar caché local (p. ej. Render
+        // reiniciado). Si el servidor sí trae ventas de otros dispositivos, siempre
+        // aplicar el merge para que todos los usuarios de la sucursal vean lo mismo.
+        if (result.serverOrderCount == 0 && result.merged.isEmpty()) {
+            if (current.isNotEmpty() || localToday.isNotEmpty()) {
+                Log.w(
+                    TAG,
+                    "Pedidos: servidor vacío; se mantiene caché local " +
+                        "(en pantalla=${current.size}, disco=${localToday.size})"
+                )
+                return
+            }
         }
 
-        if (result.merged == current) {
+        val currentIds = current.map { it.syncId }.toSet()
+        val hasNewServerOrders = result.merged.any { it.syncId !in currentIds }
+        if (!hasNewServerOrders && result.merged == current) {
             if (fromBranchEvent && result.serverOrderCount > 0) {
                 Log.d(TAG, "Pedidos de sucursal ya actualizados (${result.serverOrderCount} en servidor)")
             }

@@ -9,6 +9,16 @@
         android:name="android.hardware.camera"
         android:required="false" />
 
+    <!-- Android 11+: sin esto resolveActivity no detecta WhatsApp y no abre el envío. -->
+    <queries>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+    </queries>
+
     <application
         android:name=".InventarioApplication"
         android:allowBackup="true"
