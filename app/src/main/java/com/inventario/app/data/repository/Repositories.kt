@@ -587,10 +587,19 @@ class InventoryRepository(
         manualDiscountUsd: Double = 0.0
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val currentProducts = awaitFreshCatalogForOrder()
+            val localCatalog = productsFlow.value
+            val catalog = if (lines.all { resolveProductForOrder(it, localCatalog) != null }) {
+                localCatalog
+            } else {
+                awaitFreshCatalogForOrder()
+                productsFlow.value
+            }
+            val fallbackCatalog = if (catalog !== localCatalog) localCatalog else emptyList()
             val now = System.currentTimeMillis()
             val resolvedLines = lines.map { line ->
-                val product = resolveProductForOrder(line, currentProducts)
+                val product = resolveProductForOrder(line, catalog)
+                    ?: fallbackCatalog.takeIf { it.isNotEmpty() }
+                        ?.let { resolveProductForOrder(line, it) }
                     ?: error("Producto no encontrado: ${line.description}")
                 if (product.quantity < line.quantity) {
                     error(

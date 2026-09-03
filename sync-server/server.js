@@ -176,7 +176,13 @@ function normalizeProductDescription(text) {
     .normalize("NFD")
     .replace(/\p{Mn}/gu, "")
     .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\s*\+\s*/g, "+")
     .trim();
+}
+
+function compactProductDescriptionKey(text) {
+  return normalizeProductDescription(text).replace(/\s+/g, "");
 }
 
 /**
@@ -202,6 +208,19 @@ function resolveProductForOrderLine(products, line) {
       exactMatches.find((item) => item.description.toLowerCase() === description.toLowerCase()) ||
       exactMatches[0]
     );
+  }
+  const compact = compactProductDescriptionKey(description);
+  if (compact) {
+    const compactMatches = products.filter(
+      (item) => compactProductDescriptionKey(item.description) === compact
+    );
+    if (compactMatches.length === 1) return compactMatches[0];
+    if (compactMatches.length > 1) {
+      return (
+        compactMatches.find((item) => item.description.toLowerCase() === description.toLowerCase()) ||
+        compactMatches[0]
+      );
+    }
   }
   const looseMatches = products.filter((item) =>
     item.description.toLowerCase() === description.toLowerCase()
