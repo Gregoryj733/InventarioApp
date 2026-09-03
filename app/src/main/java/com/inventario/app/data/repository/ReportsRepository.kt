@@ -33,9 +33,10 @@ class ReportsRepository(private var cloudSync: CloudSync) {
 
     suspend fun loadSummary(start: Long, end: Long, bcvRate: Double?): ReportsSummary =
         withContext(Dispatchers.IO) {
-            // Ventas y cierres se acotan al rango seleccionado (por defecto el día
-            // actual). Pendientes, con diferencia, aprobados y rechazados comparten
-            // el mismo filtro de período.
+            // Ventas sí se acotan al rango (crecen sin límite). Los cierres se
+            // traen completos: la cola de aprobación debe mostrar TODOS los
+            // PENDING (cuadrados y con diferencia), de cualquier usuario de la
+            // sucursal; aprobados/rechazados se filtran al período seleccionado.
             val rangeQuery = mapOf("start" to start.toString(), "end" to end.toString())
             val sales = cloudSync.get("/v1/sales", rangeQuery).optJSONArray("sales")?.toSaleList().orEmpty()
             val totalUsd = sales.sumOf { it.totalUsd }
@@ -59,10 +60,10 @@ class ReportsRepository(private var cloudSync: CloudSync) {
                 totalSalesUsd = totalUsd,
                 totalSalesBs = totalBs,
                 orderCount = orderCount,
-                balancedPendingClosings = periodClosings
+                balancedPendingClosings = allClosings
                     .filter { it.status == CashClosingStatus.PENDING && !it.hasDifference }
                     .sortedByDescending { it.closedAt },
-                differencePendingClosings = periodClosings
+                differencePendingClosings = allClosings
                     .filter { it.status == CashClosingStatus.PENDING && it.hasDifference }
                     .sortedByDescending { it.closedAt },
                 approvedClosings = approvedClosings,

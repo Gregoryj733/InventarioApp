@@ -205,9 +205,9 @@ class ReportsViewModel(
     val state: StateFlow<ReportsUiState> = _state.asStateFlow()
 
     init {
-        // Por defecto el flujo de aprobación muestra el día actual. Todos los
-        // segmentos (pendientes, diferencias, aprobados, rechazados) respetan
-        // el rango de fechas seleccionado.
+        // Por defecto el flujo de aprobación muestra el día actual para ventas,
+        // aprobados y rechazados. Los PENDING se listan todos (cualquier fecha),
+        // para que Admin/Supervisor pueda validar cierres de otros usuarios.
         val today = Calendar.getInstance()
         val historyStart = Calendar.getInstance().apply {
             add(Calendar.DAY_OF_MONTH, -(ReportsRepository.MAX_RANGE_DAYS - 1))
@@ -558,9 +558,9 @@ fun ReportsScreen(
                         text = if (showHistoryTab && selectedTabIndex == ReportsTab.HISTORY.ordinal) {
                             "Filtra el historial por rango de fechas y exporta a Excel."
                         } else {
-                            "Por defecto muestra cierres del día actual. " +
-                                "Usa las fechas o atajos para consultar otro período (hasta " +
-                                "${ReportsRepository.MAX_RANGE_DAYS} días)."
+                            "Los cierres pendientes de validar (de cualquier usuario) se muestran " +
+                                "siempre. Ventas, aprobados y rechazados usan el rango de fechas " +
+                                "(por defecto hoy; hasta ${ReportsRepository.MAX_RANGE_DAYS} días)."
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -888,7 +888,7 @@ private fun ReportsContent(
     ) {
         if (summary.balancedPendingClosings.isEmpty()) {
             Text(
-                "Sin cierres cuadrados pendientes en el período ($periodLabel).",
+                "Sin cierres cuadrados pendientes.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
@@ -916,7 +916,7 @@ private fun ReportsContent(
     ) {
         if (summary.differencePendingClosings.isEmpty()) {
             Text(
-                "Sin cierres con diferencias pendientes en el período ($periodLabel).",
+                "Sin cierres con diferencias pendientes.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
