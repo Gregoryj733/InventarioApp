@@ -193,10 +193,20 @@ function resolveProductForOrderLine(products, line) {
   const description = String(line?.description ?? "").trim();
   if (!description) return null;
   const normalized = normalizeProductDescription(description);
-  const matches = products.filter(
+  const exactMatches = products.filter(
     (item) => normalizeProductDescription(item.description) === normalized
   );
-  return matches.length === 1 ? matches[0] : null;
+  if (exactMatches.length === 1) return exactMatches[0];
+  if (exactMatches.length > 1) {
+    return (
+      exactMatches.find((item) => item.description.toLowerCase() === description.toLowerCase()) ||
+      exactMatches[0]
+    );
+  }
+  const looseMatches = products.filter((item) =>
+    item.description.toLowerCase() === description.toLowerCase()
+  );
+  return looseMatches.length === 1 ? looseMatches[0] : null;
 }
 
 /**
@@ -729,21 +739,31 @@ async function start() {
       }
 
       const now = Date.now();
-      const products = parsed.products.map((p) => ({
-        syncId: require("crypto").randomUUID(),
-        description: p.description,
-        quantity: p.quantity,
-        unit: p.unit,
-        price: p.price,
-        updatedAt: now
-      }));
-
       await store.runTransaction(async (state) => {
+        const byDescription = new Map();
+        for (const existing of state.products) {
+          const key = normalizeProductDescription(existing.description);
+          if (key && !byDescription.has(key)) {
+            byDescription.set(key, existing);
+          }
+        }
+        const nextProducts = parsed.products.map((p) => {
+          const key = normalizeProductDescription(p.description);
+          const previous = key ? byDescription.get(key) : null;
+          return {
+            syncId: previous?.syncId ?? require("crypto").randomUUID(),
+            description: p.description,
+            quantity: p.quantity,
+            unit: p.unit,
+            price: p.price,
+            updatedAt: now
+          };
+        });
         const revision = now;
         const nextState = {
           ...state,
           inventoryRevision: revision,
-          products,
+          products: nextProducts,
           meta: { ...state.meta, lastInventoryUpdateAt: now }
         };
         return { state: nextState, result: revision };

@@ -1,6 +1,7 @@
 package com.inventario.app.data.order
 
 import com.inventario.app.data.cashea.CasheaCalculator
+import com.inventario.app.data.catalog.normalizeProductDescription
 import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.SaleLineItem
 
@@ -19,7 +20,9 @@ data class OrderLine(
 
 fun OrderLine.matchesProduct(product: Product): Boolean {
     if (productSyncId.isNotBlank() && productSyncId == product.syncId) return true
-    return productId == product.id
+    if (productId == product.id) return true
+    return normalizeProductDescription(description) ==
+        normalizeProductDescription(product.description)
 }
 
 fun OrderLine.toSaleLineItem(saleSyncId: String, bcvRate: Double): SaleLineItem {

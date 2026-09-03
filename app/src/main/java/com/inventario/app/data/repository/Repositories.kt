@@ -5,6 +5,8 @@ import android.net.Uri
 import android.util.Log
 import com.inventario.app.data.branch.BranchCatalog
 import com.inventario.app.data.branch.normalizeBranchId
+import com.inventario.app.data.catalog.findProductInCatalog
+import com.inventario.app.data.catalog.inventoryCatalogChanged
 import com.inventario.app.data.entity.AppMeta
 import com.inventario.app.data.entity.CashClosingAlertType
 import com.inventario.app.data.entity.CashClosingRecord
@@ -245,10 +247,12 @@ class InventoryRepository(
     private var cloudEventsJob: Job? = null
     private var cloudStatusJob: Job? = null
     private var confirmedOrdersPollJob: Job? = null
+    private var inventoryPollJob: Job? = null
     private var lastSyncedOrdersRefreshAt = 0L
     private var lastBranchOrdersRefreshAt = 0L
     private var lastBranchInventoryRefreshAt = 0L
     private var cachedLastInventoryUpdateAt: Long = 0L
+    private var cachedInventoryRevision: Long = 0L
     private var cachedLastSalesUpdateAt: Long = 0L
 
     init {
@@ -260,6 +264,7 @@ class InventoryRepository(
         appScope.launch { refreshConfirmedOrdersFlow() }
         attachCloudSyncListeners(cloudSync)
         startConfirmedOrdersPolling()
+        startInventoryPolling()
     }
 
     fun setCloudSync(sync: CloudSync) {
@@ -312,9 +317,23 @@ class InventoryRepository(
                 previousStatus = info.status
                 if (becameSynced) {
                     refreshConfirmedOrdersIfDue()
+                    refreshInventoryState(force = true)
                 }
                 if (info.status == CloudSyncStatus.SYNCED && pendingOrders.isNotEmpty()) {
                     flushPendingOrders()
+                }
+            }
+        }
+    }
+
+    /** Respaldo si el WebSocket no entrega eventos de inventario (red móvil, Render free). */
+    private fun startInventoryPolling() {
+        inventoryPollJob?.cancel()
+        inventoryPollJob = appScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(INVENTORY_POLL_INTERVAL_MS)
+                if (cloudStatusRelay.value.status != CloudSyncStatus.OFFLINE) {
+                    refreshInventoryState()
                 }
             }
         }
@@ -368,6 +387,10 @@ class InventoryRepository(
         if (now - lastBranchInventoryRefreshAt < BRANCH_INVENTORY_REFRESH_DEBOUNCE_MS) return@withContext
         lastBranchInventoryRefreshAt = now
         refreshInventoryState(fromBranchEvent = true)
+        repeat(INVENTORY_BRANCH_FETCH_RETRIES) {
+            delay(INVENTORY_BRANCH_FETCH_RETRY_MS)
+            refreshInventoryState(fromBranchEvent = true)
+        }
     }
 
     /**
@@ -544,9 +567,8 @@ class InventoryRepository(
         manualDiscountUsd: Double = 0.0
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            refreshInventoryState(force = true)
+            val currentProducts = awaitFreshCatalogForOrder()
             val now = System.currentTimeMillis()
-            val currentProducts = productsFlow.value
             val resolvedLines = lines.map { line ->
                 val product = resolveProductForOrder(line, currentProducts)
                     ?: error("Producto no encontrado: ${line.description}")
@@ -915,22 +937,30 @@ class InventoryRepository(
         persistProductsToDisk(productsFlow.value)
     }
 
+    private suspend fun awaitFreshCatalogForOrder(): List<Product> {
+        repeat(INVENTORY_ORDER_FETCH_RETRIES) { attempt ->
+            refreshInventoryState(force = true)
+            val products = productsFlow.value
+            if (products.isNotEmpty() || attempt == INVENTORY_ORDER_FETCH_RETRIES - 1) {
+                return products
+            }
+            delay(INVENTORY_ORDER_FETCH_RETRY_MS)
+        }
+        return productsFlow.value
+    }
+
     /**
      * Resuelve un producto del pedido contra el inventario actual.
-     * Prioriza syncId (estable en la nube); si el catálogo se refrescó tras
-     * agregar la línea, el productId derivado del hash puede quedar obsoleto.
+     * Prioriza syncId; si el catálogo se refrescó tras agregar la línea, empareja
+     * por descripción normalizada (misma regla que el servidor).
      */
-    private fun resolveProductForOrder(line: OrderLine, products: List<Product>): Product? {
-        if (line.productSyncId.isNotBlank()) {
-            products.find { it.syncId == line.productSyncId }?.let { return it }
-        }
-        products.find { it.id == line.productId }?.let { return it }
-        val byDescription = products.filter { product ->
-            product.description.equals(line.description, ignoreCase = true) ||
-                ProductSearch.matchesAllTokens(product.description, line.description)
-        }
-        return byDescription.singleOrNull()
-    }
+    private fun resolveProductForOrder(line: OrderLine, products: List<Product>): Product? =
+        findProductInCatalog(
+            products = products,
+            productSyncId = line.productSyncId,
+            productId = line.productId,
+            description = line.description
+        )
 
     private fun inventoryDiskKey(): String =
         "inventory_${normalizeBranchId(orderPreviewBranchId ?: cloudSync.branchId ?: "default")}"
@@ -939,6 +969,7 @@ class InventoryRepository(
         val prefs = context.getSharedPreferences(INVENTORY_CACHE_PREFS, Context.MODE_PRIVATE)
         val key = inventoryDiskKey()
         cachedLastInventoryUpdateAt = prefs.getLong(inventoryUpdateAtKey(key), 0L)
+        cachedInventoryRevision = prefs.getLong(inventoryRevisionKey(key), 0L)
         val cached = loadProductsFromDisk()
         if (cached.isNotEmpty()) {
             productsFlow.value = cached
@@ -952,24 +983,36 @@ class InventoryRepository(
         return runCatching { JSONArray(raw).toProductList() }.getOrElse { emptyList() }
     }
 
-    private fun persistProductsToDisk(products: List<Product>, inventoryUpdateAt: Long? = null) {
+    private fun persistProductsToDisk(
+        products: List<Product>,
+        inventoryUpdateAt: Long? = null,
+        inventoryRevision: Long? = null
+    ) {
         val prefs = context.getSharedPreferences(INVENTORY_CACHE_PREFS, Context.MODE_PRIVATE).edit()
         val key = inventoryDiskKey()
         if (products.isEmpty()) {
             prefs.remove(key)
             prefs.remove(inventoryUpdateAtKey(key))
+            prefs.remove(inventoryRevisionKey(key))
             cachedLastInventoryUpdateAt = 0L
+            cachedInventoryRevision = 0L
         } else {
             prefs.putString(key, products.toJsonArray().toString())
             inventoryUpdateAt?.takeIf { it > 0L }?.let { updatedAt ->
                 prefs.putLong(inventoryUpdateAtKey(key), updatedAt)
                 cachedLastInventoryUpdateAt = updatedAt
             }
+            inventoryRevision?.takeIf { it > 0L }?.let { revision ->
+                prefs.putLong(inventoryRevisionKey(key), revision)
+                cachedInventoryRevision = revision
+            }
         }
         prefs.apply()
     }
 
     private fun inventoryUpdateAtKey(branchKey: String): String = "${branchKey}_updated_at"
+
+    private fun inventoryRevisionKey(branchKey: String): String = "${branchKey}_revision"
 
     private suspend fun refreshInventoryState(
         force: Boolean = false,
@@ -979,6 +1022,7 @@ class InventoryRepository(
             val state = cloudSync.get("/v1/state")
             val metaJson = state.optJSONObject("meta")
             val serverInventoryUpdateAt = metaJson?.optLongOrNull("lastInventoryUpdateAt") ?: 0L
+            val serverRevision = state.optLong("inventoryRevision", 0L)
             val newProducts = (state.optJSONArray("products") ?: JSONArray()).toProductList()
             val currentProducts = productsFlow.value
 
@@ -989,17 +1033,32 @@ class InventoryRepository(
                 discountPercent = metaJson?.optDoubleOrNull("discountPercent")
             )
 
-            // Tras importar Excel el servidor asigna syncIds nuevos; si la caché
-            // local quedó desfasada, hay que reemplazarla aunque el evento no sea
-            // de sucursal o la marca local ya estuviera anclada.
-            val serverCatalogNewer = serverInventoryUpdateAt > cachedLastInventoryUpdateAt &&
-                newProducts.isNotEmpty()
+            if (newProducts.isEmpty()) {
+                if (force && currentProducts.isNotEmpty()) {
+                    Log.w(
+                        TAG,
+                        "Inventario: refresh forzado ignoró respuesta vacía (en pantalla=${currentProducts.size})"
+                    )
+                } else if (!force && currentProducts.isNotEmpty()) {
+                    Log.w(
+                        TAG,
+                        "Inventario: respuesta vacía ignorada (en pantalla=${currentProducts.size})"
+                    )
+                }
+                return@runCatching
+            }
+
+            val revisionAdvanced = serverRevision > cachedInventoryRevision
+            val catalogChanged = inventoryCatalogChanged(currentProducts, newProducts)
+            val serverCatalogNewer = serverInventoryUpdateAt > cachedLastInventoryUpdateAt
 
             val shouldReplace = when {
-                force && newProducts.isNotEmpty() -> true
-                force -> false
-                currentProducts.isEmpty() && newProducts.isNotEmpty() -> true
+                force -> true
+                fromBranchEvent -> true
+                currentProducts.isEmpty() -> true
+                revisionAdvanced -> true
                 serverCatalogNewer -> true
+                catalogChanged -> true
                 else -> false
             }
 
@@ -1007,27 +1066,18 @@ class InventoryRepository(
                 productsFlow.value = newProducts
                 persistProductsToDisk(
                     newProducts,
-                    inventoryUpdateAt = serverInventoryUpdateAt.takeIf { it > 0L }
+                    inventoryUpdateAt = serverInventoryUpdateAt.takeIf { it > 0L },
+                    inventoryRevision = serverRevision.takeIf { it > 0L }
                 )
-                if (serverCatalogNewer) {
+                if (revisionAdvanced || serverCatalogNewer || catalogChanged || fromBranchEvent) {
                     Log.i(
                         TAG,
                         "Inventario sincronizado con servidor (${newProducts.size} productos, " +
-                            "lastInventoryUpdateAt=$serverInventoryUpdateAt)"
+                            "revision=$serverRevision, lastInventoryUpdateAt=$serverInventoryUpdateAt)"
                     )
                 }
-            } else if (force && newProducts.isEmpty() && currentProducts.isNotEmpty()) {
-                Log.w(
-                    TAG,
-                    "Inventario: refresh forzado ignoró respuesta vacía (en pantalla=${currentProducts.size})"
-                )
-            } else if (fromBranchEvent && serverInventoryUpdateAt <= cachedLastInventoryUpdateAt) {
-                Log.d(TAG, "Evento inventory ignorado: sin nueva carga Excel en la sucursal")
-            } else if (!force && newProducts.isEmpty() && currentProducts.isNotEmpty()) {
-                Log.w(
-                    TAG,
-                    "Inventario: respuesta vacía ignorada (en pantalla=${currentProducts.size})"
-                )
+            } else if (fromBranchEvent) {
+                Log.d(TAG, "Evento inventory: catálogo local ya actualizado (revision=$serverRevision)")
             }
         }.onFailure { error ->
             Log.w(TAG, "No se pudo refrescar inventario; se mantiene la caché local", error)
@@ -1204,9 +1254,14 @@ class InventoryRepository(
         private const val TAG = "InventoryRepository"
         private val CARACAS_ZONE = ZoneId.of("America/Caracas")
         private const val CONFIRMED_ORDERS_POLL_INTERVAL_MS = 8_000L
+        private const val INVENTORY_POLL_INTERVAL_MS = 30_000L
         private const val SYNCED_ORDERS_REFRESH_DEBOUNCE_MS = 2_000L
         private const val SALES_BRANCH_FETCH_RETRIES = 3
         private const val SALES_BRANCH_FETCH_RETRY_MS = 450L
+        private const val INVENTORY_BRANCH_FETCH_RETRIES = 2
+        private const val INVENTORY_BRANCH_FETCH_RETRY_MS = 450L
+        private const val INVENTORY_ORDER_FETCH_RETRIES = 2
+        private const val INVENTORY_ORDER_FETCH_RETRY_MS = 500L
         private const val BRANCH_INVENTORY_REFRESH_DEBOUNCE_MS = 1_500L
         private const val INVENTORY_CACHE_PREFS = "inventory_local_cache"
         private const val LEGACY_ORDER_PREVIEWS_PREFS = "today_order_previews"
