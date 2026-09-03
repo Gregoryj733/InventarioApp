@@ -1092,6 +1092,7 @@ class HomeViewModel(
     fun confirmOrder(onWhatsApp: (String) -> Unit) {
         val lines = _state.value.orderLines
         if (lines.isEmpty()) return
+        val whatsAppMessage = buildWhatsAppMessage()
 
         viewModelScope.launch {
             _state.update { it.copy(orderProcessing = true, error = null) }
@@ -1104,10 +1105,6 @@ class HomeViewModel(
                 manualDiscountUsd = manualDiscount
             )
             result.onSuccess { syncId ->
-                val message = buildWhatsAppMessage()
-                val count = inventoryRepository.productCount()
-                val q = _state.value.query
-                val results = if (q.trim().isNotEmpty()) inventoryRepository.search(q) else emptyList()
                 _state.update {
                     it.copy(
                         orderProcessing = false,
@@ -1115,9 +1112,7 @@ class HomeViewModel(
                         orderLines = emptyList(),
                         orderSuccessMessage = "Pedido registrado. Stock actualizado.",
                         lastConfirmedSaleSyncId = syncId,
-                        lastWhatsAppMessage = message,
-                        productCount = count,
-                        results = results,
+                        lastWhatsAppMessage = whatsAppMessage,
                         selectedProduct = null,
                         selectedQtyText = "1",
                         selectedPaymentChoice = null,
@@ -1131,8 +1126,13 @@ class HomeViewModel(
                         manualDiscountError = null
                     )
                 }
+                val q = _state.value.query
+                if (q.trim().isNotEmpty()) {
+                    val results = inventoryRepository.search(q)
+                    _state.update { it.copy(results = results) }
+                }
                 onOrderConfirmedSound(syncId)
-                onWhatsApp(message)
+                onWhatsApp(whatsAppMessage)
             }.onFailure { err ->
                 val message = err.toUserMessage("No se pudo completar el pedido.")
                 _state.update {

@@ -254,6 +254,8 @@ class InventoryRepository(
     private var cachedLastInventoryUpdateAt: Long = 0L
     private var cachedInventoryRevision: Long = 0L
     private var cachedLastSalesUpdateAt: Long = 0L
+    /** Evita que un refresh del servidor pise un descuento local recién aplicado. */
+    private var protectLocalInventoryUntil: Long = 0L
 
     init {
         restoreProductsFromDisk()
@@ -627,22 +629,27 @@ class InventoryRepository(
                 discountUsd = discountUsd
             )
 
+            // Descuento optimista en cuanto el pedido es válido: el usuario ve el
+            // stock actualizado al instante y el carrito puede vaciarse sin
+            // esperar la respuesta del servidor.
+            applyLocalDeduction(resolvedLines, now)
+            markLocalInventoryMutation()
+
             // Persistir de inmediato para que Cierre de caja y otras pantallas
             // vean el pedido aunque el push al servidor falle o tarde.
             saveLocalOrderPreview(preview)
             upsertConfirmedOrderInFlow(preview)
 
             val pushResult = runCatching { pushOrder(pending) }
-            pushResult
-                .onSuccess { applyLocalDeduction(resolvedLines, now) }
-                .onFailure { error ->
-                    if (error.isConnectivityIssue()) {
-                        applyLocalDeduction(resolvedLines, now)
-                        pendingOrders.addLast(pending)
-                    } else {
-                        throw error
-                    }
+            pushResult.onFailure { error ->
+                if (error.isConnectivityIssue()) {
+                    pendingOrders.addLast(pending)
+                } else {
+                    revertLocalDeduction(resolvedLines, now)
+                    removeConfirmedOrderPreview(sale.syncId)
+                    throw error
                 }
+            }
             if (pushResult.isSuccess) {
                 refreshConfirmedOrdersImmediate()
             }
@@ -722,6 +729,21 @@ class InventoryRepository(
         val updated = (confirmedOrdersTodayFlow.value.filter { it.syncId != preview.syncId } + preview)
             .sortedByDescending { it.createdAt }
         confirmedOrdersTodayFlow.value = updated
+    }
+
+    private fun removeConfirmedOrderPreview(syncId: String) {
+        confirmedOrdersTodayFlow.value =
+            confirmedOrdersTodayFlow.value.filter { it.syncId != syncId }
+        val remaining = loadLocalOrderPreviews().filter { it.syncId != syncId }
+        if (remaining.isEmpty()) {
+            clearLocalOrderPreviews()
+        } else {
+            persistBranchOrderPreviews(remaining)
+        }
+    }
+
+    private fun markLocalInventoryMutation() {
+        protectLocalInventoryUntil = System.currentTimeMillis() + LOCAL_INVENTORY_PROTECT_MS
     }
 
     private suspend fun refreshConfirmedOrdersFlow(fromBranchEvent: Boolean = false) {
@@ -930,8 +952,29 @@ class InventoryRepository(
     private fun applyLocalDeduction(lines: List<OrderLine>, now: Long) {
         productsFlow.update { products ->
             products.map { product ->
-                val line = lines.find { it.matchesProduct(product) }
-                if (line != null) product.copy(quantity = product.quantity - line.quantity, updatedAt = now) else product
+                val qtyToDeduct = lines.filter { it.matchesProduct(product) }.sumOf { it.quantity }
+                if (qtyToDeduct > 0) {
+                    product.copy(
+                        quantity = (product.quantity - qtyToDeduct).coerceAtLeast(0.0),
+                        updatedAt = now
+                    )
+                } else {
+                    product
+                }
+            }
+        }
+        persistProductsToDisk(productsFlow.value)
+    }
+
+    private fun revertLocalDeduction(lines: List<OrderLine>, now: Long) {
+        productsFlow.update { products ->
+            products.map { product ->
+                val qtyToRestore = lines.filter { it.matchesProduct(product) }.sumOf { it.quantity }
+                if (qtyToRestore > 0) {
+                    product.copy(quantity = product.quantity + qtyToRestore, updatedAt = now)
+                } else {
+                    product
+                }
             }
         }
         persistProductsToDisk(productsFlow.value)
@@ -1051,8 +1094,10 @@ class InventoryRepository(
             val revisionAdvanced = serverRevision > cachedInventoryRevision
             val catalogChanged = inventoryCatalogChanged(currentProducts, newProducts)
             val serverCatalogNewer = serverInventoryUpdateAt > cachedLastInventoryUpdateAt
+            val localMutationProtected = System.currentTimeMillis() < protectLocalInventoryUntil
 
             val shouldReplace = when {
+                localMutationProtected && !revisionAdvanced -> false
                 force -> true
                 fromBranchEvent -> true
                 currentProducts.isEmpty() -> true
@@ -1262,6 +1307,7 @@ class InventoryRepository(
         private const val INVENTORY_BRANCH_FETCH_RETRY_MS = 450L
         private const val INVENTORY_ORDER_FETCH_RETRIES = 2
         private const val INVENTORY_ORDER_FETCH_RETRY_MS = 500L
+        private const val LOCAL_INVENTORY_PROTECT_MS = 4_000L
         private const val BRANCH_INVENTORY_REFRESH_DEBOUNCE_MS = 1_500L
         private const val INVENTORY_CACHE_PREFS = "inventory_local_cache"
         private const val LEGACY_ORDER_PREVIEWS_PREFS = "today_order_previews"
