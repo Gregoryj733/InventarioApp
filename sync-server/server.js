@@ -175,6 +175,8 @@ function normalizeProductDescription(text) {
   return String(text ?? "")
     .normalize("NFD")
     .replace(/\p{Mn}/gu, "")
+    .replace(/[\u200B\uFEFF]/g, "")
+    .replace(/[＋⁺₊﹢]/g, "+")
     .toLowerCase()
     .replace(/\s+/g, " ")
     .replace(/\s*\+\s*/g, "+")
@@ -183,6 +185,26 @@ function normalizeProductDescription(text) {
 
 function compactProductDescriptionKey(text) {
   return normalizeProductDescription(text).replace(/\s+/g, "");
+}
+
+function looseCompactProductDescriptionKey(text) {
+  return normalizeProductDescription(text).replace(/[\s\-.]+/g, "");
+}
+
+function pickBestDescriptionMatch(candidates, description) {
+  return [...candidates].sort((a, b) => {
+    const aExact = a.description.toLowerCase() === description.toLowerCase() ? 1 : 0;
+    const bExact = b.description.toLowerCase() === description.toLowerCase() ? 1 : 0;
+    if (bExact !== aExact) return bExact - aExact;
+    return (Number(b.quantity) || 0) - (Number(a.quantity) || 0);
+  })[0];
+}
+
+function descriptionsMatchByTokens(description, query) {
+  const tokens = normalizeProductDescription(query).split(/\s+/).filter(Boolean);
+  if (!tokens.length) return false;
+  const normalizedDesc = normalizeProductDescription(description);
+  return tokens.every((token) => normalizedDesc.includes(token));
 }
 
 /**
@@ -216,16 +238,34 @@ function resolveProductForOrderLine(products, line) {
     );
     if (compactMatches.length === 1) return compactMatches[0];
     if (compactMatches.length > 1) {
-      return (
-        compactMatches.find((item) => item.description.toLowerCase() === description.toLowerCase()) ||
-        compactMatches[0]
-      );
+      return pickBestDescriptionMatch(compactMatches, description);
+    }
+  }
+  const looseCompact = looseCompactProductDescriptionKey(description);
+  if (looseCompact) {
+    const looseCompactMatches = products.filter(
+      (item) => looseCompactProductDescriptionKey(item.description) === looseCompact
+    );
+    if (looseCompactMatches.length === 1) return looseCompactMatches[0];
+    if (looseCompactMatches.length > 1) {
+      return pickBestDescriptionMatch(looseCompactMatches, description);
     }
   }
   const looseMatches = products.filter((item) =>
     item.description.toLowerCase() === description.toLowerCase()
   );
-  return looseMatches.length === 1 ? looseMatches[0] : null;
+  if (looseMatches.length === 1) return looseMatches[0];
+  if (looseMatches.length > 1) {
+    return pickBestDescriptionMatch(looseMatches, description);
+  }
+  const tokenMatches = products.filter((item) =>
+    descriptionsMatchByTokens(item.description, description)
+  );
+  if (tokenMatches.length === 1) return tokenMatches[0];
+  if (tokenMatches.length > 1) {
+    return pickBestDescriptionMatch(tokenMatches, description);
+  }
+  return null;
 }
 
 /**

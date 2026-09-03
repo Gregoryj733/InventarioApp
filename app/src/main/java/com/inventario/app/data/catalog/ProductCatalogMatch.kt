@@ -1,7 +1,6 @@
 package com.inventario.app.data.catalog
 
 import com.inventario.app.data.entity.Product
-import com.inventario.app.data.search.ProductSearch
 import java.text.Normalizer
 import java.util.Locale
 
@@ -9,6 +8,8 @@ import java.util.Locale
 fun normalizeProductDescription(text: String): String =
     Normalizer.normalize(text, Normalizer.Form.NFD)
         .replace(Regex("\\p{Mn}+"), "")
+        .replace(Regex("[\\u200B\\uFEFF]"), "")
+        .replace(Regex("[＋⁺₊﹢]"), "+")
         .lowercase(Locale.ROOT)
         .replace(Regex("\\s+"), " ")
         .replace(Regex("\\s*\\+\\s*"), "+")
@@ -17,6 +18,17 @@ fun normalizeProductDescription(text: String): String =
 /** Clave compacta para emparejar descripciones con espacios distintos (p. ej. "ATF+4" vs "ATF +4"). */
 private fun compactProductDescriptionKey(text: String): String =
     normalizeProductDescription(text).replace(" ", "")
+
+/** Ignora espacios, guiones y puntos (p. ej. "AVEO-CORSA" vs "AVEO CORSA"). */
+internal fun looseCompactProductDescriptionKey(text: String): String =
+    normalizeProductDescription(text).replace(Regex("[\\s\\-.]+"), "")
+
+private fun descriptionsMatchByTokens(description: String, query: String): Boolean {
+    val tokens = normalizeProductDescription(query).split(Regex("\\s+")).filter { it.isNotBlank() }
+    if (tokens.isEmpty()) return false
+    val normalizedDesc = normalizeProductDescription(description)
+    return tokens.all { token -> normalizedDesc.contains(token) }
+}
 
 /**
  * Resuelve un producto del catálogo actual. Tras reimportar Excel los syncId
@@ -28,10 +40,10 @@ fun findProductInCatalog(
     productId: Long,
     description: String
 ): Product? {
-    if (productSyncId.isNotBlank()) {
+    val hadSyncId = productSyncId.isNotBlank()
+    if (hadSyncId) {
         products.find { it.syncId == productSyncId }?.let { return it }
-    }
-    if (productId != 0L) {
+    } else if (productId != 0L) {
         products.find { it.id == productId }?.let { return it }
     }
 
@@ -42,10 +54,7 @@ fun findProductInCatalog(
         }
         when (byNormalized.size) {
             1 -> return byNormalized.first()
-            in 2..Int.MAX_VALUE -> {
-                return byNormalized.firstOrNull { it.description.equals(description, ignoreCase = true) }
-                    ?: byNormalized.first()
-            }
+            in 2..Int.MAX_VALUE -> return pickBestDescriptionMatch(byNormalized, description)
         }
 
         val compact = compactProductDescriptionKey(description)
@@ -56,24 +65,39 @@ fun findProductInCatalog(
             when (byCompact.size) {
                 1 -> return byCompact.first()
                 in 2..Int.MAX_VALUE -> {
-                    return byCompact.firstOrNull { it.description.equals(description, ignoreCase = true) }
-                        ?: byCompact.first()
+                    return pickBestDescriptionMatch(byCompact, description)
                 }
+            }
+        }
+
+        val looseCompact = looseCompactProductDescriptionKey(description)
+        if (looseCompact.isNotEmpty()) {
+            val byLooseCompact = products.filter {
+                looseCompactProductDescriptionKey(it.description) == looseCompact
+            }
+            when (byLooseCompact.size) {
+                1 -> return byLooseCompact.first()
+                in 2..Int.MAX_VALUE -> return pickBestDescriptionMatch(byLooseCompact, description)
             }
         }
     }
 
     val tokenMatches = products.filter { product ->
         product.description.equals(description, ignoreCase = true) ||
-            ProductSearch.matchesAllTokens(product.description, description)
+            descriptionsMatchByTokens(product.description, description)
     }
     return when (tokenMatches.size) {
         0 -> null
         1 -> tokenMatches.first()
-        else -> tokenMatches.firstOrNull { it.description.equals(description, ignoreCase = true) }
-            ?: tokenMatches.first()
+        else -> pickBestDescriptionMatch(tokenMatches, description)
     }
 }
+
+private fun pickBestDescriptionMatch(candidates: List<Product>, description: String): Product =
+    candidates.sortedWith(
+        compareByDescending<Product> { it.description.equals(description, ignoreCase = true) }
+            .thenByDescending { it.quantity }
+    ).first()
 
 /** Detecta si el catálogo del servidor difiere del caché local (syncId, precio o filas). */
 fun inventoryCatalogChanged(previous: List<Product>, incoming: List<Product>): Boolean {

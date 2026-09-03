@@ -7,6 +7,7 @@ import com.inventario.app.data.branch.BranchCatalog
 import com.inventario.app.data.branch.normalizeBranchId
 import com.inventario.app.data.catalog.findProductInCatalog
 import com.inventario.app.data.catalog.inventoryCatalogChanged
+import com.inventario.app.data.catalog.looseCompactProductDescriptionKey
 import com.inventario.app.data.entity.AppMeta
 import com.inventario.app.data.entity.CashClosingAlertType
 import com.inventario.app.data.entity.CashClosingRecord
@@ -587,27 +588,25 @@ class InventoryRepository(
         manualDiscountUsd: Double = 0.0
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val localCatalog = productsFlow.value
-            val catalog = if (lines.all { resolveProductForOrder(it, localCatalog) != null }) {
-                localCatalog
-            } else {
-                awaitFreshCatalogForOrder()
-                productsFlow.value
-            }
-            val fallbackCatalog = if (catalog !== localCatalog) localCatalog else emptyList()
+            val localSnapshot = productsFlow.value
+            awaitFreshCatalogForOrder()
+            val serverCatalog = productsFlow.value
             val now = System.currentTimeMillis()
             val resolvedLines = lines.map { line ->
-                val product = resolveProductForOrder(line, catalog)
-                    ?: fallbackCatalog.takeIf { it.isNotEmpty() }
-                        ?.let { resolveProductForOrder(line, it) }
+                val product = resolveProductForServerOrder(line, serverCatalog, localSnapshot)
                     ?: error("Producto no encontrado: ${line.description}")
-                if (product.quantity < line.quantity) {
+                val availableQty = availableQuantityForOrder(line, product, localSnapshot)
+                if (availableQty < line.quantity) {
                     error(
                         "Stock insuficiente para \"${line.description}\" " +
-                            "(disponible ${product.quantity}, pedido ${line.quantity})."
+                            "(disponible $availableQty, pedido ${line.quantity})."
                     )
                 }
-                line.copy(productId = product.id, productSyncId = product.syncId)
+                line.copy(
+                    productId = product.id,
+                    productSyncId = product.syncId,
+                    description = product.description
+                )
             }
             val subtotalUsd = resolvedLines.sumOf { it.totalUsd }
             val couponDiscountUsd = discountTicket?.let { subtotalUsd * it.discountPercent / 100.0 } ?: 0.0
@@ -1031,6 +1030,54 @@ class InventoryRepository(
             productId = line.productId,
             description = line.description
         )
+
+    /**
+     * Resuelve la línea contra el inventario del servidor (requerido para el push).
+     * Si el syncId local quedó obsoleto tras un refresh, reintenta solo por descripción.
+     */
+    private fun resolveProductForServerOrder(
+        line: OrderLine,
+        serverCatalog: List<Product>,
+        localSnapshot: List<Product>
+    ): Product? {
+        resolveWithStaleIds(line, serverCatalog)?.let { return it }
+
+        val localMatch = resolveWithStaleIds(line, localSnapshot) ?: return null
+
+        if (serverCatalog.isNotEmpty()) {
+            resolveWithStaleIds(
+                line.copy(
+                    productSyncId = "",
+                    productId = 0L,
+                    description = localMatch.description
+                ),
+                serverCatalog
+            )?.let { return it }
+        }
+        return localMatch
+    }
+
+    private fun resolveWithStaleIds(line: OrderLine, catalog: List<Product>): Product? =
+        resolveProductForOrder(line, catalog)
+            ?: resolveProductForOrder(
+                line.copy(productSyncId = "", productId = 0L),
+                catalog
+            )
+
+    private fun availableQuantityForOrder(
+        line: OrderLine,
+        resolved: Product,
+        localSnapshot: List<Product>
+    ): Double {
+        if (resolved.quantity >= line.quantity) return resolved.quantity
+        val localMatch = resolveWithStaleIds(line, localSnapshot) ?: return resolved.quantity
+        if (looseCompactProductDescriptionKey(localMatch.description) ==
+            looseCompactProductDescriptionKey(resolved.description)
+        ) {
+            return maxOf(resolved.quantity, localMatch.quantity)
+        }
+        return resolved.quantity
+    }
 
     private fun inventoryDiskKey(): String =
         "inventory_${normalizeBranchId(orderPreviewBranchId ?: cloudSync.branchId ?: "default")}"
