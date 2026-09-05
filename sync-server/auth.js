@@ -46,8 +46,12 @@ function requireAuth(roles) {
     }
     try {
       const payload = verifyToken(token);
-      if (allowedRoles && !allowedRoles.includes(payload.role)) {
-        return res.status(403).json({ error: "No tienes permisos para esta acción" });
+      if (allowedRoles) {
+        const userRole = String(payload.role || "").toUpperCase();
+        const normalizedAllowed = allowedRoles.map((role) => String(role).toUpperCase());
+        if (!normalizedAllowed.includes(userRole)) {
+          return res.status(403).json({ error: "No tienes permisos para esta acción" });
+        }
       }
       req.user = payload;
       next();

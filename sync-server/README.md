@@ -123,7 +123,7 @@ Todas las rutas `/v1/*` requieren el header `X-Api-Key`. Las marcadas con 🔒 a
 - `POST /v1/orders` 🔒 — pedido atómico: descuenta stock y registra la venta + detalle de líneas
   (`description`/`unit`/`unitPriceUsd` se autocompletan desde el inventario si el cliente los manda
   vacíos) en una sola transacción idempotente por `syncId`; notifica `inventory` y `sales` por WebSocket
-- `GET /v1/sales` 🔒 / `POST /v1/sales` 🔒 (legacy) / `DELETE /v1/sales?start=&end=` 🔒ADMIN
+- `GET /v1/sales` 🔒 / `POST /v1/sales` 🔒 (legacy) / `POST /v1/sales/reset` 🔒 / `DELETE /v1/sales?start=&end=` 🔒 (todos los perfiles autenticados)
 - `GET /v1/cash-closings` 🔒 / `POST /v1/cash-closings` 🔒 / `PATCH /v1/cash-closings/:id/status` 🔒
 - `GET /v1/users` 🔒ADMIN / `POST /v1/users` 🔒ADMIN / `PATCH /v1/users/:id` 🔒ADMIN / `DELETE /v1/users/:id` 🔒ADMIN
 - `GET /v1/ws?apiKey=...` — WebSocket; emite `{ type: "inventory" | "sales" | "cashClosings" | "users" | "discountTickets" }` tras cada cambio

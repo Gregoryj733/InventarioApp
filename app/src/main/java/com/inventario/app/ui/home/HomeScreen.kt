@@ -88,7 +88,6 @@ import androidx.compose.ui.unit.sp
 import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.canManageDiscountTickets
-import com.inventario.app.data.entity.canResetTodayOrders
 import com.inventario.app.data.entity.displayLabel
 import androidx.compose.material.icons.filled.Edit
 import com.inventario.app.data.order.OrderLine
@@ -127,23 +126,16 @@ fun HomeScreen(
     val verticalPad = screenVerticalPadding()
     val compact = isCompactWidth()
     val topBarSubtitle = subtitle
-    val orderProductIds = remember(state.orderLines) {
-        state.orderLines.mapTo(HashSet()) { it.productId }
+    val orderProductSyncIds = remember(state.orderLines) {
+        state.orderLines.mapNotNull { it.productSyncId.takeIf { id -> id.isNotBlank() } }.toSet()
     }
     val pickExcel = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) viewModel.importExcel(uri)
     }
-    val launchExcelImport: () -> Unit = {
-        pickExcel.launch(
-            arrayOf(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "application/vnd.ms-excel",
-                "application/octet-stream"
-            )
-        )
-    }
+    var showImportConfirm by remember { mutableStateOf(false) }
+    val launchExcelImport: () -> Unit = { showImportConfirm = true }
     val scanTicketLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         result.contents?.let { viewModel.onDiscountTicketScanned(it) }
     }
@@ -173,6 +165,27 @@ fun HomeScreen(
         ImportAlertDialog(
             alert = state.importAlert!!,
             onDismiss = viewModel::dismissImportAlert
+        )
+    }
+
+    if (showImportConfirm) {
+        ConfirmCheckDialog(
+            title = "Cargar nuevo inventario",
+            description = "Se reemplazará todo el inventario actual con los productos del archivo Excel. " +
+                "Los pedidos confirmados no se borran, pero el stock se restablecerá según el archivo.",
+            checkLabel = "Confirmo que deseo reemplazar el inventario",
+            confirmLabel = "Cargar inventario",
+            onDismiss = { showImportConfirm = false },
+            onConfirm = {
+                showImportConfirm = false
+                pickExcel.launch(
+                    arrayOf(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "application/vnd.ms-excel",
+                        "application/octet-stream"
+                    )
+                )
+            }
         )
     }
 
@@ -299,8 +312,8 @@ fun HomeScreen(
         topBar = {
             BrandAppTopBar(
                 subtitle = topBarSubtitle,
-                onRefreshBcv = viewModel::refreshBcv,
                 onLogout = { viewModel.logout(onLogout) },
+                onRefreshBcv = viewModel::refreshAllData,
                 showImportInventory = state.role == UserRole.ADMIN,
                 onImportInventory = launchExcelImport,
                 importEnabled = !state.importing,
@@ -392,8 +405,8 @@ fun HomeScreen(
                                 )
                             }
                         }
-                        items(displayProducts, key = { it.id }) { product ->
-                            val inOrder = product.id in orderProductIds
+                        items(displayProducts, key = { it.syncId.ifBlank { "p_${it.id}_${it.description.hashCode()}" } }) { product ->
+                            val inOrder = product.syncId.isNotBlank() && product.syncId in orderProductSyncIds
                             val selected = state.selectedProduct?.id == product.id
                             ProductRow(
                                 product = product,
@@ -714,7 +727,6 @@ private fun InfoHeader(
     onConfirmedOrdersClick: () -> Unit,
     onResetOrders: () -> Unit
 ) {
-    val canReset = state.role.canResetTodayOrders()
     var showResetConfirm by remember { mutableStateOf(false) }
 
     AccentSectionCard(
@@ -728,20 +740,18 @@ private fun InfoHeader(
                 if (state.bcvRefreshing) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 }
-                if (canReset) {
-                    if (state.resettingOrders) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        TextButton(
-                            onClick = { showResetConfirm = true },
-                            enabled = state.confirmedOrdersToday > 0,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Text("Reiniciar")
-                        }
+                if (state.resettingOrders) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    TextButton(
+                        onClick = { showResetConfirm = true },
+                        enabled = state.confirmedOrdersToday > 0,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text("Reiniciar")
                     }
                 }
             }
@@ -812,14 +822,14 @@ private fun InfoHeader(
         }
     }
 
-    if (showResetConfirm && canReset) {
+    if (showResetConfirm) {
         ConfirmCheckDialog(
-            title = "Reiniciar contador del día",
-            description = "Se borrará el registro de los ${state.confirmedOrdersToday} pedido" +
+            title = "Reiniciar pedidos del día",
+            description = "Se borrarán todos los ${state.confirmedOrdersToday} pedido" +
                 "${if (state.confirmedOrdersToday == 1) "" else "s"} confirmado" +
-                "${if (state.confirmedOrdersToday == 1) "" else "s"} hoy y el total de ventas precargado. " +
+                "${if (state.confirmedOrdersToday == 1) "" else "s"} hoy. " +
                 "El inventario descontado no se restaura.",
-            checkLabel = "Confirmo que deseo reiniciar el contador del día",
+            checkLabel = "Confirmo que deseo borrar los pedidos del día",
             confirmLabel = "Reiniciar",
             onDismiss = { showResetConfirm = false },
             onConfirm = {
@@ -1007,8 +1017,12 @@ private fun OrderLineSummaryRow(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+                val lineBs = viewModel.bsEquivalent(line.totalUsd)
                 Text(
-                    text = "${viewModel.formatQty(line.quantity)} ${line.unit} · ${viewModel.formatPrice(line.totalUsd)}",
+                    text = buildString {
+                        append("${viewModel.formatQty(line.quantity)} ${line.unit} · ${viewModel.formatPrice(line.totalUsd)}")
+                        if (lineBs != null) append(" · $lineBs")
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1082,8 +1096,8 @@ private fun OrderSummaryCard(
                         OrderLineSummaryRow(
                             line = line,
                             viewModel = viewModel,
-                            onEdit = { viewModel.editOrderLine(line.productId) },
-                            onRemove = { viewModel.removeOrderLine(line.productId) }
+                            onEdit = { viewModel.editOrderLine(line.lineId) },
+                            onRemove = { viewModel.removeOrderLine(line.lineId) }
                         )
                     }
 
@@ -1148,7 +1162,9 @@ private fun OrderSummaryCard(
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.primary
+                    contentColor = MaterialTheme.colorScheme.primary,
+                    disabledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                 )
             ) {
                 Text("Confirmar pedido y ver boleta", fontWeight = FontWeight.SemiBold)

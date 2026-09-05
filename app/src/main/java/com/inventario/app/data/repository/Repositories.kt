@@ -249,17 +249,29 @@ class InventoryRepository(
     private var cloudStatusJob: Job? = null
     private var confirmedOrdersPollJob: Job? = null
     private var inventoryPollJob: Job? = null
+    private var cashClosingsPollJob: Job? = null
+    private var metaPollJob: Job? = null
     private var lastSyncedOrdersRefreshAt = 0L
     private var lastBranchOrdersRefreshAt = 0L
     private var lastBranchInventoryRefreshAt = 0L
+    private var lastBranchCashClosingsRefreshAt = 0L
+    private var lastBranchMetaRefreshAt = 0L
     private var cachedLastInventoryUpdateAt: Long = 0L
     private var cachedInventoryRevision: Long = 0L
     private var cachedLastSalesUpdateAt: Long = 0L
+    private var cachedLastOrdersResetAt: Long = 0L
+    /** Último reinicio de pedidos ya aplicado en este dispositivo (sucursal activa). */
+    private var acknowledgedOrdersResetAt: Long = 0L
+    /** Tras un reinicio local, ignora lecturas obsoletas del servidor que aún traen pedidos. */
+    private var ordersResetGraceUntil: Long = 0L
+    private var cachedCashClosingsSignature: String? = null
+    private var cachedMetaSyncSignature: String? = null
     /** Evita que un refresh del servidor pise un descuento local recién aplicado. */
     private var protectLocalInventoryUntil: Long = 0L
 
     init {
         restoreProductsFromDisk()
+        restoreMetaFromDisk()
         restoreConfirmedOrdersFromDisk()
         appScope.launch {
             refreshInventoryState()
@@ -268,24 +280,57 @@ class InventoryRepository(
         attachCloudSyncListeners(cloudSync)
         startConfirmedOrdersPolling()
         startInventoryPolling()
+        startCashClosingsPolling()
+        startMetaPolling()
     }
 
     fun setCloudSync(sync: CloudSync) {
-        val branchChanged = orderPreviewBranchId != null && orderPreviewBranchId != sync.branchId
+        val previousBranchId = orderPreviewBranchId
+        val branchChanged = previousBranchId != null &&
+            normalizeBranchId(previousBranchId) != normalizeBranchId(sync.branchId)
         cloudSync = sync
         orderPreviewBranchId = sync.branchId
         attachCloudSyncListeners(sync)
         if (branchChanged) {
-            metaFlow.value = null
-            invalidateLocalOrderPreviewCache()
-            confirmedOrdersTodayFlow.value = emptyList()
+            resetInMemoryForBranchSwitch()
             restoreProductsFromDisk()
+            restoreMetaFromDisk(force = true)
             restoreConfirmedOrdersFromDisk()
-            appScope.launch { refreshInventoryState(force = true) }
+            appScope.launch {
+                refreshMetaFromBranchEvent(force = true)
+                refreshInventoryState(force = true)
+                refreshConfirmedOrdersFromBranchEvent(force = true)
+                refreshCashClosingsFromBranchEvent(force = true)
+            }
         } else {
             invalidateLocalOrderPreviewCache()
+            appScope.launch { refreshConfirmedOrdersFlow() }
         }
-        appScope.launch { refreshConfirmedOrdersFlow() }
+    }
+
+    /**
+     * Limpia estado en memoria al cambiar de sucursal activa. Evita que
+     * inventario, pedidos o meta de una instancia se muestren en otra.
+     */
+    private fun resetInMemoryForBranchSwitch() {
+        pendingOrders.clear()
+        productsFlow.value = emptyList()
+        metaFlow.value = null
+        confirmedOrdersTodayFlow.value = emptyList()
+        invalidateLocalOrderPreviewCache()
+        cachedLastOrdersResetAt = 0L
+        acknowledgedOrdersResetAt = 0L
+        ordersResetGraceUntil = 0L
+        cachedLastSalesUpdateAt = 0L
+        cachedLastInventoryUpdateAt = 0L
+        cachedInventoryRevision = 0L
+        cachedCashClosingsSignature = null
+        cachedMetaSyncSignature = null
+        protectLocalInventoryUntil = 0L
+        lastBranchOrdersRefreshAt = 0L
+        lastBranchInventoryRefreshAt = 0L
+        lastBranchCashClosingsRefreshAt = 0L
+        lastBranchMetaRefreshAt = 0L
     }
 
     /**
@@ -303,10 +348,18 @@ class InventoryRepository(
                 cloudEventsRelay.emit(event)
                 when (event) {
                     is CloudEvent.Inventory -> appScope.launch(Dispatchers.IO) {
+                        // La tasa BCV se guarda vía PUT /v1/meta (mismo broadcast
+                        // `inventory`); refrescar meta sin el debounce del catálogo.
+                        refreshMetaFromBranchEvent(force = true)
                         refreshInventoryFromBranchEvent()
                     }
                     is CloudEvent.Sales -> appScope.launch(Dispatchers.IO) {
                         refreshConfirmedOrdersFromBranchEvent()
+                        // Respaldo: stock actualizado en el mismo POST /v1/orders.
+                        refreshInventoryState(fromBranchEvent = true)
+                    }
+                    is CloudEvent.CashClosings -> appScope.launch(Dispatchers.IO) {
+                        refreshCashClosingsFromBranchEvent(force = true)
                     }
                     else -> Unit
                 }
@@ -321,6 +374,8 @@ class InventoryRepository(
                 if (becameSynced) {
                     refreshConfirmedOrdersIfDue()
                     refreshInventoryState(force = true)
+                    appScope.launch { refreshMetaFromBranchEvent(force = true) }
+                    appScope.launch { refreshCashClosingsFromBranchEvent(force = true) }
                 }
                 if (info.status == CloudSyncStatus.SYNCED && pendingOrders.isNotEmpty()) {
                     flushPendingOrders()
@@ -350,10 +405,127 @@ class InventoryRepository(
                 delay(CONFIRMED_ORDERS_POLL_INTERVAL_MS)
                 // REST sigue disponible aunque el WebSocket esté en ERROR (común en Render free).
                 if (cloudStatusRelay.value.status != CloudSyncStatus.OFFLINE) {
+                    refreshMetaFromServer()
                     refreshConfirmedOrdersFlow()
                 }
             }
         }
+    }
+
+    /** Respaldo para que la tasa BCV manual del Admin llegue sin depender del WebSocket. */
+    private fun startMetaPolling() {
+        metaPollJob?.cancel()
+        metaPollJob = appScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(META_POLL_INTERVAL_MS)
+                if (cloudStatusRelay.value.status != CloudSyncStatus.OFFLINE) {
+                    refreshMetaIfChanged()
+                }
+            }
+        }
+    }
+
+    /**
+     * Sincronización global por sucursal: el Admin guardó la tasa BCV
+     * (WebSocket `inventory`, FCM `meta_updated` o polling).
+     */
+    suspend fun refreshMetaFromBranchEvent(force: Boolean = false) = withContext(Dispatchers.IO) {
+        if (!force) {
+            val now = System.currentTimeMillis()
+            if (now - lastBranchMetaRefreshAt < BRANCH_META_REFRESH_DEBOUNCE_MS) return@withContext
+            lastBranchMetaRefreshAt = now
+        } else {
+            lastBranchMetaRefreshAt = System.currentTimeMillis()
+        }
+        repeat(META_BRANCH_FETCH_RETRIES) { attempt ->
+            runCatching {
+                val state = cloudSync.get("/v1/state")
+                applyMetaFromStateResponse(state)
+                val metaJson = state.optJSONObject("meta")
+                val updateAt = metaJson?.optLongOrNull("lastMetaUpdateAt") ?: 0L
+                val fetchedAt = metaJson?.optLongOrNull("bcvFetchedAt") ?: 0L
+                val rate = metaJson?.optDoubleOrNull("bcvRate") ?: 0.0
+                val ordersResetAt = metaJson?.optLongOrNull("lastOrdersResetAt") ?: 0L
+                val signature = "$updateAt:$fetchedAt:$rate:$ordersResetAt"
+                if (signature != cachedMetaSyncSignature || attempt == META_BRANCH_FETCH_RETRIES - 1) {
+                    cachedMetaSyncSignature = signature
+                    return@withContext
+                }
+            }.onFailure { error ->
+                if (attempt == META_BRANCH_FETCH_RETRIES - 1) {
+                    Log.w(TAG, "No se pudo refrescar meta de sucursal", error)
+                }
+            }
+            delay(META_BRANCH_FETCH_RETRY_MS)
+        }
+    }
+
+    private suspend fun refreshMetaIfChanged() {
+        runCatching {
+            val state = cloudSync.get("/v1/state")
+            val metaJson = state.optJSONObject("meta")
+            val updateAt = metaJson?.optLongOrNull("lastMetaUpdateAt") ?: 0L
+            val fetchedAt = metaJson?.optLongOrNull("bcvFetchedAt") ?: 0L
+            val rate = metaJson?.optDoubleOrNull("bcvRate") ?: 0.0
+            val ordersResetAt = metaJson?.optLongOrNull("lastOrdersResetAt") ?: 0L
+            val signature = "$updateAt:$fetchedAt:$rate:$ordersResetAt"
+            if (signature != cachedMetaSyncSignature) {
+                cachedMetaSyncSignature = signature
+                applyMetaFromStateResponse(state)
+            }
+        }.onFailure { error ->
+            Log.w(TAG, "No se pudo consultar meta en polling", error)
+        }
+    }
+
+    /** Respaldo para que Admin/Supervisor vean cierres PENDING sin depender del WebSocket. */
+    private fun startCashClosingsPolling() {
+        cashClosingsPollJob?.cancel()
+        cashClosingsPollJob = appScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(CASH_CLOSINGS_POLL_INTERVAL_MS)
+                if (cloudStatusRelay.value.status != CloudSyncStatus.OFFLINE) {
+                    refreshCashClosingsIfChanged()
+                }
+            }
+        }
+    }
+
+    /**
+     * Sincronización global por sucursal: cualquier usuario registró o validó
+     * un cierre (WebSocket `cashClosings` o FCM `cash_closings_updated`).
+     */
+    suspend fun refreshCashClosingsFromBranchEvent(force: Boolean = false) = withContext(Dispatchers.IO) {
+        if (!force) {
+            val now = System.currentTimeMillis()
+            if (now - lastBranchCashClosingsRefreshAt < BRANCH_CASH_CLOSINGS_REFRESH_DEBOUNCE_MS) {
+                return@withContext
+            }
+            lastBranchCashClosingsRefreshAt = now
+        } else {
+            lastBranchCashClosingsRefreshAt = System.currentTimeMillis()
+        }
+        repeat(CASH_CLOSINGS_BRANCH_FETCH_RETRIES) { attempt ->
+            val emitted = refreshCashClosingsIfChanged(forceEmit = attempt == CASH_CLOSINGS_BRANCH_FETCH_RETRIES - 1)
+            if (emitted) return@withContext
+            delay(CASH_CLOSINGS_BRANCH_FETCH_RETRY_MS)
+        }
+    }
+
+    private suspend fun refreshCashClosingsIfChanged(forceEmit: Boolean = false): Boolean {
+        val closings = runCatching { fetchCashClosings() }.getOrDefault(emptyList())
+        val signature = closings.joinToString("|") { closing ->
+            "${closing.id}:${closing.status}:${closing.revisionNumber}:${closing.reviewedAt}"
+        }
+        val changed = signature != cachedCashClosingsSignature
+        if (changed) {
+            cachedCashClosingsSignature = signature
+        }
+        if (forceEmit || changed) {
+            cloudEventsRelay.emit(CloudEvent.CashClosings)
+            return true
+        }
+        return false
     }
 
     private suspend fun refreshConfirmedOrdersIfDue() {
@@ -478,36 +650,27 @@ class InventoryRepository(
 
     suspend fun findProduct(id: Long): Product? = productsFlow.value.find { it.id == id }
 
-    suspend fun saveBcvRate(rate: Double, manualOverride: Boolean = false) = withContext(Dispatchers.IO) {
+    suspend fun saveBcvRate(rate: Double, manualOverride: Boolean = true) = withContext(Dispatchers.IO) {
         runCatching {
             val response = cloudSync.putJson(
                 "/v1/meta",
                 JSONObject().apply {
                     put("bcvRate", rate)
                     put("bcvFetchedAt", System.currentTimeMillis())
-                    put("bcvManualOverride", manualOverride)
+                    put("bcvManualOverride", true)
                 }
             )
             metaFlow.update { current ->
                 (current ?: AppMeta()).copy(
                     bcvRate = response.optDoubleOrNull("bcvRate") ?: rate,
                     bcvFetchedAt = response.optLongOrNull("bcvFetchedAt"),
-                    bcvManualOverride = response.optBoolean("bcvManualOverride", manualOverride)
+                    bcvManualOverride = true
                 )
             }
-        }
-    }
-
-    suspend fun restoreAutomaticBcv() = withContext(Dispatchers.IO) {
-        runCatching {
-            val response = cloudSync.putJson(
-                "/v1/meta",
-                JSONObject().apply { put("bcvManualOverride", false) }
-            )
-            metaFlow.update { current ->
-                (current ?: AppMeta()).copy(
-                    bcvManualOverride = response.optBoolean("bcvManualOverride", false)
-                )
+            metaFlow.value?.let { meta ->
+                meta.bcvRate?.takeIf { it > 0 }?.let { persistBcvRateToDisk(it, meta.bcvFetchedAt) }
+                val fetchedAt = meta.bcvFetchedAt ?: 0L
+                cachedMetaSyncSignature = "${response.optLongOrNull("lastMetaUpdateAt") ?: fetchedAt}:$fetchedAt:${meta.bcvRate ?: 0.0}"
             }
         }
     }
@@ -515,6 +678,15 @@ class InventoryRepository(
     fun currentMeta(): AppMeta? = metaFlow.value
 
     suspend fun currentBcvRate(): Double? = metaFlow.value?.bcvRate
+
+    /** Actualiza solo meta (tasa BCV, etc.) sin tocar el catálogo en pantalla. */
+    suspend fun refreshMetaFromServer() = withContext(Dispatchers.IO) {
+        runCatching {
+            applyMetaFromStateResponse(cloudSync.get("/v1/state"))
+        }.onFailure { error ->
+            Log.w(TAG, "No se pudo refrescar meta; se mantiene la tasa en caché", error)
+        }
+    }
 
     suspend fun saveDiscountPercent(percent: Double) = withContext(Dispatchers.IO) {
         runCatching {
@@ -710,16 +882,11 @@ class InventoryRepository(
     fun currentConfirmedOrdersToday(): List<ConfirmedOrderPreview> =
         confirmedOrdersTodayFlow.value
 
-    private suspend fun mergedConfirmedOrdersToday(fullServerFetch: Boolean = false): MergedOrdersResult {
+    private suspend fun mergedConfirmedOrdersToday(): MergedOrdersResult {
         val (start, end) = todayBounds()
-        // En eventos de sucursal (WebSocket/FCM) se consulta el historial completo
-        // y se filtra en cliente: evita perder pedidos de otros usuarios por
-        // desfases de rango en el filtro del servidor.
-        val fetch = if (fullServerFetch) {
-            fetchConfirmedOrdersWithStatus(null, null)
-        } else {
-            fetchConfirmedOrdersWithStatus(start, end)
-        }
+        // Siempre se consulta el historial completo y se filtra en cliente:
+        // evita perder pedidos de otros usuarios por desfases de rango en el servidor.
+        val fetch = fetchConfirmedOrdersWithStatus(null, null)
         val serverOrders = fetch.orders.filter { it.createdAt in start until end }
         val localOrders = localOrdersForMerge(start, end)
         val merged = mergeConfirmedOrderPreviews(serverOrders, localOrders)
@@ -727,20 +894,22 @@ class InventoryRepository(
             merged = merged,
             serverFetchSuccess = fetch.success,
             serverOrderCount = serverOrders.size,
-            lastSalesUpdateAt = fetch.lastSalesUpdateAt
+            lastSalesUpdateAt = fetch.lastSalesUpdateAt,
+            lastOrdersResetAt = fetch.lastOrdersResetAt
         )
     }
 
     private suspend fun resolveConfirmedOrdersMerged(fromBranchEvent: Boolean): MergedOrdersResult {
-        var result = mergedConfirmedOrdersToday(fullServerFetch = fromBranchEvent)
-        if (!fromBranchEvent) return result
-
-        repeat(SALES_BRANCH_FETCH_RETRIES) {
+        var result = mergedConfirmedOrdersToday()
+        // Reintentos también en polling: Render/Neon pueden devolver datos viejos en el primer fetch.
+        val maxRetries = if (fromBranchEvent) SALES_BRANCH_FETCH_RETRIES else 2
+        repeat(maxRetries) {
             delay(SALES_BRANCH_FETCH_RETRY_MS)
-            val fresher = mergedConfirmedOrdersToday(fullServerFetch = true)
+            val fresher = mergedConfirmedOrdersToday()
             if (!fresher.serverFetchSuccess) return@repeat
             if (fresher.serverOrderCount > result.serverOrderCount ||
-                fresher.merged.size > result.merged.size
+                fresher.merged.size > result.merged.size ||
+                (fresher.lastSalesUpdateAt ?: 0L) > (result.lastSalesUpdateAt ?: 0L)
             ) {
                 result = fresher
             }
@@ -784,21 +953,38 @@ class InventoryRepository(
         if (storedDay != null && storedDay != today) {
             todayOrderPreviewsPrefs().edit().clear().apply()
             invalidateLocalOrderPreviewCache()
-            if (result.merged.isEmpty()) {
+            if (result.merged.isEmpty() && current.isEmpty()) {
                 confirmedOrdersTodayFlow.value = emptyList()
                 return
             }
         }
 
-        // Servidor sin ventas en el rango: conservar caché local (p. ej. Render
-        // reiniciado). Si el servidor sí trae ventas de otros dispositivos, siempre
-        // aplicar el merge para que todos los usuarios de la sucursal vean lo mismo.
-        if (result.serverOrderCount == 0 && result.merged.isEmpty()) {
+        val serverResetAt = result.lastOrdersResetAt ?: 0L
+        if (serverResetAt > acknowledgedOrdersResetAt) {
+            acknowledgedOrdersResetAt = serverResetAt
+            cachedLastOrdersResetAt = serverResetAt
+            pendingOrders.clear()
+            clearLocalOrderPreviews()
+            confirmedOrdersTodayFlow.value = result.merged
+            Log.i(TAG, "Pedidos reiniciados en sucursal (lastOrdersResetAt=$serverResetAt)")
+            return
+        }
+
+        if (System.currentTimeMillis() < ordersResetGraceUntil) {
+            pendingOrders.clear()
+            clearLocalOrderPreviews()
+            confirmedOrdersTodayFlow.value = emptyList()
+            return
+        }
+
+        // Nunca borrar pedidos solo porque el servidor respondió vacío (Render, red, etc.).
+        // Solo un reinicio explícito (resetTodayOrders / lastOrdersResetAt) limpia la lista.
+        if (result.merged.isEmpty()) {
             if (current.isNotEmpty() || localToday.isNotEmpty()) {
-                Log.w(
+                Log.d(
                     TAG,
-                    "Pedidos: servidor vacío; se mantiene caché local " +
-                        "(en pantalla=${current.size}, disco=${localToday.size})"
+                    "Pedidos: servidor sin datos; se conservan en pantalla=${current.size}, " +
+                        "disco=${localToday.size}"
                 )
                 return
             }
@@ -806,7 +992,27 @@ class InventoryRepository(
 
         val currentIds = current.map { it.syncId }.toSet()
         val hasNewServerOrders = result.merged.any { it.syncId !in currentIds }
-        if (!hasNewServerOrders && result.merged == current) {
+        val salesActivityAdvanced = result.lastSalesUpdateAt != null &&
+            result.lastSalesUpdateAt > cachedLastSalesUpdateAt
+        val toApply = when {
+            result.merged.isEmpty() -> current
+            current.isEmpty() -> result.merged
+            else -> {
+                val mergedIds = result.merged.map { it.syncId }.toSet()
+                val localExtra = current.filter { it.syncId !in mergedIds }
+                if (localExtra.isEmpty()) {
+                    result.merged
+                } else {
+                    mergeConfirmedOrderPreviews(result.merged, localExtra)
+                }
+            }
+        }
+        val serverHasMoreOrders = result.serverOrderCount > current.size
+        if (!hasNewServerOrders &&
+            !salesActivityAdvanced &&
+            !serverHasMoreOrders &&
+            toApply == current
+        ) {
             if (fromBranchEvent && result.serverOrderCount > 0) {
                 Log.d(TAG, "Pedidos de sucursal ya actualizados (${result.serverOrderCount} en servidor)")
             }
@@ -817,11 +1023,13 @@ class InventoryRepository(
             cachedLastSalesUpdateAt = updatedAt
         }
 
-        val hasNewOrders = result.merged.any { order -> current.none { it.syncId == order.syncId } }
-        if (result.merged.isNotEmpty()) {
-            persistBranchOrderPreviews(result.merged)
+        val hasNewOrders = toApply.any { order -> current.none { it.syncId == order.syncId } }
+        if (toApply.isNotEmpty()) {
+            persistBranchOrderPreviews(toApply)
         }
-        confirmedOrdersTodayFlow.value = result.merged
+        if (toApply != current) {
+            confirmedOrdersTodayFlow.value = toApply
+        }
         if (fromBranchEvent && hasNewOrders) {
             Log.i(
                 TAG,
@@ -833,10 +1041,46 @@ class InventoryRepository(
 
     suspend fun resetTodayOrders() = withContext(Dispatchers.IO) {
         val (start, end) = todayBounds()
-        cloudSync.delete("/v1/sales", mapOf("start" to start.toString(), "end" to end.toString()))
+        val query = mapOf("start" to start.toString(), "end" to end.toString())
+        val resetBody = JSONObject().apply {
+            put("start", start)
+            put("end", end)
+        }
+        val response = runCatching {
+            cloudSync.postJson("/v1/sales/reset", resetBody)
+        }.recoverCatching { err ->
+            if (err is ApiException && (err.code == 404 || err.code == 403)) {
+                cloudSync.delete("/v1/sales", query)
+            } else {
+                throw err
+            }
+        }.getOrThrow()
+        val resetAt = response.optLongOrNull("lastOrdersResetAt")
+            ?: runCatching {
+                cloudSync.get("/v1/state")
+                    .optJSONObject("meta")
+                    ?.optLongOrNull("lastOrdersResetAt")
+            }.getOrNull()
+            ?: System.currentTimeMillis()
+        acknowledgedOrdersResetAt = resetAt
+        cachedLastOrdersResetAt = resetAt
+        ordersResetGraceUntil = System.currentTimeMillis() + ORDERS_RESET_GRACE_MS
+        pendingOrders.clear()
         clearLocalOrderPreviews()
-    }.also {
         confirmedOrdersTodayFlow.value = emptyList()
+    }
+
+    /**
+     * Fuerza lectura del servidor (pedidos, inventario, tasa BCV, cierres).
+     * Usado por el botón «Refrescar» visible para todos los perfiles.
+     */
+    suspend fun forceRefreshFromServer(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            refreshMetaFromBranchEvent(force = true)
+            refreshInventoryState(force = true, fromBranchEvent = true)
+            refreshConfirmedOrdersFromBranchEvent(force = true)
+            refreshCashClosingsFromBranchEvent(force = true)
+        }
     }
 
     suspend fun saveCashClosing(record: CashClosingRecord): Result<Long> = withContext(Dispatchers.IO) {
@@ -1044,10 +1288,7 @@ class InventoryRepository(
         val key = inventoryDiskKey()
         cachedLastInventoryUpdateAt = prefs.getLong(inventoryUpdateAtKey(key), 0L)
         cachedInventoryRevision = prefs.getLong(inventoryRevisionKey(key), 0L)
-        val cached = loadProductsFromDisk()
-        if (cached.isNotEmpty()) {
-            productsFlow.value = cached
-        }
+        productsFlow.value = loadProductsFromDisk()
     }
 
     private fun loadProductsFromDisk(): List<Product> {
@@ -1088,6 +1329,92 @@ class InventoryRepository(
 
     private fun inventoryRevisionKey(branchKey: String): String = "${branchKey}_revision"
 
+    private fun metaDiskKey(): String =
+        "meta_bcv_${normalizeBranchId(orderPreviewBranchId ?: cloudSync.branchId ?: "default")}"
+
+    private fun loadBcvRateFromDisk(): Double? =
+        context.getSharedPreferences(INVENTORY_CACHE_PREFS, Context.MODE_PRIVATE)
+            .getString(metaDiskKey(), null)
+            ?.toDoubleOrNull()
+            ?.takeIf { it > 0 }
+
+    private fun restoreMetaFromDisk(force: Boolean = false) {
+        val rate = loadBcvRateFromDisk()
+        val fetchedAt = loadBcvFetchedAtFromDisk().takeIf { it > 0 }
+        if (!force) {
+            val current = metaFlow.value
+            if (rate == null || current?.bcvRate != null && current.bcvRate > 0) return
+        }
+        metaFlow.value = if (rate != null) {
+            (metaFlow.value ?: AppMeta()).copy(bcvRate = rate, bcvFetchedAt = fetchedAt)
+        } else {
+            null
+        }
+    }
+
+    private fun persistBcvRateToDisk(rate: Double, fetchedAt: Long? = null) {
+        context.getSharedPreferences(INVENTORY_CACHE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(metaDiskKey(), rate.toString())
+            .apply {
+                fetchedAt?.takeIf { it > 0 }?.let { putLong(metaFetchedAtDiskKey(), it) }
+            }
+            .apply()
+    }
+
+    private fun metaFetchedAtDiskKey(): String = "${metaDiskKey()}_fetched_at"
+
+    private fun loadBcvFetchedAtFromDisk(): Long =
+        context.getSharedPreferences(INVENTORY_CACHE_PREFS, Context.MODE_PRIVATE)
+            .getLong(metaFetchedAtDiskKey(), 0L)
+
+    private fun applyMetaFromStateResponse(state: JSONObject) {
+        val metaJson = state.optJSONObject("meta")
+        val current = metaFlow.value
+        val serverRate = metaJson?.optDoubleOrNull("bcvRate")?.takeIf { it > 0 }
+        val serverFetchedAt = metaJson?.optLongOrNull("bcvFetchedAt") ?: 0L
+        val serverSalesUpdateAt = metaJson?.optLongOrNull("lastSalesUpdateAt") ?: 0L
+        val localFetchedAt = current?.bcvFetchedAt?.takeIf { it > 0 } ?: loadBcvFetchedAtFromDisk()
+        // No pisar la tasa manual con respuestas vacías del servidor (p. ej. Render reiniciado).
+        // Si el servidor trae tasa, siempre prevalece cuando es igual o más reciente.
+        val resolvedRate = when {
+            serverRate != null && serverFetchedAt > 0 && serverFetchedAt >= localFetchedAt -> serverRate
+            serverRate != null -> serverRate
+            else -> current?.bcvRate?.takeIf { it > 0 } ?: loadBcvRateFromDisk()
+        }
+        val resolvedFetchedAt = when {
+            serverFetchedAt > 0 -> serverFetchedAt
+            else -> current?.bcvFetchedAt
+        }
+        metaFlow.value = AppMeta(
+            bcvRate = resolvedRate,
+            bcvFetchedAt = resolvedFetchedAt,
+            bcvManualOverride = when {
+                serverRate != null -> metaJson?.optBoolean("bcvManualOverride", false) ?: false
+                else -> current?.bcvManualOverride ?: false
+            },
+            lastInventoryUpdateAt = metaJson?.optLongOrNull("lastInventoryUpdateAt")
+                ?: current?.lastInventoryUpdateAt,
+            discountPercent = metaJson?.optDoubleOrNull("discountPercent")
+                ?: current?.discountPercent
+        )
+        resolvedRate?.let { persistBcvRateToDisk(it, resolvedFetchedAt) }
+        val serverOrdersResetAt = metaJson?.optLongOrNull("lastOrdersResetAt") ?: 0L
+        // Respaldo cross-device: reinicio de pedidos (DELETE /v1/sales).
+        if (serverOrdersResetAt > cachedLastOrdersResetAt) {
+            appScope.launch {
+                refreshConfirmedOrdersFromBranchEvent(force = true)
+            }
+        }
+        // Respaldo cross-device: si otro usuario confirmó un pedido, el meta avanza
+        // aunque el evento WebSocket `sales` no llegue (Render free, red móvil).
+        if (serverSalesUpdateAt > cachedLastSalesUpdateAt) {
+            appScope.launch {
+                refreshConfirmedOrdersFromBranchEvent(force = true)
+            }
+        }
+    }
+
     private suspend fun refreshInventoryState(
         force: Boolean = false,
         fromBranchEvent: Boolean = false
@@ -1100,13 +1427,7 @@ class InventoryRepository(
             val newProducts = (state.optJSONArray("products") ?: JSONArray()).toProductList()
             val currentProducts = productsFlow.value
 
-            metaFlow.value = AppMeta(
-                bcvRate = metaJson?.optDoubleOrNull("bcvRate"),
-                bcvFetchedAt = metaJson?.optLongOrNull("bcvFetchedAt"),
-                bcvManualOverride = metaJson?.optBoolean("bcvManualOverride", false) ?: false,
-                lastInventoryUpdateAt = metaJson?.optLongOrNull("lastInventoryUpdateAt"),
-                discountPercent = metaJson?.optDoubleOrNull("discountPercent")
-            )
+            applyMetaFromStateResponse(state)
 
             if (newProducts.isEmpty()) {
                 if (force && currentProducts.isNotEmpty()) {
@@ -1180,15 +1501,19 @@ class InventoryRepository(
         ConfirmedOrdersFetch(
             orders = buildConfirmedOrderPreviews(sales, lineItems),
             success = true,
-            lastSalesUpdateAt = metaJson?.optLongOrNull("lastSalesUpdateAt")
+            lastSalesUpdateAt = metaJson?.optLongOrNull("lastSalesUpdateAt"),
+            lastOrdersResetAt = metaJson?.optLongOrNull("lastOrdersResetAt")
         )
     }.getOrElse { error ->
         Log.w(TAG, "No se pudieron cargar pedidos confirmados del servidor", error)
         ConfirmedOrdersFetch(emptyList(), success = false)
     }
 
-    private fun localOrdersForMerge(start: Long, end: Long): List<ConfirmedOrderPreview> =
-        loadLocalOrderPreviewsForToday(start, end)
+    private fun localOrdersForMerge(start: Long, end: Long): List<ConfirmedOrderPreview> {
+        val pendingIds = pendingOrders.mapTo(HashSet()) { it.sale.syncId }
+        if (pendingIds.isEmpty()) return emptyList()
+        return loadLocalOrderPreviewsForToday(start, end).filter { it.syncId in pendingIds }
+    }
 
     private fun restoreConfirmedOrdersFromDisk() {
         val (start, end) = todayBounds()
@@ -1302,6 +1627,7 @@ class InventoryRepository(
         cachedLocalOrderDayKey = todayDayKey()
         cachedLocalOrderPreviews = emptyList()
         todayOrderPreviewsPrefs().edit().clear().commit()
+        legacyOrderPreviewsPrefs().edit().clear().commit()
     }
 
     private fun JSONArray.toStringList(): List<String> =
@@ -1319,14 +1645,16 @@ class InventoryRepository(
     private data class ConfirmedOrdersFetch(
         val orders: List<ConfirmedOrderPreview>,
         val success: Boolean,
-        val lastSalesUpdateAt: Long? = null
+        val lastSalesUpdateAt: Long? = null,
+        val lastOrdersResetAt: Long? = null
     )
 
     private data class MergedOrdersResult(
         val merged: List<ConfirmedOrderPreview>,
         val serverFetchSuccess: Boolean,
         val serverOrderCount: Int,
-        val lastSalesUpdateAt: Long? = null
+        val lastSalesUpdateAt: Long? = null,
+        val lastOrdersResetAt: Long? = null
     )
 
     companion object {
@@ -1335,12 +1663,21 @@ class InventoryRepository(
         private val CARACAS_ZONE = ZoneId.of("America/Caracas")
         private const val CONFIRMED_ORDERS_POLL_INTERVAL_MS = 8_000L
         private const val INVENTORY_POLL_INTERVAL_MS = 30_000L
+        private const val CASH_CLOSINGS_POLL_INTERVAL_MS = 15_000L
+        private const val META_POLL_INTERVAL_MS = 10_000L
         private const val SYNCED_ORDERS_REFRESH_DEBOUNCE_MS = 2_000L
         private const val SALES_BRANCH_FETCH_RETRIES = 3
         private const val SALES_BRANCH_FETCH_RETRY_MS = 450L
         private const val INVENTORY_BRANCH_FETCH_RETRIES = 2
         private const val INVENTORY_BRANCH_FETCH_RETRY_MS = 450L
+        private const val CASH_CLOSINGS_BRANCH_FETCH_RETRIES = 3
+        private const val CASH_CLOSINGS_BRANCH_FETCH_RETRY_MS = 450L
+        private const val BRANCH_CASH_CLOSINGS_REFRESH_DEBOUNCE_MS = 1_500L
+        private const val META_BRANCH_FETCH_RETRIES = 3
+        private const val META_BRANCH_FETCH_RETRY_MS = 450L
+        private const val BRANCH_META_REFRESH_DEBOUNCE_MS = 1_000L
         private const val LOCAL_INVENTORY_PROTECT_MS = 4_000L
+        private const val ORDERS_RESET_GRACE_MS = 30_000L
         private const val BRANCH_INVENTORY_REFRESH_DEBOUNCE_MS = 1_500L
         private const val INVENTORY_CACHE_PREFS = "inventory_local_cache"
         private const val LEGACY_ORDER_PREVIEWS_PREFS = "today_order_previews"

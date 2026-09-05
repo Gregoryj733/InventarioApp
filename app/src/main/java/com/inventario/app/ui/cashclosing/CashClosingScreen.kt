@@ -190,24 +190,9 @@ fun CashClosingScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimary,
                     navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
                     actionIconContentColor = MaterialTheme.colorScheme.onPrimary
-                ),
-                actions = {
-                    if (state.bcvRefreshing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier
-                                .padding(end = 16.dp)
-                                .size(22.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    } else {
-                        IconButton(onClick = viewModel::refreshBcv) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Actualizar BCV")
-                        }
-                    }
-                }
+                )
             )
-        }
+        },
     ) { padding ->
         AppScreenBackground(modifier = Modifier.fillMaxSize()) {
             Column(
@@ -396,7 +381,7 @@ private fun CashClosingFormContent(
                         grossUsd = state.salesGrossUsdToday,
                         discountUsd = state.salesDiscountUsdToday,
                         formatPrice = viewModel::formatPrice,
-                        onReset = if (state.canResetTodayOrders) viewModel::resetTodayOrders else null,
+                        onReset = viewModel::resetTodayOrders,
                         onPreview = viewModel::openConfirmedOrdersPreview,
                         resetting = state.resettingOrders
                     )

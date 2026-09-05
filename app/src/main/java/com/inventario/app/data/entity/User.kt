@@ -26,7 +26,7 @@ fun UserRole.displayLabel(): String = when (this) {
  * - Menú Flujo Aprobación: ver y validar cierres (aprobar / rechazar / revertir).
  * - Historial de cierres: día actual + días anteriores (hasta 90 días).
  * - Exportar historial de cierres a Excel desde Cierre de caja y Flujo Aprobación.
- * - Reiniciar contador de pedidos confirmados del día.
+ * - Reiniciar pedidos del día (todos los perfiles autenticados, con confirmación).
  * - Generar / anular cupones de descuento (cuando el flujo lo permita).
  * - Inventario, Activar cupón, Cierre de caja, validadores de batería.
  *
@@ -48,9 +48,8 @@ fun UserRole.canViewClosingHistory(): Boolean =
 fun UserRole.canExportClosingHistory(): Boolean =
     this == UserRole.ADMIN || this == UserRole.SUPERVISOR
 
-/** Reiniciar el contador de pedidos confirmados del día. */
-fun UserRole.canResetTodayOrders(): Boolean =
-    this == UserRole.ADMIN || this == UserRole.SUPERVISOR
+/** Reiniciar (borrar) los pedidos confirmados del día. Todos los perfiles autenticados. */
+fun UserRole.canResetTodayOrders(): Boolean = true
 
 /** Generar / gestionar códigos de descuento (app o portal). */
 fun UserRole.canManageDiscountTickets(): Boolean =

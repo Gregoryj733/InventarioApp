@@ -13,7 +13,6 @@ import com.inventario.app.data.entity.DiscountTicket
 import com.inventario.app.data.entity.Product
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.canManageDiscountTickets
-import com.inventario.app.data.entity.canResetTodayOrders
 import com.inventario.app.data.entity.isIssued
 import com.inventario.app.data.entity.isExpired
 import com.inventario.app.data.entity.isVoided
@@ -152,15 +151,11 @@ class HomeViewModel(
         viewModelScope.launch {
             inventoryRepository.observeMeta().collect { meta ->
                 val rate = meta?.bcvRate?.let(::roundBcvRate)
-                val manual = meta?.bcvManualOverride == true
                 _state.update { state ->
                     state.copy(
                         bcvRate = rate,
-                        bcvLabel = formatBcvLabel(rate, manual)
+                        bcvLabel = formatBcvLabel(rate)
                     )
-                }
-                if (BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, manual)) {
-                    refreshBcv()
                 }
             }
         }
@@ -189,19 +184,18 @@ class HomeViewModel(
             }
         }
         subscribeCloudSync()
-        viewModelScope.launch {
-            val meta = inventoryRepository.currentMeta()
-            if (BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, meta?.bcvManualOverride == true)) {
-                refreshBcv()
+        inventoryRepository.currentMeta()?.bcvRate?.let { rate ->
+            val rounded = roundBcvRate(rate)
+            _state.update {
+                it.copy(bcvRate = rounded, bcvLabel = formatBcvLabel(rounded))
             }
+        }
+        viewModelScope.launch {
+            runCatching { inventoryRepository.refreshMetaFromServer() }
         }
     }
 
     fun resetTodayOrders() {
-        if (!_state.value.role.canResetTodayOrders()) {
-            AppSnackbarController.show("No tienes permisos para reiniciar el contador.")
-            return
-        }
         viewModelScope.launch {
             _state.update { it.copy(resettingOrders = true, error = null) }
             runCatching { inventoryRepository.resetTodayOrders() }
@@ -212,14 +206,27 @@ class HomeViewModel(
                             confirmedOrdersToday = 0,
                             showConfirmedOrdersPreview = false,
                             confirmedOrdersPreview = emptyList(),
-                            confirmedOrdersPreviewError = null
+                            confirmedOrdersPreviewError = null,
+                            orderLines = emptyList(),
+                            showReceipt = false,
+                            selectedProduct = null,
+                            selectedQtyText = "1",
+                            selectedPaymentChoice = null,
+                            orderPaymentChoice = null,
+                            appliedDiscountTicket = null,
+                            discountTicketCodeInput = "",
+                            discountTicketError = null,
+                            showManualDiscountSection = false,
+                            manualDiscountUsdInput = "",
+                            appliedManualDiscountUsd = 0.0,
+                            manualDiscountError = null
                         )
                     }
-                    AppSnackbarController.show("Contador de pedidos del día reiniciado.")
+                    AppSnackbarController.show("Pedidos del día reiniciados.")
                     onOrdersReset()
                 }
                 .onFailure { err ->
-                    val message = err.toUserMessage("No se pudo reiniciar el contador.")
+                    val message = err.toUserMessage("No se pudieron reiniciar los pedidos.")
                     _state.update {
                         it.copy(
                             resettingOrders = false,
@@ -228,6 +235,22 @@ class HomeViewModel(
                     }
                     AppSnackbarController.show(message)
                 }
+        }
+    }
+
+    fun refreshAllData() {
+        viewModelScope.launch {
+            _state.update { it.copy(bcvRefreshing = true) }
+            inventoryRepository.forceRefreshFromServer()
+                .onSuccess {
+                    AppSnackbarController.show("Datos actualizados.")
+                }
+                .onFailure { err ->
+                    AppSnackbarController.show(
+                        err.toUserMessage("No se pudieron actualizar los datos.")
+                    )
+                }
+            _state.update { it.copy(bcvRefreshing = false) }
         }
     }
 
@@ -555,10 +578,28 @@ class HomeViewModel(
             quantity = qty,
             casheaLevel = null
         )
-        val existing = _state.value.orderLines.filter { !it.matchesProduct(product) }
+        val current = _state.value.orderLines
+        val matchIndex = if (product.syncId.isNotBlank()) {
+            current.indexOfFirst { it.productSyncId == product.syncId }
+        } else {
+            current.indexOfFirst { it.matchesProduct(product) }
+        }
+        val updated = if (matchIndex >= 0) {
+            current.toMutableList().apply {
+                val existing = this[matchIndex]
+                this[matchIndex] = existing.copy(
+                    quantity = existing.quantity + qty,
+                    unitPriceUsd = product.price,
+                    description = product.description,
+                    unit = product.unit
+                )
+            }
+        } else {
+            current + line
+        }
         _state.update {
             it.copy(
-                orderLines = existing + line,
+                orderLines = updated,
                 selectedProduct = null,
                 selectedQtyText = "1",
                 qtyWarning = null,
@@ -626,10 +667,10 @@ class HomeViewModel(
         }
     }
 
-    fun removeOrderLine(productId: Long) {
-        val removed = _state.value.orderLines.find { it.productId == productId }
+    fun removeOrderLine(lineId: String) {
+        val removed = _state.value.orderLines.find { it.lineId == lineId }
         _state.update {
-            it.copy(orderLines = it.orderLines.filter { line -> line.productId != productId })
+            it.copy(orderLines = it.orderLines.filter { line -> line.lineId != lineId })
         }
         revalidateOrderCasheaEligibility()
         if (removed != null) {
@@ -637,14 +678,14 @@ class HomeViewModel(
         }
     }
 
-    fun editOrderLine(productId: Long) {
-        val line = _state.value.orderLines.find { it.productId == productId } ?: return
+    fun editOrderLine(lineId: String) {
+        val line = _state.value.orderLines.find { it.lineId == lineId } ?: return
         val product = _state.value.allProducts.find { line.matchesProduct(it) }
             ?: _state.value.results.find { line.matchesProduct(it) }
             ?: return
         _state.update {
             it.copy(
-                orderLines = it.orderLines.filter { orderLine -> orderLine.productId != productId },
+                orderLines = it.orderLines.filter { orderLine -> orderLine.lineId != lineId },
                 selectedProduct = product,
                 selectedQtyText = formatQty(line.quantity),
                 qtyWarning = null,
@@ -1148,36 +1189,6 @@ class HomeViewModel(
         }
     }
 
-    fun refreshBcv() {
-        viewModelScope.launch {
-            val meta = inventoryRepository.currentMeta()
-            if (!BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, meta?.bcvManualOverride == true)) {
-                return@launch
-            }
-            _state.update {
-                it.copy(
-                    bcvRefreshing = true,
-                    currentDate = dateFormat.format(Date())
-                )
-            }
-            val result = bcvRateFetcher.fetchUsdRate()
-            result.onSuccess { rate ->
-                val rounded = roundBcvRate(rate)
-                inventoryRepository.saveBcvRate(rounded, manualOverride = false)
-                _state.update {
-                    it.copy(
-                        bcvRefreshing = false,
-                        bcvRate = rounded,
-                        bcvLabel = formatBcvLabel(rounded, manual = false)
-                    )
-                }
-            }.onFailure {
-                // Sin mensaje técnico: se mantiene la última tasa guardada en observeMeta()
-                _state.update { it.copy(bcvRefreshing = false) }
-            }
-        }
-    }
-
     fun importExcel(uri: Uri) {
         if (_state.value.role != UserRole.ADMIN) {
             _state.update { it.copy(error = "Solo el administrador puede actualizar el inventario.") }
@@ -1327,10 +1338,9 @@ class HomeViewModel(
     private fun roundBcvRate(rate: Double): Double =
         kotlin.math.round(rate * 100) / 100.0
 
-    private fun formatBcvLabel(rate: Double?, manual: Boolean): String {
-        if (rate == null) return "Tasa BCV: sin datos"
-        val base = "Tasa BCV: Bs ${bcvRateFormat.format(rate)}"
-        return if (manual) "$base (manual)" else base
+    private fun formatBcvLabel(rate: Double?): String {
+        if (rate == null) return "Tasa BCV: sin configurar"
+        return "Tasa BCV: Bs ${bcvRateFormat.format(rate)}"
     }
 
     fun formatPrice(value: Double): String = "$${moneyFormat.format(value)}"

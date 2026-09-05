@@ -32,8 +32,8 @@ const MANAGEABLE_ROLES = ["CONSULTA", "VENTAS", "SUPERVISOR"];
 // Roles con permiso para aprobar, rechazar o revertir cierres de caja
 // (Flujo Aprobación).
 const CLOSING_REVIEW_ROLES = ["ADMIN", "SUPERVISOR"];
-// Roles con permiso para reiniciar (borrar) los pedidos confirmados del día.
-const SALES_RESET_ROLES = ["ADMIN", "SUPERVISOR"];
+// Todos los perfiles autenticados pueden reiniciar pedidos del día (app móvil).
+const SALES_RESET_ROLES = ["CONSULTA", "VENTAS", "SUPERVISOR", "ADMIN"];
 // Portal web: ver listado, detalle, clientes y estados (solo lectura).
 const DISCOUNT_VIEW_ROLES = ["CONSULTA", "VENTAS", "SUPERVISOR", "ADMIN"];
 // Portal web: generar, anular y administrar códigos (acceso completo).
@@ -72,7 +72,12 @@ app.get("/health", async (_req, res) => {
     } else {
       await storeRef.loadState();
     }
-    res.json({ ok: true, service: "inventario-sync", backend: storeRef.backend });
+    res.json({
+      ok: true,
+      service: "inventario-sync",
+      backend: storeRef.backend,
+      salesReset: "all-authenticated"
+    });
   } catch (error) {
     console.error("Health check failed", error);
     res.status(503).json({ ok: false, service: "inventario-sync", error: error.message });
@@ -94,7 +99,7 @@ app.get("/", (_req, res) => {
 // Portal web: se sirve ANTES del chequeo de X-Api-Key para que el navegador
 // pueda cargar HTML/CSS/JS sin credenciales de dispositivo.
 const portalDir = path.join(__dirname, "public");
-const PORTAL_BUILD_VERSION = "19";
+const PORTAL_BUILD_VERSION = "20";
 
 app.get("/portal/build.json", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -168,6 +173,32 @@ function publicError(message, statusCode = 400) {
   error.publicMessage = message;
   error.statusCode = statusCode;
   return error;
+}
+
+/** Borra ventas del rango [start, end) y actualiza lastOrdersResetAt (sincronización entre dispositivos). */
+async function resetSalesInRange(store, start, end) {
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    throw publicError("start y end son requeridos");
+  }
+  let lastOrdersResetAt = Date.now();
+  const deleted = await store.runTransaction(async (state) => {
+    const kept = state.sales.filter((s) => !(s.createdAt >= start && s.createdAt < end));
+    const removedIds = state.sales
+      .filter((s) => s.createdAt >= start && s.createdAt < end)
+      .map((s) => s.syncId);
+    const keptLines = state.saleLineItems.filter((l) => !removedIds.includes(l.saleSyncId));
+    lastOrdersResetAt = Date.now();
+    return {
+      state: {
+        ...state,
+        sales: kept,
+        saleLineItems: keptLines,
+        meta: { ...state.meta, lastOrdersResetAt }
+      },
+      result: state.sales.length - kept.length
+    };
+  });
+  return { deleted, lastOrdersResetAt };
 }
 
 /** Misma normalización que ProductSearch en la app (acentos, mayúsculas). */
@@ -887,13 +918,18 @@ async function start() {
 
   app.put(
     "/v1/meta",
-    auth.requireAuth(),
+    auth.requireAuth("ADMIN"),
     asyncRoute(async (req, res) => {
       const updated = await store.runTransaction(async (state) => {
-        const meta = { ...state.meta, ...(req.body || {}) };
+        const meta = {
+          ...state.meta,
+          ...(req.body || {}),
+          lastMetaUpdateAt: Date.now()
+        };
         return { state: { ...state, meta }, result: meta };
       });
       realtime.broadcast("inventory", {});
+      push.sendMetaUpdatedNotification();
       res.json(updated);
     })
   );
@@ -1092,6 +1128,7 @@ async function start() {
       lineItems,
       meta: {
         lastSalesUpdateAt: state.meta?.lastSalesUpdateAt ?? null,
+        lastOrdersResetAt: state.meta?.lastOrdersResetAt ?? null,
         count: sales.length
       }
     });
@@ -1155,28 +1192,29 @@ async function start() {
     })
   );
 
+  app.post(
+    "/v1/sales/reset",
+    auth.requireAuth(),
+    asyncRoute(async (req, res) => {
+      const start = Number(req.body?.start ?? req.query?.start);
+      const end = Number(req.body?.end ?? req.query?.end);
+      const { deleted, lastOrdersResetAt } = await resetSalesInRange(store, start, end);
+      realtime.broadcast("sales", {});
+      push.sendSalesUpdatedNotification();
+      res.json({ ok: true, deleted, lastOrdersResetAt });
+    })
+  );
+
   app.delete(
     "/v1/sales",
-    auth.requireAuth(SALES_RESET_ROLES),
+    auth.requireAuth(),
     asyncRoute(async (req, res) => {
       const start = Number(req.query.start);
       const end = Number(req.query.end);
-      if (!Number.isFinite(start) || !Number.isFinite(end)) {
-        throw publicError("start y end son requeridos");
-      }
-      const deleted = await store.runTransaction(async (state) => {
-        const kept = state.sales.filter((s) => !(s.createdAt >= start && s.createdAt < end));
-        const removedIds = state.sales
-          .filter((s) => s.createdAt >= start && s.createdAt < end)
-          .map((s) => s.syncId);
-        const keptLines = state.saleLineItems.filter((l) => !removedIds.includes(l.saleSyncId));
-        return {
-          state: { ...state, sales: kept, saleLineItems: keptLines },
-          result: state.sales.length - kept.length
-        };
-      });
+      const { deleted, lastOrdersResetAt } = await resetSalesInRange(store, start, end);
       realtime.broadcast("sales", {});
-      res.json({ ok: true, deleted });
+      push.sendSalesUpdatedNotification();
+      res.json({ ok: true, deleted, lastOrdersResetAt });
     })
   );
 
@@ -1254,6 +1292,7 @@ async function start() {
       });
 
       realtime.broadcast("cashClosings", {});
+      push.sendCashClosingsUpdatedNotification();
       res.json(created);
     })
   );
@@ -1290,6 +1329,7 @@ async function start() {
       });
 
       realtime.broadcast("cashClosings", {});
+      push.sendCashClosingsUpdatedNotification();
       res.json(updated);
     })
   );

@@ -14,7 +14,6 @@ import com.inventario.app.data.entity.CashClosingStatus
 import com.inventario.app.data.entity.ConfirmedOrderPreview
 import com.inventario.app.data.entity.UserRole
 import com.inventario.app.data.entity.canExportClosingHistory
-import com.inventario.app.data.entity.canResetTodayOrders
 import com.inventario.app.data.entity.canViewClosingHistory
 import com.inventario.app.data.entity.confirmedOrderNumbersBySyncId
 import com.inventario.app.data.entity.displayLabel
@@ -91,7 +90,6 @@ data class CashClosingUiState(
     val bcvRefreshing: Boolean = false,
     val confirmedOrdersToday: Int = 0,
     val resettingOrders: Boolean = false,
-    val canResetTodayOrders: Boolean = false,
     val showConfirmedOrdersPreview: Boolean = false,
     val confirmedOrdersPreview: List<ConfirmedOrderPreview> = emptyList(),
     val saveError: String? = null,
@@ -144,7 +142,6 @@ class CashClosingViewModel(
                 posEntries = listOf(newPosEntry("Punto 1")),
                 cashEntries = listOf(newCashEntry("")),
                 branchName = userSucursal.ifBlank { it.branchName },
-                canResetTodayOrders = role.canResetTodayOrders(),
                 canViewClosingHistory = role.canViewClosingHistory(),
                 canExportClosingHistory = role.canExportClosingHistory(),
                 isGerenteProfile = isGerente
@@ -155,13 +152,6 @@ class CashClosingViewModel(
                 inventoryRepository.observeMeta().collect { meta ->
                     val rate = meta?.bcvRate?.let(::roundRate)
                     onBcvRateAvailable(rate, forceRateText = false)
-                    if (BcvRateFetcher.shouldAutoRefresh(
-                            meta?.bcvFetchedAt,
-                            meta?.bcvManualOverride == true
-                        )
-                    ) {
-                        refreshBcv()
-                    }
                 }
             }
         }
@@ -187,12 +177,6 @@ class CashClosingViewModel(
                     is CloudEvent.Sales -> refreshSalesFromConfirmedOrders()
                     else -> Unit
                 }
-            }
-        }
-        viewModelScope.launch {
-            val meta = inventoryRepository.currentMeta()
-            if (BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, meta?.bcvManualOverride == true)) {
-                refreshBcv()
             }
         }
         refreshClosingStatus()
@@ -369,10 +353,6 @@ class CashClosingViewModel(
     fun formatMoney(value: Double): String = moneyFormat.format(value)
 
     fun resetTodayOrders() {
-        if (!_state.value.canResetTodayOrders) {
-            AppSnackbarController.show("No tienes permisos para reiniciar el contador.")
-            return
-        }
         viewModelScope.launch {
             _state.update { it.copy(resettingOrders = true) }
             runCatching { inventoryRepository.resetTodayOrders() }
@@ -390,36 +370,12 @@ class CashClosingViewModel(
                             salesDiscountUsdToday = 0.0
                         )
                     }
-                    AppSnackbarController.show("Contador de pedidos del día reiniciado.")
+                    AppSnackbarController.show("Pedidos del día reiniciados.")
                 }
                 .onFailure { err ->
                     _state.update { it.copy(resettingOrders = false) }
-                    AppSnackbarController.show(err.toUserMessage("No se pudo reiniciar el contador."))
+                    AppSnackbarController.show(err.toUserMessage("No se pudieron reiniciar los pedidos."))
                 }
-        }
-    }
-
-    fun refreshBcv() {
-        viewModelScope.launch {
-            val meta = inventoryRepository.currentMeta()
-            if (!BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, meta?.bcvManualOverride == true)) {
-                return@launch
-            }
-            _state.update {
-                it.copy(
-                    bcvRefreshing = true,
-                    dateText = dateFormat.format(Date())
-                )
-            }
-            val result = bcvRateFetcher.fetchUsdRate()
-            result.onSuccess { rate ->
-                val rounded = roundRate(rate)
-                inventoryRepository.saveBcvRate(rounded, manualOverride = false)
-                onBcvRateAvailable(rounded, forceRateText = true)
-                _state.update { it.copy(bcvRefreshing = false) }
-            }.onFailure {
-                _state.update { it.copy(bcvRefreshing = false) }
-            }
         }
     }
 
