@@ -13,7 +13,7 @@ let pool;
 const ENTITY_KEYS = ["products", "meta", "sales", "cashClosings", "users", "batteryFinder", "discountTickets"];
 
 function defaultMeta() {
-  return { bcvRate: null, bcvFetchedAt: null, lastInventoryUpdateAt: null, lastSalesUpdateAt: null };
+  return { bcvRate: null, bcvFetchedAt: null, lastInventoryUpdateAt: null, lastSalesUpdateAt: null, lastOrdersResetAt: null };
 }
 
 function defaultEntityValue(key) {
@@ -280,13 +280,15 @@ async function loadState() {
  */
 async function loadSales() {
   const { rows } = await pool.query(
-    "SELECT value FROM sync_kv WHERE key = $1",
-    ["sales"]
+    "SELECT key, value FROM sync_kv WHERE key = ANY($1::text[])",
+    [["sales", "meta"]]
   );
-  const sales = rows[0]?.value || defaultEntityValue("sales");
+  const byKey = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  const sales = byKey.sales || defaultEntityValue("sales");
   return {
     sales: asArray(sales.items),
-    saleLineItems: asArray(sales.lineItems)
+    saleLineItems: asArray(sales.lineItems),
+    meta: byKey.meta || defaultMeta()
   };
 }
 

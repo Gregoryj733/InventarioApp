@@ -10,6 +10,14 @@ const { parseInventoryExcel } = require("./excelParser");
 const realtime = require("./realtime");
 const push = require("./push");
 
+/** No debe fallar la operación principal si falta o falla una notificación push. */
+function safePush(fn) {
+  if (typeof fn !== "function") return;
+  Promise.resolve(fn()).catch((error) => {
+    console.error("Push notification failed", error.message);
+  });
+}
+
 const API_KEY = process.env.API_KEY || "inventario-sync-key";
 const PORT = Number(process.env.PORT || 8787);
 /** Label de sucursal de esta instancia (debe coincidir con sync_config.json → branches[].label). */
@@ -99,7 +107,7 @@ app.get("/", (_req, res) => {
 // Portal web: se sirve ANTES del chequeo de X-Api-Key para que el navegador
 // pueda cargar HTML/CSS/JS sin credenciales de dispositivo.
 const portalDir = path.join(__dirname, "public");
-const PORTAL_BUILD_VERSION = "20";
+const PORTAL_BUILD_VERSION = "21";
 
 app.get("/portal/build.json", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -868,7 +876,7 @@ async function start() {
       });
 
       realtime.broadcast("inventory", {});
-      push.sendInventoryUpdatedNotification({ imported: parsed.imported, skipped: parsed.skipped });
+      safePush(() => push.sendInventoryUpdatedNotification({ imported: parsed.imported, skipped: parsed.skipped }));
 
       res.json({ imported: parsed.imported, skipped: parsed.skipped, errors: parsed.errors });
     })
@@ -929,7 +937,7 @@ async function start() {
         return { state: { ...state, meta }, result: meta };
       });
       realtime.broadcast("inventory", {});
-      push.sendMetaUpdatedNotification();
+      safePush(() => push.sendMetaUpdatedNotification());
       res.json(updated);
     })
   );
@@ -1101,7 +1109,7 @@ async function start() {
 
       realtime.broadcast("inventory", {});
       realtime.broadcast("sales", {});
-      push.sendSalesUpdatedNotification();
+      safePush(() => push.sendSalesUpdatedNotification());
       if (discountTicketApplied) {
         realtime.broadcast("discountTickets", {});
       }
@@ -1200,7 +1208,7 @@ async function start() {
       const end = Number(req.body?.end ?? req.query?.end);
       const { deleted, lastOrdersResetAt } = await resetSalesInRange(store, start, end);
       realtime.broadcast("sales", {});
-      push.sendSalesUpdatedNotification();
+      safePush(() => push.sendSalesUpdatedNotification());
       res.json({ ok: true, deleted, lastOrdersResetAt });
     })
   );
@@ -1213,7 +1221,7 @@ async function start() {
       const end = Number(req.query.end);
       const { deleted, lastOrdersResetAt } = await resetSalesInRange(store, start, end);
       realtime.broadcast("sales", {});
-      push.sendSalesUpdatedNotification();
+      safePush(() => push.sendSalesUpdatedNotification());
       res.json({ ok: true, deleted, lastOrdersResetAt });
     })
   );
@@ -1258,7 +1266,7 @@ async function start() {
             id: latest.id,
             username,
             status: "PENDING",
-            revisionNumber: latest.revisionNumber + 1,
+            revisionNumber: (Number(latest.revisionNumber) || 0) + 1,
             reviewedBy: "",
             reviewedAt: 0
           };
@@ -1270,7 +1278,7 @@ async function start() {
           throw publicError(`Has alcanzado el máximo de ${MAX_CLOSINGS_PER_DAY} intentos de cierre por día.`);
         }
 
-        const id = state.nextCashClosingId;
+        const id = Number(state.nextCashClosingId) || 1;
         const record = {
           ...body,
           id,
@@ -1292,7 +1300,7 @@ async function start() {
       });
 
       realtime.broadcast("cashClosings", {});
-      push.sendCashClosingsUpdatedNotification();
+      safePush(() => push.sendCashClosingsUpdatedNotification());
       res.json(created);
     })
   );
@@ -1329,7 +1337,7 @@ async function start() {
       });
 
       realtime.broadcast("cashClosings", {});
-      push.sendCashClosingsUpdatedNotification();
+      safePush(() => push.sendCashClosingsUpdatedNotification());
       res.json(updated);
     })
   );

@@ -67,4 +67,42 @@ async function sendSalesUpdatedNotification() {
   }
 }
 
-module.exports = { init, sendInventoryUpdatedNotification, sendSalesUpdatedNotification, TOPIC };
+async function sendCashClosingsUpdatedNotification() {
+  if (!messaging) return;
+  try {
+    await messaging.send({
+      topic: TOPIC,
+      data: {
+        type: "cash_closings_updated",
+        ts: String(Date.now())
+      }
+    });
+  } catch (error) {
+    console.error("Error enviando notificación de cierres de caja", error.message);
+  }
+}
+
+/** Tasa BCV / meta: solo datos, sin banner (no molesta a usuarios en venta). */
+async function sendMetaUpdatedNotification() {
+  if (!messaging) return;
+  try {
+    await messaging.send({
+      topic: TOPIC,
+      data: {
+        type: "meta_updated",
+        ts: String(Date.now())
+      }
+    });
+  } catch (error) {
+    console.error("Error enviando notificación de meta", error.message);
+  }
+}
+
+module.exports = {
+  init,
+  sendInventoryUpdatedNotification,
+  sendSalesUpdatedNotification,
+  sendCashClosingsUpdatedNotification,
+  sendMetaUpdatedNotification,
+  TOPIC
+};

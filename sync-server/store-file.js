@@ -11,7 +11,8 @@ function defaultState() {
       bcvRate: null,
       bcvFetchedAt: null,
       lastInventoryUpdateAt: null,
-      lastSalesUpdateAt: null
+      lastSalesUpdateAt: null,
+      lastOrdersResetAt: null
     },
     products: [],
     sales: [],
@@ -50,12 +51,13 @@ async function loadState() {
   return readRaw();
 }
 
-/** Misma forma que store-pg.loadSales: solo ventas para GET /v1/sales. */
+/** Misma forma que store-pg.loadSales: ventas + meta para timestamps de sincronización. */
 async function loadSales() {
   const state = readRaw();
   return {
     sales: state.sales || [],
-    saleLineItems: state.saleLineItems || []
+    saleLineItems: state.saleLineItems || [],
+    meta: state.meta || {}
   };
 }
 
