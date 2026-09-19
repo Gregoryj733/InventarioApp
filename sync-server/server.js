@@ -9,6 +9,10 @@ const auth = require("./auth");
 const { parseInventoryExcel } = require("./excelParser");
 const realtime = require("./realtime");
 const push = require("./push");
+const {
+  purgeOldCashClosings,
+  scheduleWeeklyCashClosingPurge
+} = require("./cashClosingRetention");
 
 /** No debe fallar la operación principal si falta o falla una notificación push. */
 function safePush(fn) {
@@ -762,6 +766,8 @@ async function start() {
   await ensureVentasPortalUser(store);
   await ensureGerenteSupervisorUser(store);
   await seedBatteryFinderData(store);
+
+  scheduleWeeklyCashClosingPurge(store);
 
   // ---------- Autenticación ----------
   app.post("/v1/auth/login", asyncRoute(async (req, res) => {
