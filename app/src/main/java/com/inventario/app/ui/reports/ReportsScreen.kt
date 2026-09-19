@@ -1389,13 +1389,11 @@ private fun CashClosingDetailDialog(
                         ReportKeyValueRow(label = "Observaciones", value = closing.observations)
                     }
                 } else {
-                    if (snapshot.prevCashUsd > 0) {
-                        Spacer(Modifier.height(8.dp))
-                        ReportKeyValueRow(
-                            label = "Efectivo cierre anterior",
-                            value = "${viewModel.formatUsd(snapshot.prevCashUsd)} · ${viewModel.formatBs(snapshot.prevCashBs)}"
-                        )
-                    }
+                    Spacer(Modifier.height(8.dp))
+                    ReportKeyValueRow(
+                        label = "Efectivo cierre anterior",
+                        value = "${viewModel.formatUsd(snapshot.prevCashUsd)} · ${viewModel.formatBs(snapshot.prevCashBs)}"
+                    )
                     Spacer(Modifier.height(12.dp))
                     ReportDivider(label = "Ventas del día")
                     Spacer(Modifier.height(6.dp))
