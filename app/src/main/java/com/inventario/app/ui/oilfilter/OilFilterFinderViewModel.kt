@@ -154,14 +154,21 @@ class OilFilterFinderViewModel(
         for (entry in entries) {
             recommendations.add(index.recommend(entry))
         }
-        recommendations.sortByDescending { it.stockMatch.inStock }
+        recommendations.sortWith(
+            compareByDescending<OilFilterRecommendation> {
+                it.stockMatch.inStock && it.stockMatch.product != null
+            }.thenByDescending { it.stockMatch.inStock }
+        )
         val usedIds = HashSet<Long>()
         for (rec in recommendations) {
             rec.stockMatch.product?.let { usedIds.add(it.id) }
             rec.otherStockFilters.forEach { usedIds.add(it.id) }
             rec.oilStock.forEach { usedIds.add(it.id) }
         }
-        val extra = index.searchStockFilters(query, usedIds)
+        val vehicleCodes = entries.flatMap { entry ->
+            listOf(entry.filtroCodigo) + entry.alternativas + entry.equivalencias
+        }.distinct()
+        val extra = index.searchStockFilters(query, usedIds, vehicleCodes)
         return recommendations to extra
     }
 

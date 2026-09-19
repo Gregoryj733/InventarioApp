@@ -6,6 +6,8 @@ import com.inventario.app.data.sync.CloudSync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.util.Calendar
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
 data class ReportsSummary(
@@ -17,7 +19,11 @@ data class ReportsSummary(
     val approvedClosings: List<CashClosingRecord>,
     val approvedClosingIncomeUsd: Double,
     val approvedClosingIncomeBs: Double,
-    val rejectedClosings: List<CashClosingRecord>
+    val rejectedClosings: List<CashClosingRecord>,
+    /** Cierres aprobados visibles en el flujo de aprobación (retención semanal). */
+    val approvalFlowApprovedClosings: List<CashClosingRecord>,
+    /** Cierres rechazados visibles en el flujo de aprobación (retención semanal). */
+    val approvalFlowRejectedClosings: List<CashClosingRecord>
 )
 
 class ReportsRepository(private var cloudSync: CloudSync) {
@@ -50,26 +56,35 @@ class ReportsRepository(private var cloudSync: CloudSync) {
             val allClosings = cloudSync.get("/v1/cash-closings").optJSONArray("cashClosings")
                 ?.toCashClosingList().orEmpty()
             val periodClosings = allClosings.filter { it.closedAt >= start && it.closedAt < end }
-            val approvedClosings = periodClosings
+            val approvalFlowClosings = allClosings.filter {
+                it.closedAt >= approvalFlowRetentionStartMillis()
+            }
+            val periodApprovedClosings = periodClosings
                 .filter { it.status == CashClosingStatus.APPROVED }
                 .sortedByDescending { it.closedAt }
-            val approvedIncomeUsd = approvedClosings.sumOf { it.grandTotalUsd }
-            val approvedIncomeBs = approvedClosings.sumOf { it.grandTotalBs }
+            val approvedIncomeUsd = periodApprovedClosings.sumOf { it.grandTotalUsd }
+            val approvedIncomeBs = periodApprovedClosings.sumOf { it.grandTotalBs }
 
             ReportsSummary(
                 totalSalesUsd = totalUsd,
                 totalSalesBs = totalBs,
                 orderCount = orderCount,
-                balancedPendingClosings = allClosings
+                balancedPendingClosings = approvalFlowClosings
                     .filter { it.status == CashClosingStatus.PENDING && !it.hasDifference }
                     .sortedByDescending { it.closedAt },
-                differencePendingClosings = allClosings
+                differencePendingClosings = approvalFlowClosings
                     .filter { it.status == CashClosingStatus.PENDING && it.hasDifference }
                     .sortedByDescending { it.closedAt },
-                approvedClosings = approvedClosings,
+                approvedClosings = periodApprovedClosings,
                 approvedClosingIncomeUsd = approvedIncomeUsd,
                 approvedClosingIncomeBs = approvedIncomeBs,
                 rejectedClosings = periodClosings
+                    .filter { it.status == CashClosingStatus.REJECTED }
+                    .sortedByDescending { it.closedAt },
+                approvalFlowApprovedClosings = approvalFlowClosings
+                    .filter { it.status == CashClosingStatus.APPROVED }
+                    .sortedByDescending { it.closedAt },
+                approvalFlowRejectedClosings = approvalFlowClosings
                     .filter { it.status == CashClosingStatus.REJECTED }
                     .sortedByDescending { it.closedAt }
             )
@@ -104,6 +119,22 @@ class ReportsRepository(private var cloudSync: CloudSync) {
 
     companion object {
         const val MAX_RANGE_DAYS = 90
+
+        private val APPROVAL_RETENTION_TZ: TimeZone = TimeZone.getTimeZone("America/Caracas")
+
+        /** Inicio de la semana en curso (lunes 00:00, America/Caracas). */
+        fun approvalFlowRetentionStartMillis(nowMillis: Long = System.currentTimeMillis()): Long {
+            val cal = Calendar.getInstance(APPROVAL_RETENTION_TZ).apply {
+                timeInMillis = nowMillis
+                firstDayOfWeek = Calendar.MONDAY
+                set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            return cal.timeInMillis
+        }
 
         fun clampRange(start: Long, end: Long): Pair<Long, Long> {
             val maxMillis = TimeUnit.DAYS.toMillis(MAX_RANGE_DAYS.toLong())

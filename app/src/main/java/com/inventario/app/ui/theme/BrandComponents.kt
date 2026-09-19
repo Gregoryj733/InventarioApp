@@ -54,7 +54,7 @@ fun BrandLogoSplash(modifier: Modifier = Modifier) {
 @Composable
 fun BrandAppTopBar(
     subtitle: String,
-    onRefreshBcv: () -> Unit,
+    onRefreshBcv: (() -> Unit)? = null,
     onLogout: () -> Unit,
     showImportInventory: Boolean = false,
     onImportInventory: (() -> Unit)? = null,
@@ -114,17 +114,19 @@ fun BrandAppTopBar(
                     Icon(Icons.Default.CloudUpload, contentDescription = "Cargar inventario Excel")
                 }
             }
-            if (bcvRefreshing) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .padding(end = 8.dp)
-                        .size(22.dp),
-                    strokeWidth = 2.dp,
-                    color = onPrimary
-                )
-            } else {
-                IconButton(onClick = onRefreshBcv) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Actualizar BCV")
+            if (onRefreshBcv != null) {
+                if (bcvRefreshing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .size(22.dp),
+                        strokeWidth = 2.dp,
+                        color = onPrimary
+                    )
+                } else {
+                    IconButton(onClick = onRefreshBcv) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refrescar")
+                    }
                 }
             }
             if (compact) {

@@ -58,15 +58,36 @@ class OilFilterStockIndex(products: List<Product>) {
         )
     }
 
-    fun searchStockFilters(query: String, excludeIds: Set<Long>): List<Product> {
+    fun searchStockFilters(
+        query: String,
+        excludeIds: Set<Long>,
+        vehicleCodes: List<String> = emptyList()
+    ): List<Product> {
         if (query.trim().length < 2) return emptyList()
+        val codePairs = vehicleCodes
+            .map { compact(it) to tokens(it) }
+            .filter { (codeCompact, _) -> codeCompact.length >= 3 }
         return filterItems.asSequence()
             .filter { it.product.id !in excludeIds && it.product.quantity > 0 }
             .filter { ProductSearch.matchesAllTokens(it.product.description, query) }
             .map { it.product }
-            .sortedByDescending { it.quantity }
+            .sortedWith(
+                compareByDescending<Product> { product ->
+                    codePairs.isNotEmpty() && matchesAnyVehicleCode(product, codePairs)
+                }.thenByDescending { it.quantity }
+            )
             .take(8)
             .toList()
+    }
+
+    private fun matchesAnyVehicleCode(
+        product: Product,
+        codePairs: List<Pair<String, List<String>>>
+    ): Boolean {
+        val item = IndexedProduct.from(product)
+        return codePairs.any { (codeCompact, codeTokens) ->
+            matchesCode(item, codeCompact, codeTokens)
+        }
     }
 
     private fun matchOils(viscosities: List<String>): List<Product> {

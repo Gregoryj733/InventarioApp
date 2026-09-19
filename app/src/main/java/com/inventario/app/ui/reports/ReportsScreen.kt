@@ -498,7 +498,7 @@ fun ReportsScreen(
     subtitle: String,
     onBack: () -> Unit,
     onLogout: () -> Unit,
-    onRefreshBcv: () -> Unit
+    onRefreshBcv: (() -> Unit)? = null
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
@@ -938,13 +938,13 @@ private fun ReportsContent(
         accentColor = BrandSuccess,
         titleColor = BrandSuccess
     ) {
-        if (summary.approvedClosings.isEmpty()) {
+        if (summary.approvalFlowApprovedClosings.isEmpty()) {
             Text(
-                "Sin cierres aprobados en el período ($periodLabel).",
+                "Sin cierres aprobados esta semana.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
-            summary.approvedClosings.forEach { closing ->
+            summary.approvalFlowApprovedClosings.forEach { closing ->
                 CashClosingDetailRow(
                     closing = closing,
                     viewModel = viewModel,
@@ -963,13 +963,13 @@ private fun ReportsContent(
         accentColor = BrandOutflow,
         titleColor = BrandOutflow
     ) {
-        if (summary.rejectedClosings.isEmpty()) {
+        if (summary.approvalFlowRejectedClosings.isEmpty()) {
             Text(
-                "Sin cierres rechazados en el período ($periodLabel).",
+                "Sin cierres rechazados esta semana.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
-            summary.rejectedClosings.forEach { closing ->
+            summary.approvalFlowRejectedClosings.forEach { closing ->
                 CashClosingDetailRow(
                     closing = closing,
                     viewModel = viewModel,
@@ -1425,19 +1425,10 @@ private fun CashClosingDetailDialog(
                         Spacer(Modifier.height(12.dp))
                         ReportDivider(label = "Pedidos confirmados")
                         Spacer(Modifier.height(6.dp))
-                        snapshot.confirmedOrders.forEach { order ->
-                            val orderLabel = if (order.orderNumber > 0) {
-                                "Pedido Nº ${order.orderNumber}"
-                            } else {
-                                "Pedido"
-                            }
-                            val value = if (order.discountUsd > 0) {
-                                "${viewModel.formatUsd(order.totalUsd)} (bruto ${viewModel.formatUsd(order.subtotalUsd)}, desc. -${viewModel.formatUsd(order.discountUsd)})"
-                            } else {
-                                viewModel.formatUsd(order.totalUsd)
-                            }
-                            ReportKeyValueRow(label = orderLabel, value = value)
-                        }
+                        ReportKeyValueRow(
+                            label = "Total",
+                            value = snapshot.confirmedOrders.size.toString()
+                        )
                     }
                     Spacer(Modifier.height(12.dp))
                     ReportDivider(label = "Puntos de venta (A)")
@@ -1455,16 +1446,11 @@ private fun CashClosingDetailDialog(
                     Spacer(Modifier.height(10.dp))
                     ReportDivider(label = "Pago móvil (B)")
                     Spacer(Modifier.height(6.dp))
-                    if (snapshot.mobileEntries.isEmpty()) {
-                        Text("— sin registros —", style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        snapshot.mobileEntries.forEach { entry ->
-                            ReportKeyValueRow(
-                                label = "Ref ${entry.ref.ifBlank { "—" }}",
-                                value = "${viewModel.formatUsd(entry.usd)} · ${viewModel.formatBs(entry.bs)}"
-                            )
-                        }
-                    }
+                    ReportKeyValueRow(
+                        label = "Total",
+                        value = "${viewModel.formatUsd(snapshot.mobileEntries.sumOf { it.usd })} · " +
+                            viewModel.formatBs(snapshot.mobileEntries.sumOf { it.bs })
+                    )
                     Spacer(Modifier.height(10.dp))
                     ReportDivider(label = "Efectivo (C)")
                     Spacer(Modifier.height(6.dp))
@@ -1488,16 +1474,10 @@ private fun CashClosingDetailDialog(
                     Spacer(Modifier.height(10.dp))
                     ReportDivider(label = "Salidas (D)")
                     Spacer(Modifier.height(6.dp))
-                    if (snapshot.expenseEntries.isEmpty()) {
-                        Text("— sin registros —", style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        snapshot.expenseEntries.forEach { entry ->
-                            ReportKeyValueRow(
-                                label = entry.description.ifBlank { "—" },
-                                value = viewModel.formatUsd(entry.usd)
-                            )
-                        }
-                    }
+                    ReportKeyValueRow(
+                        label = "Total",
+                        value = viewModel.formatUsd(snapshot.expenseEntries.sumOf { it.usd })
+                    )
                     Spacer(Modifier.height(10.dp))
                     ReportDivider(label = "Cashea (E)")
                     Spacer(Modifier.height(6.dp))

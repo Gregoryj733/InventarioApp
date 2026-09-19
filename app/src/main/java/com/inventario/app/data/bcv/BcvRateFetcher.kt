@@ -156,25 +156,9 @@ class BcvRateFetcher(
         const val DAILY_RATE_UPDATE_HOUR = 19
 
         /**
-         * Indica si el sistema debe consultar automáticamente la tasa oficial (bcv.org.ve).
-         *
-         * - La tasa del día permanece fija hasta las 7:00 p.m. (hora de Caracas).
-         * - Después de las 7:00 p.m. se actualiza si la tasa vigente es anterior a ese horario.
-         * - Si el admin activó un ajuste manual, no se actualiza automáticamente.
+         * La tasa del día solo la ingresa manualmente el administrador; no hay
+         * actualización automática desde fuentes externas.
          */
-        fun shouldAutoRefresh(fetchedAt: Long?, manualOverride: Boolean): Boolean {
-            if (manualOverride) return false
-            if (fetchedAt == null) return true
-
-            val now = Instant.now().atZone(CARACAS_ZONE)
-            val fetched = Instant.ofEpochMilli(fetchedAt).atZone(CARACAS_ZONE)
-            val today = now.toLocalDate()
-            val updateTime = LocalTime.of(DAILY_RATE_UPDATE_HOUR, 0)
-
-            if (fetched.toLocalDate().isBefore(today)) return true
-            if (now.toLocalTime().isBefore(updateTime)) return false
-
-            return fetched.toLocalTime().isBefore(updateTime)
-        }
+        fun shouldAutoRefresh(fetchedAt: Long?, manualOverride: Boolean): Boolean = false
     }
 }

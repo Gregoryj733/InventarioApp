@@ -113,22 +113,21 @@ fun MainHubScreen(
     showClosingExcelReminder: Boolean = false,
     exportingClosingExcel: Boolean = false,
     suggestedClosingExportFileName: () -> String = { "cierre_caja.xlsx" },
+    dataRefreshing: Boolean = false,
+    onRefreshData: () -> Unit = {},
     onPrepareClosingExcelExport: suspend () -> Boolean = { false },
     onExportClosingExcelToUri: suspend (Uri) -> Result<Unit> = { Result.failure(IllegalStateException()) },
     onFinishClosingExcelExport: (Boolean, String?) -> Unit = { _, _ -> },
     onNavigate: (HubDestination) -> Unit,
-    onRefreshBcv: () -> Unit,
     onLogout: () -> Unit,
     showBcvAdminDialog: Boolean = false,
     bcvAdminRateText: String = "",
     bcvAdminSaving: Boolean = false,
     bcvAdminError: String? = null,
-    bcvManualOverride: Boolean = false,
     onOpenBcvAdminDialog: (() -> Unit)? = null,
     onDismissBcvAdminDialog: () -> Unit = {},
     onBcvAdminRateChange: (String) -> Unit = {},
     onSaveManualBcvRate: () -> Unit = {},
-    onRestoreAutomaticBcv: () -> Unit = {},
     onOpenBranchSwitch: () -> Unit = {},
     onDismissBranchSwitch: () -> Unit = {},
     onBranchSelected: (String) -> Unit = {},
@@ -337,22 +336,15 @@ fun MainHubScreen(
     if (showBcvAdminDialog) {
         AlertDialog(
             onDismissRequest = onDismissBcvAdminDialog,
-            title = { Text("Tasa BCV (administrador)") },
+            title = { Text("Tasa del día (administrador)") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "La tasa automática se mantiene fija hasta las 7:00 p.m. " +
-                            "(hora de Caracas) y luego se actualiza desde bcv.org.ve.",
+                        text = "Ingresa la tasa Bs/USD del día. Se sincronizará en tiempo real " +
+                            "con todos los dispositivos de esta sucursal.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (bcvManualOverride) {
-                        Text(
-                            text = "Modo manual activo: el sistema no actualizará la tasa automáticamente.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = BrandWarning
-                        )
-                    }
                     OutlinedTextField(
                         value = bcvAdminRateText,
                         onValueChange = onBcvAdminRateChange,
@@ -381,26 +373,16 @@ fun MainHubScreen(
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Text("Guardar manual")
+                        Text("Guardar")
                     }
                 }
             },
             dismissButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (bcvManualOverride) {
-                        TextButton(
-                            onClick = onRestoreAutomaticBcv,
-                            enabled = !bcvAdminSaving
-                        ) {
-                            Text("Automático")
-                        }
-                    }
-                    TextButton(
-                        onClick = onDismissBcvAdminDialog,
-                        enabled = !bcvAdminSaving
-                    ) {
-                        Text("Cancelar")
-                    }
+                TextButton(
+                    onClick = onDismissBcvAdminDialog,
+                    enabled = !bcvAdminSaving
+                ) {
+                    Text("Cancelar")
                 }
             }
         )
@@ -410,9 +392,9 @@ fun MainHubScreen(
         topBar = {
             BrandAppTopBar(
                 subtitle = subtitle,
-                onRefreshBcv = onRefreshBcv,
                 onLogout = onLogout,
-                bcvRefreshing = bcvRefreshing && !branchSwitchLoading
+                onRefreshBcv = onRefreshData,
+                bcvRefreshing = (dataRefreshing || bcvRefreshing) && !branchSwitchLoading
             )
         }
     ) { padding ->

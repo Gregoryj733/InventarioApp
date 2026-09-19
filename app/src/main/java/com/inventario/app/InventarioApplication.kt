@@ -214,6 +214,26 @@ class InventarioApplication : Application() {
         }
     }
 
+    /** Invocado por FCM cuando otro usuario registra o valida un cierre de caja. */
+    fun scheduleCashClosingsRefresh() {
+        appScope.launch {
+            runCatching { inventoryRepository.refreshCashClosingsFromBranchEvent(force = true) }
+                .onFailure { error ->
+                    Log.w(TAG, "No se pudo refrescar cierres tras notificación push", error)
+                }
+        }
+    }
+
+    /** Invocado por FCM cuando el Admin guarda la tasa BCV del día. */
+    fun scheduleMetaRefresh() {
+        appScope.launch {
+            runCatching { inventoryRepository.refreshMetaFromBranchEvent(force = true) }
+                .onFailure { error ->
+                    Log.w(TAG, "No se pudo refrescar la tasa BCV tras notificación push", error)
+                }
+        }
+    }
+
     /**
      * Cambia la sucursal activa, reconecta al sync-server correspondiente y
      * limpia cachés en memoria. Devuelve false si hay pedidos offline pendientes.

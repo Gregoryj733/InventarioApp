@@ -69,7 +69,8 @@ data class HubUiState(
     val branchSalesKpis: List<com.inventario.app.data.repository.BranchDailySalesKpi> = emptyList(),
     val branchKpisLoading: Boolean = false,
     val showClosingExcelReminder: Boolean = false,
-    val exportingClosingExcel: Boolean = false
+    val exportingClosingExcel: Boolean = false,
+    val dataRefreshing: Boolean = false
 )
 
 class HubViewModel(
@@ -104,25 +105,13 @@ class HubViewModel(
         viewModelScope.launch {
             inventoryRepository.observeMeta().collect { meta ->
                 val rate = meta?.bcvRate?.let(::roundBcvRate)
-                val manual = meta?.bcvManualOverride == true
                 _state.update { state ->
                     state.copy(
                         bcvRate = rate,
-                        bcvManualOverride = manual,
-                        bcvLabel = formatBcvLabel(rate, manual)
+                        bcvManualOverride = true,
+                        bcvLabel = formatBcvLabel(rate)
                     )
                 }
-                if (BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, manual) &&
-                    !_state.value.branchSwitchLoading
-                ) {
-                    refreshBcv()
-                }
-            }
-        }
-        viewModelScope.launch {
-            val meta = inventoryRepository.currentMeta()
-            if (BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, meta?.bcvManualOverride == true)) {
-                refreshBcv()
             }
         }
         refreshClosingAlerts()
@@ -130,7 +119,7 @@ class HubViewModel(
             inventoryRepository.observeCloudEvents().collect { event ->
                 when (event) {
                     is CloudEvent.CashClosings -> refreshClosingAlerts()
-                    is CloudEvent.Sales -> if (_state.value.showBranchKpis) refreshBranchSalesKpis()
+                    is CloudEvent.Sales -> refreshBranchSalesKpis(showLoading = false)
                     else -> Unit
                 }
             }
@@ -351,12 +340,13 @@ class HubViewModel(
             val closingAlerts = async { loadClosingAlertsIntoState() }
             val bcv = async {
                 val meta = inventoryRepository.currentMeta()
-                if (BcvRateFetcher.shouldAutoRefresh(
-                        meta?.bcvFetchedAt,
-                        meta?.bcvManualOverride == true
+                val rate = meta?.bcvRate?.let(::roundBcvRate)
+                _state.update {
+                    it.copy(
+                        bcvRate = rate,
+                        bcvManualOverride = true,
+                        bcvLabel = formatBcvLabel(rate)
                     )
-                ) {
-                    refreshBcvInternal(showIndicator = false)
                 }
             }
             val kpis = async { loadBranchSalesKpis(showLoading = false) }
@@ -478,13 +468,21 @@ class HubViewModel(
         }
     }
 
-    fun refreshBcv() {
+    fun refreshAllData() {
         viewModelScope.launch {
-            val meta = inventoryRepository.currentMeta()
-            if (!BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, meta?.bcvManualOverride == true)) {
-                return@launch
-            }
-            refreshBcvInternal(showIndicator = !_state.value.branchSwitchLoading)
+            _state.update { it.copy(dataRefreshing = true) }
+            inventoryRepository.forceRefreshFromServer()
+                .onSuccess {
+                    refreshClosingAlerts()
+                    refreshBranchSalesKpis(showLoading = false)
+                    AppSnackbarController.show("Datos actualizados.")
+                }
+                .onFailure { error ->
+                    AppSnackbarController.show(
+                        error.toUserMessage("No se pudieron actualizar los datos.")
+                    )
+                }
+            _state.update { it.copy(dataRefreshing = false) }
         }
     }
 
@@ -524,7 +522,7 @@ class HubViewModel(
             }
             val rounded = roundBcvRate(parsed)
             _state.update { it.copy(bcvAdminSaving = true, bcvAdminError = null) }
-            inventoryRepository.saveBcvRate(rounded, manualOverride = true)
+            inventoryRepository.saveBcvRate(rounded)
                 .onSuccess {
                     _state.update {
                         it.copy(
@@ -532,11 +530,11 @@ class HubViewModel(
                             showBcvAdminDialog = false,
                             bcvRate = rounded,
                             bcvManualOverride = true,
-                            bcvLabel = formatBcvLabel(rounded, manual = true)
+                            bcvLabel = formatBcvLabel(rounded)
                         )
                     }
                     if (_state.value.showBranchKpis) refreshBranchSalesKpis(showLoading = false)
-                    AppSnackbarController.show("Tasa BCV ajustada manualmente.")
+                    AppSnackbarController.show("Tasa del día guardada.")
                 }
                 .onFailure { err ->
                     _state.update {
@@ -549,68 +547,11 @@ class HubViewModel(
         }
     }
 
-    fun restoreAutomaticBcv() {
-        if (_state.value.role != UserRole.ADMIN) return
-        viewModelScope.launch {
-            _state.update { it.copy(bcvAdminSaving = true, bcvAdminError = null) }
-            inventoryRepository.restoreAutomaticBcv()
-                .onSuccess {
-                    val meta = inventoryRepository.currentMeta()
-                    _state.update {
-                        it.copy(
-                            bcvAdminSaving = false,
-                            showBcvAdminDialog = false,
-                            bcvManualOverride = false,
-                            bcvLabel = formatBcvLabel(meta?.bcvRate?.let(::roundBcvRate), manual = false)
-                        )
-                    }
-                    AppSnackbarController.show("Modo automático BCV restaurado.")
-                    if (BcvRateFetcher.shouldAutoRefresh(meta?.bcvFetchedAt, manualOverride = false)) {
-                        refreshBcvInternal(showIndicator = false)
-                    }
-                }
-                .onFailure { err ->
-                    _state.update {
-                        it.copy(
-                            bcvAdminSaving = false,
-                            bcvAdminError = err.toUserMessage("No se pudo restaurar el modo automático.")
-                        )
-                    }
-                }
-        }
-    }
-
-    private suspend fun refreshBcvInternal(showIndicator: Boolean) {
-        if (showIndicator) {
-            _state.update {
-                it.copy(bcvRefreshing = true, currentDate = dateFormat.format(Date()))
-            }
-        }
-        bcvRateFetcher.fetchUsdRate()
-            .onSuccess { rate ->
-                val rounded = roundBcvRate(rate)
-                inventoryRepository.saveBcvRate(rounded, manualOverride = false)
-                _state.update {
-                    it.copy(
-                        bcvRefreshing = false,
-                        bcvRate = rounded,
-                        bcvManualOverride = false,
-                        bcvLabel = formatBcvLabel(rounded, manual = false)
-                    )
-                }
-                if (_state.value.showBranchKpis) refreshBranchSalesKpis(showLoading = false)
-            }
-            .onFailure {
-                _state.update { it.copy(bcvRefreshing = false) }
-            }
-    }
-
     private fun roundBcvRate(rate: Double): Double = round(rate * 100) / 100.0
 
-    private fun formatBcvLabel(rate: Double?, manual: Boolean): String {
-        if (rate == null) return "Tasa BCV: sin datos"
-        val base = "Tasa BCV: Bs ${bcvRateFormat.format(rate)}"
-        return if (manual) "$base (manual)" else base
+    private fun formatBcvLabel(rate: Double?): String {
+        if (rate == null) return "Tasa BCV: sin configurar"
+        return "Tasa BCV: Bs ${bcvRateFormat.format(rate)}"
     }
 
     private fun parseBcvInput(raw: String): Double? {

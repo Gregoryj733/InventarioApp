@@ -23,6 +23,12 @@ class InventarioMessagingService : FirebaseMessagingService() {
                     ?: "El administrador actualizó el inventario. Los cambios ya están disponibles."
                 NotificationHelper.showInventoryUpdated(applicationContext, title, body)
             }
+            "cash_closings_updated" -> {
+                (application as? InventarioApplication)?.scheduleCashClosingsRefresh()
+            }
+            "meta_updated" -> {
+                (application as? InventarioApplication)?.scheduleMetaRefresh()
+            }
             else -> Unit
         }
     }

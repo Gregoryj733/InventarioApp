@@ -318,13 +318,11 @@ private fun InventarioRoot(
                             HubDestination.OIL_FILTER_FINDER -> AppScreen.OIL_FILTER_FINDER
                         }
                     },
-                    onRefreshBcv = hubVm::refreshBcv,
                     onLogout = logoutAndNotify,
                     showBcvAdminDialog = hubState.showBcvAdminDialog,
                     bcvAdminRateText = hubState.bcvAdminRateText,
                     bcvAdminSaving = hubState.bcvAdminSaving,
                     bcvAdminError = hubState.bcvAdminError,
-                    bcvManualOverride = hubState.bcvManualOverride,
                     onOpenBcvAdminDialog = if (hubState.role == UserRole.ADMIN) {
                         hubVm::openBcvAdminDialog
                     } else {
@@ -333,12 +331,13 @@ private fun InventarioRoot(
                     onDismissBcvAdminDialog = hubVm::dismissBcvAdminDialog,
                     onBcvAdminRateChange = hubVm::onBcvAdminRateChange,
                     onSaveManualBcvRate = hubVm::saveManualBcvRate,
-                    onRestoreAutomaticBcv = hubVm::restoreAutomaticBcv,
                     onOpenBranchSwitch = hubVm::openBranchSwitchDialog,
                     onDismissBranchSwitch = hubVm::dismissBranchSwitchDialog,
                     onBranchSelected = hubVm::requestBranchSwitch,
                     onReauthPasswordChange = hubVm::onReauthPasswordChange,
-                    onConfirmBranchReauth = hubVm::confirmBranchReauth
+                    onConfirmBranchReauth = hubVm::confirmBranchReauth,
+                    dataRefreshing = hubState.dataRefreshing,
+                    onRefreshData = hubVm::refreshAllData
                 )
             }
             AppScreen.INVENTORY -> {
@@ -413,8 +412,7 @@ private fun InventarioRoot(
                         hubVm.refreshClosingAlerts()
                         currentScreen = AppScreen.HUB
                     },
-                    onLogout = logoutAndNotify,
-                    onRefreshBcv = hubVm::refreshBcv
+                    onLogout = logoutAndNotify
                 )
             }
             AppScreen.BATTERY_FINDER -> {

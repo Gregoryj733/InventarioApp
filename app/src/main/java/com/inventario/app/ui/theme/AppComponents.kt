@@ -890,11 +890,11 @@ fun ConfirmedOrdersBanner(
 
     if (showConfirm && onReset != null) {
         ConfirmCheckDialog(
-            title = "Reiniciar contador del día",
-            description = "Se borrará el registro de los $count pedido${if (count == 1) "" else "s"} " +
-                "confirmado${if (count == 1) "" else "s"} hoy y el total de ventas precargado. " +
+            title = "Reiniciar pedidos del día",
+            description = "Se borrarán todos los $count pedido${if (count == 1) "" else "s"} " +
+                "confirmado${if (count == 1) "" else "s"} hoy. " +
                 "El inventario descontado no se restaura.",
-            checkLabel = "Confirmo que deseo reiniciar el contador del día",
+            checkLabel = "Confirmo que deseo borrar los pedidos del día",
             confirmLabel = "Reiniciar",
             onDismiss = { showConfirm = false },
             onConfirm = {
