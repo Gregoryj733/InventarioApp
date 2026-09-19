@@ -118,7 +118,7 @@ class CashClosingViewModel(
     private val timeFormat = SimpleDateFormat("HH:mm", Locale("es", "VE"))
     private val moneyFormat = NumberFormat.getNumberInstance(Locale("es", "VE")).apply {
         minimumFractionDigits = 2
-        maximumFractionDigits = 4
+        maximumFractionDigits = 2
     }
     private val bcvRateFormat = NumberFormat.getNumberInstance(Locale("es", "VE")).apply {
         minimumFractionDigits = 2
@@ -1009,10 +1009,8 @@ class CashClosingViewModel(
             }
 
     private fun formatDecimal(value: Double): String {
-        val rounded = round(value * 10000) / 10000.0
-        if (rounded % 1.0 == 0.0) return rounded.toInt().toString()
-        val formatted = inputDecimalFormat.format(rounded)
-        return formatted.trimEnd('0').trimEnd('.')
+        val rounded = round(value * 100) / 100.0
+        return inputDecimalFormat.format(rounded)
     }
 
     private fun parseUsd(text: String): Double {
@@ -1030,8 +1028,8 @@ class CashClosingViewModel(
     }
 
     private val inputDecimalFormat = NumberFormat.getNumberInstance(Locale.US).apply {
-        minimumFractionDigits = 0
-        maximumFractionDigits = 4
+        minimumFractionDigits = 2
+        maximumFractionDigits = 2
         isGroupingUsed = false
     }
 
