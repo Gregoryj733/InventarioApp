@@ -209,6 +209,23 @@ private fun ResultsList(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.fillMaxSize()
     ) {
+        if (extraStock.isNotEmpty()) {
+            item {
+                Text(
+                    text = if (extraStock.size == 1) {
+                        "Disponible en inventario"
+                    } else {
+                        "${extraStock.size} filtros en stock"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            items(extraStock, key = { "stock-${it.id}" }) { product ->
+                StockProductCard(product = product, bcvRate = bcvRate)
+            }
+        }
         if (results.isNotEmpty()) {
             item {
                 Text(
@@ -224,19 +241,6 @@ private fun ResultsList(
             }
             items(results, key = { it.entry.id }) { recommendation ->
                 OilFilterResultCard(recommendation = recommendation, bcvRate = bcvRate)
-            }
-        }
-        if (extraStock.isNotEmpty()) {
-            item {
-                Text(
-                    text = "También en inventario",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            items(extraStock, key = { "stock-${it.id}" }) { product ->
-                StockProductCard(product = product, bcvRate = bcvRate)
             }
         }
     }
