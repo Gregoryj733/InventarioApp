@@ -1454,23 +1454,10 @@ private fun CashClosingDetailDialog(
                     Spacer(Modifier.height(10.dp))
                     ReportDivider(label = "Efectivo (C)")
                     Spacer(Modifier.height(6.dp))
-                    if (snapshot.cashEntries.isEmpty()) {
-                        ReportKeyValueRow(
-                            label = "Total",
-                            value = "${viewModel.formatUsd(snapshot.cashUsd)} · ${viewModel.formatBs(snapshot.cashBs)}"
-                        )
-                    } else {
-                        snapshot.cashEntries.forEach { entry ->
-                            ReportKeyValueRow(
-                                label = entry.description.ifBlank { "Efectivo" },
-                                value = "${viewModel.formatUsd(entry.usd)} · ${viewModel.formatBs(entry.bs)}"
-                            )
-                        }
-                        ReportKeyValueRow(
-                            label = "Subtotal C",
-                            value = "${viewModel.formatUsd(snapshot.cashUsd)} · ${viewModel.formatBs(snapshot.cashBs)}"
-                        )
-                    }
+                    ReportKeyValueRow(
+                        label = "Total",
+                        value = "${viewModel.formatUsd(snapshot.cashUsd)} · ${viewModel.formatBs(snapshot.cashBs)}"
+                    )
                     Spacer(Modifier.height(10.dp))
                     ReportDivider(label = "Salidas (D)")
                     Spacer(Modifier.height(6.dp))
