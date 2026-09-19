@@ -5,7 +5,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-COPY server.js store.js store-file.js store-pg.js auth.js excelParser.js realtime.js push.js ./
+COPY server.js store.js store-file.js store-pg.js auth.js excelParser.js realtime.js push.js cashClosingRetention.js ./
 COPY scripts ./scripts
 COPY data ./data
 COPY public ./public
